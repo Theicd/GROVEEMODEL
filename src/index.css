@@ -319,8 +319,13 @@ button:disabled {
   margin: 12px auto 14px;
   width: min(820px, calc(100% - 24px));
   border: 1px solid rgba(112, 142, 204, 0.2);
-  border-radius: 14px;
-  background: #171d2a;
+  border-radius: 18px;
+  background: #1a202b;
+}
+
+.chat-toolbar {
+  margin: 10px auto 0;
+  width: min(820px, calc(100% - 24px));
 }
 
 .chat-controls {
@@ -383,14 +388,16 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  width: 100%;
 }
 
 .composer textarea {
   resize: vertical;
-  min-height: 70px;
+  min-height: 68px;
   max-height: 190px;
-  border-radius: 10px;
-  background: #111826;
+  border-radius: 14px;
+  background: #1f2430;
+  border: 1px solid #2d3b58;
 }
 
 .composer-hint {
@@ -418,6 +425,7 @@ button:disabled {
   height: 38px;
   border-radius: 999px;
   padding: 0;
+  font-size: 0.95rem;
 }
 
 .upload-row {
@@ -433,6 +441,41 @@ button:disabled {
   object-fit: cover;
   border-radius: 10px;
   border: 1px solid #324a74;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.ds-input-shell {
+  gap: 8px;
+}
+
+.ds-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ds-left-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.ds-right-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 0.95rem;
 }
 
 .empty-state {

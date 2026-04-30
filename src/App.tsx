@@ -135,6 +135,7 @@ function App() {
   const workerRef = useRef<Worker | null>(null);
   const assistantBufferRef = useRef("");
   const activeModelShortLabelRef = useRef("Assistant");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [modelId, setModelId] = useState(DEFAULT_MODEL);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -423,7 +424,7 @@ function App() {
               )}
             </div>
 
-            <form onSubmit={sendPrompt} className="composer chatgpt-composer">
+            <div className="chat-toolbar">
               <div className="chat-controls">
                 <div className="mode-group">
                   <button type="button" className={`mode-btn ${mode === "chat" ? "active" : ""}`} onClick={() => setMode("chat")}>
@@ -449,24 +450,6 @@ function App() {
                     </option>
                   ))}
                 </select>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={thinkingMode}
-                    onChange={(e) => setThinkingMode(e.target.checked)}
-                    disabled={isGenerating}
-                  />
-                  <span>DeepThink</span>
-                </label>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={webSearchMode}
-                    onChange={(e) => setWebSearchMode(e.target.checked)}
-                    disabled={isGenerating}
-                  />
-                  <span>Search</span>
-                </label>
                 <button
                   type="button"
                   className="reload-btn subtle-btn"
@@ -476,19 +459,11 @@ function App() {
                   Reload
                 </button>
               </div>
+            </div>
+
+            <form onSubmit={sendPrompt} className="composer chatgpt-composer">
               {mode === "caption" && (
                 <div className="upload-row">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = () => setImageDataUrl(String(reader.result));
-                      reader.readAsDataURL(file);
-                    }}
-                  />
                   {imageDataUrl && <img className="preview-img" src={imageDataUrl} alt="Uploaded preview" />}
                 </div>
               )}
@@ -497,7 +472,24 @@ function App() {
                   <img className="preview-img" src={generatedImageUrl} alt="Generated output" />
                 </div>
               )}
-              <div className="composer-main">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden-file-input"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    setImageDataUrl(String(reader.result));
+                    setMode("caption");
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+
+              <div className="composer-main ds-input-shell">
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -511,10 +503,43 @@ function App() {
                   rows={2}
                   disabled={!isLoaded || isGenerating}
                 />
+                <div className="ds-actions-row">
+                  <div className="ds-left-actions">
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={thinkingMode}
+                        onChange={(e) => setThinkingMode(e.target.checked)}
+                        disabled={isGenerating}
+                      />
+                      <span>DeepThink</span>
+                    </label>
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={webSearchMode}
+                        onChange={(e) => setWebSearchMode(e.target.checked)}
+                        disabled={isGenerating}
+                      />
+                      <span>Search</span>
+                    </label>
+                  </div>
+                  <div className="ds-right-actions">
+                    <button
+                      type="button"
+                      className="icon-btn subtle-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      aria-label="Attach image"
+                      title="Attach image"
+                    >
+                      📎
+                    </button>
+                    <button className="send-btn" type="submit" disabled={!isLoaded || isGenerating}>
+                      {isGenerating ? "..." : "↑"}
+                    </button>
+                  </div>
+                </div>
               </div>
-              <button className="send-btn" type="submit" disabled={!isLoaded || isGenerating}>
-                {isGenerating ? "..." : "↑"}
-              </button>
             </form>
           </section>
         </section>
