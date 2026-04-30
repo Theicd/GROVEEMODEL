@@ -319,7 +319,7 @@ function App() {
 
       {phase === "ready" && (
         <section className="ready-shell">
-          <aside className="sidebar glass">
+          <aside className="sidebar">
             <h3>GROVEE</h3>
             <button
               type="button"
@@ -340,7 +340,7 @@ function App() {
             </div>
           </aside>
 
-          <section className="chat-panel glass">
+          <section className="chat-panel">
             <header className="chat-header">
               <div>
                 <h2>{conversationTitle}</h2>
@@ -404,7 +404,7 @@ function App() {
                 </label>
                 <button
                   type="button"
-                  className="reload-btn"
+                  className="reload-btn subtle-btn"
                   onClick={loadModel}
                   disabled={isLoading || isGenerating}
                 >
@@ -416,13 +416,12 @@ function App() {
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder={placeholder}
-                  rows={3}
+                  rows={2}
                   disabled={!isLoaded || isGenerating}
                 />
-                <div className="composer-hint">Shift+Enter for new line</div>
               </div>
-              <button type="submit" disabled={!isLoaded || isGenerating}>
-                {isGenerating ? "Generating..." : "Send"}
+              <button className="send-btn" type="submit" disabled={!isLoaded || isGenerating}>
+                {isGenerating ? "..." : "↑"}
               </button>
             </form>
           </section>
