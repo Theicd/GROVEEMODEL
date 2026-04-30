@@ -41,6 +41,17 @@ const MODEL_OPTIONS = [
   },
 ] as const;
 
+const VISION_MODEL_OPTIONS = [
+  { id: "Xenova/vit-gpt2-image-captioning", label: "ViT-GPT2 Captioning (Fast)" },
+  { id: "onnx-community/moondream2", label: "Moondream2 (Better detail)" },
+] as const;
+
+const IMAGE_MODEL_OPTIONS = [
+  { id: "flux", label: "FLUX (balanced)" },
+  { id: "turbo", label: "Turbo (faster)" },
+  { id: "sdxl", label: "SDXL style" },
+] as const;
+
 type ModelPreset = {
   temperature: number;
   maxNewTokens: number;
@@ -150,6 +161,8 @@ function App() {
   const [mode, setMode] = useState<"chat" | "caption" | "image">("chat");
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  const [visionModelId, setVisionModelId] = useState<string>(VISION_MODEL_OPTIONS[0].id);
+  const [imageGenModelId, setImageGenModelId] = useState<string>(IMAGE_MODEL_OPTIONS[0].id);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const activeModelOption = useMemo(
@@ -268,6 +281,7 @@ function App() {
         type: "caption",
         imageDataUrl,
         prompt: trimmed,
+        modelId: visionModelId,
       });
       return;
     }
@@ -277,7 +291,7 @@ function App() {
       setPrompt("");
       setIsGenerating(true);
       try {
-        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(trimmed)}?width=1024&height=1024&model=flux&nologo=true`;
+        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(trimmed)}?width=1024&height=1024&model=${encodeURIComponent(imageGenModelId)}&nologo=true`;
         setGeneratedImageUrl(url);
         setMessages((prev) => [
           ...prev,
@@ -285,7 +299,7 @@ function App() {
             id: crypto.randomUUID(),
             role: "assistant",
             content: `Generated image ready.\n${url}`,
-            modelLabel: "Image",
+            modelLabel: `Image (${imageGenModelId})`,
           },
         ]);
       } finally {
@@ -437,6 +451,34 @@ function App() {
                     Text to Image
                   </button>
                 </div>
+                {mode === "caption" && (
+                  <select
+                    className="model-select"
+                    value={visionModelId}
+                    onChange={(e) => setVisionModelId(e.target.value)}
+                    disabled={isGenerating}
+                  >
+                    {VISION_MODEL_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {mode === "image" && (
+                  <select
+                    className="model-select"
+                    value={imageGenModelId}
+                    onChange={(e) => setImageGenModelId(e.target.value)}
+                    disabled={isGenerating}
+                  >
+                    {IMAGE_MODEL_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <select
                   id="model"
                   className="model-select"

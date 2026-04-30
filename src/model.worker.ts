@@ -24,6 +24,7 @@ type CaptionMessage = {
   type: "caption";
   imageDataUrl: string;
   prompt?: string;
+  modelId: string;
 };
 
 type WorkerInput = LoadMessage | GenerateMessage | CaptionMessage;
@@ -34,8 +35,10 @@ type TextGenerator = ((
 ) => Promise<unknown>) & { tokenizer: unknown };
 
 let generator: TextGenerator | null = null;
-let captioner: ((image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>) | null =
-  null;
+const captionerCache = new Map<
+  string,
+  (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>
+>();
 let activeModel = "";
 let activeDevice = "unknown";
 let busy = false;
@@ -72,8 +75,8 @@ const loadWithDevice = async (
   return pipe;
 };
 
-const loadCaptioner = async (device: "webgpu" | "wasm") => {
-  const visionModel = "Xenova/vit-gpt2-image-captioning";
+const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
+  const visionModel = modelId;
   post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
   return (await pipeline("image-to-text", visionModel, {
     device,
@@ -190,12 +193,14 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
 
       busy = true;
+      let captioner = captionerCache.get(message.modelId) ?? null;
       if (!captioner) {
         try {
-          captioner = await loadCaptioner("webgpu");
+          captioner = await loadCaptioner(message.modelId, "webgpu");
         } catch {
-          captioner = await loadCaptioner("wasm");
+          captioner = await loadCaptioner(message.modelId, "wasm");
         }
+        captionerCache.set(message.modelId, captioner);
       }
 
       const result = await captioner(message.imageDataUrl, {
