@@ -294,6 +294,28 @@ button:disabled {
   background: linear-gradient(180deg, rgba(9, 15, 29, 0.6), rgba(9, 15, 29, 0.88));
 }
 
+.chat-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #b4c4e7;
+  background: rgba(21, 33, 61, 0.72);
+  border: 1px solid #314a82;
+  border-radius: 999px;
+  padding: 5px 10px;
+}
+
+.toggle input {
+  accent-color: #38a3ff;
+}
+
 .composer-main {
   flex: 1;
   display: flex;
@@ -358,6 +380,10 @@ button:disabled {
   .composer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .chat-controls {
+    flex-wrap: wrap;
   }
 
   .model-pill {

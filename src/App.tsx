@@ -23,7 +23,80 @@ const MODEL_OPTIONS = [
   "onnx-community/Qwen3-0.6B-ONNX",
   "onnx-community/Qwen2.5-1.5B-Instruct-ONNX",
   "onnx-community/Llama-3.2-1B-Instruct-ONNX",
+  "onnx-community/Qwen2.5-Coder-1.5B-Instruct-ONNX",
 ];
+
+type ModelPreset = {
+  temperature: number;
+  maxNewTokens: number;
+  repetitionPenalty: number;
+  topP: number;
+  systemPrompt: string;
+};
+
+const DEFAULT_PRESET: ModelPreset = {
+  temperature: 0.3,
+  maxNewTokens: 220,
+  repetitionPenalty: 1.12,
+  topP: 0.92,
+  systemPrompt:
+    "You are a concise helpful AI assistant. Respond in the same language as the user and avoid repeating role labels.",
+};
+
+const getModelPreset = (model: string, thinking: boolean): ModelPreset => {
+  const base = { ...DEFAULT_PRESET };
+  if (model.toLowerCase().includes("coder") || model.toLowerCase().includes("code")) {
+    return {
+      ...base,
+      temperature: 0.15,
+      maxNewTokens: 280,
+      repetitionPenalty: 1.05,
+      systemPrompt:
+        "You are a senior coding assistant. Provide practical answers with correct code and brief explanations.",
+    };
+  }
+
+  if (model.toLowerCase().includes("qwen")) {
+    base.temperature = 0.25;
+    base.maxNewTokens = 240;
+    base.repetitionPenalty = 1.08;
+  }
+
+  if (thinking) {
+    base.temperature = Math.max(0.15, base.temperature - 0.05);
+    base.maxNewTokens += 80;
+    base.systemPrompt +=
+      " Think carefully step by step internally, then provide a clean final answer without exposing chain-of-thought.";
+  }
+  return base;
+};
+
+const cleanModelOutput = (input: string): string => {
+  const cleaned = input
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((line) => !/^\s*(User|Assistant|System)\s*:/i.test(line))
+    .join("\n")
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+
+  return cleaned.length ? cleaned : "I could not generate a stable response. Please try again.";
+};
+
+const fetchWebContext = async (query: string): Promise<string> => {
+  const encoded = encodeURIComponent(query);
+  const endpoint = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encoded}&limit=3&namespace=0&format=json&origin=*`;
+  const response = await fetch(endpoint);
+  if (!response.ok) throw new Error("Web lookup failed");
+  const data = (await response.json()) as [string, string[], string[], string[]];
+  const titles = data[1] ?? [];
+  const snippets = data[2] ?? [];
+  const urls = data[3] ?? [];
+  if (!titles.length) return "";
+  return titles
+    .map((title, i) => `- ${title}: ${snippets[i] ?? ""} (${urls[i] ?? ""})`)
+    .join("\n");
+};
 
 function App() {
   const workerRef = useRef<Worker | null>(null);
@@ -37,6 +110,8 @@ function App() {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assistantBuffer, setAssistantBuffer] = useState("");
+  const [thinkingMode, setThinkingMode] = useState(false);
+  const [webSearchMode, setWebSearchMode] = useState(false);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
@@ -71,9 +146,10 @@ function App() {
         });
       } else if (msg.type === "done") {
         setIsGenerating(false);
+        const output = cleanModelOutput(assistantBufferRef.current);
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: "assistant", content: assistantBufferRef.current.trim() },
+          { id: crypto.randomUUID(), role: "assistant", content: output },
         ]);
         setAssistantBuffer("");
         assistantBufferRef.current = "";
@@ -104,7 +180,7 @@ function App() {
     });
   };
 
-  const sendPrompt = (e: FormEvent) => {
+  const sendPrompt = async (e: FormEvent) => {
     e.preventDefault();
     if (!workerRef.current || !isLoaded || isGenerating) return;
     const trimmed = prompt.trim();
@@ -116,13 +192,28 @@ function App() {
     assistantBufferRef.current = "";
     setIsGenerating(true);
 
+    const preset = getModelPreset(modelId, thinkingMode);
+    let webContext = "";
+    if (webSearchMode) {
+      setStatus("Searching web context...");
+      try {
+        webContext = await fetchWebContext(trimmed);
+      } catch {
+        webContext = "";
+      }
+    }
+    setStatus("Generating...");
+
     workerRef.current.postMessage({
       type: "generate",
       prompt: trimmed,
-      systemPrompt:
-        "You are a concise helpful assistant. Answer clearly and practically in the same language as the user.",
-      maxNewTokens: 256,
-      temperature: 0.3,
+      systemPrompt: preset.systemPrompt,
+      maxNewTokens: preset.maxNewTokens,
+      temperature: preset.temperature,
+      repetitionPenalty: preset.repetitionPenalty,
+      topP: preset.topP,
+      thinkingMode,
+      webContext,
     });
   };
 
@@ -220,6 +311,26 @@ function App() {
             </div>
 
             <form onSubmit={sendPrompt} className="composer">
+              <div className="chat-controls">
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={thinkingMode}
+                    onChange={(e) => setThinkingMode(e.target.checked)}
+                    disabled={isGenerating}
+                  />
+                  <span>Thinking</span>
+                </label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={webSearchMode}
+                    onChange={(e) => setWebSearchMode(e.target.checked)}
+                    disabled={isGenerating}
+                  />
+                  <span>Web Search</span>
+                </label>
+              </div>
               <div className="composer-main">
                 <textarea
                   value={prompt}

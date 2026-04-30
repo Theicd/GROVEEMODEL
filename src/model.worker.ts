@@ -14,6 +14,10 @@ type GenerateMessage = {
   systemPrompt: string;
   maxNewTokens: number;
   temperature: number;
+  repetitionPenalty: number;
+  topP: number;
+  thinkingMode: boolean;
+  webContext: string;
 };
 
 type WorkerInput = LoadMessage | GenerateMessage;
@@ -39,7 +43,11 @@ const clampProgress = (value: number) => {
   return Math.max(0, Math.min(100, Math.round(value)));
 };
 
-const loadWithDevice = async (modelId: string, dtype: LoadMessage["dtype"], device: "webgpu" | "wasm") => {
+const loadWithDevice = async (
+  modelId: string,
+  dtype: LoadMessage["dtype"],
+  device: "webgpu" | "wasm",
+) => {
   post({ type: "status", text: `Loading ${modelId} on ${device}...` });
   const pipe = (await pipeline("text-generation", modelId, {
     device,
@@ -54,6 +62,16 @@ const loadWithDevice = async (modelId: string, dtype: LoadMessage["dtype"], devi
   })) as TextGenerator;
 
   return pipe;
+};
+
+const normalizePrompt = (message: GenerateMessage) => {
+  const webBlock = message.webContext?.trim()
+    ? `\n\nWeb context:\n${message.webContext.trim()}\nUse it only if relevant.\n`
+    : "";
+  const thinkingBlock = message.thinkingMode
+    ? "\nThink carefully before answering, but output only the final answer."
+    : "";
+  return `${message.systemPrompt}${thinkingBlock}${webBlock}\n\nQuestion:\n${message.prompt}\n\nAnswer:`;
 };
 
 self.onmessage = async (event: MessageEvent<WorkerInput>) => {
@@ -96,7 +114,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
 
       busy = true;
-      const finalPrompt = `${message.systemPrompt}\n\nUser: ${message.prompt}\nAssistant:`;
+      const finalPrompt = normalizePrompt(message);
       const streamer = new TextStreamer(generator.tokenizer as never, {
         skip_prompt: true,
         callback_function: (text: string) => {
@@ -108,6 +126,10 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         max_new_tokens: message.maxNewTokens,
         temperature: message.temperature,
         do_sample: message.temperature > 0,
+        repetition_penalty: message.repetitionPenalty,
+        top_p: message.topP,
+        no_repeat_ngram_size: 3,
+        return_full_text: false,
         streamer,
       });
 
