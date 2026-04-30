@@ -21,6 +21,8 @@ const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
 const MODEL_OPTIONS = [
   "onnx-community/gemma-4-E2B-it-ONNX",
   "onnx-community/Qwen3-0.6B-ONNX",
+  "onnx-community/Qwen2.5-1.5B-Instruct-ONNX",
+  "onnx-community/Llama-3.2-1B-Instruct-ONNX",
 ];
 
 function App() {
@@ -37,6 +39,7 @@ function App() {
   const [assistantBuffer, setAssistantBuffer] = useState("");
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
+  const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
 
   const placeholder = useMemo(() => {
     if (!isLoaded) return "Load the model first...";
@@ -132,8 +135,8 @@ function App() {
 
       {phase === "start" && (
         <section className="hero-screen glass">
-          <h1>Gemma 4 WebGPU</h1>
-          <p>Multimodal AI, running locally in your browser with WebGPU</p>
+          <h1>GROOVEE - LOCAL MODEL</h1>
+          <p>AI models running directly on your device with WebGPU</p>
           <div className="selector-row">
             <select
               id="model"
@@ -156,7 +159,8 @@ function App() {
 
       {phase === "loading" && (
         <section className="loading-screen glass">
-          <h2>Gemma 4 WebGPU</h2>
+          <h2>GROOVEE - LOCAL MODEL</h2>
+          <div className="loading-model">{modelLabel}</div>
           <div className="meter">
             <div className="meter-fill" style={{ width: `${progress}%` }} />
           </div>
@@ -170,7 +174,7 @@ function App() {
         <section className="chat-screen">
           <header className="chat-top glass">
             <div className="title-wrap">
-              <h2>Gemma 4 WebGPU</h2>
+              <h2>GROOVEE - LOCAL MODEL</h2>
               <p className="top-status">{status}</p>
             </div>
             <div className="top-actions">
