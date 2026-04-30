@@ -169,11 +169,12 @@ function App() {
       {phase === "ready" && (
         <section className="chat-screen">
           <header className="chat-top glass">
-            <div>
+            <div className="title-wrap">
               <h2>Gemma 4 WebGPU</h2>
-              <p>{status}</p>
+              <p className="top-status">{status}</p>
             </div>
-            <div className="row">
+            <div className="top-actions">
+              <span className="model-pill">{modelId}</span>
               <select
                 id="model"
                 value={modelId}
@@ -194,28 +195,37 @@ function App() {
 
           <section className="chat glass">
             <div className="messages">
+              {messages.length === 0 && !assistantBuffer && (
+                <div className="empty-state">
+                  <h3>Start a conversation</h3>
+                  <p>Ask a question, summarize text, or request code help.</p>
+                </div>
+              )}
               {messages.map((msg) => (
                 <article key={msg.id} className={`bubble ${msg.role}`}>
-                  <strong>{msg.role === "user" ? "You" : "Assistant"}</strong>
+                  <strong>{msg.role === "user" ? "You" : "Gemma"}</strong>
                   <p>{msg.content}</p>
                 </article>
               ))}
               {assistantBuffer && (
                 <article className="bubble assistant">
-                  <strong>Assistant</strong>
+                  <strong>Gemma</strong>
                   <p>{assistantBuffer}</p>
                 </article>
               )}
             </div>
 
             <form onSubmit={sendPrompt} className="composer">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={placeholder}
-                rows={4}
-                disabled={!isLoaded || isGenerating}
-              />
+              <div className="composer-main">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={placeholder}
+                  rows={4}
+                  disabled={!isLoaded || isGenerating}
+                />
+                <div className="composer-hint">Shift+Enter for new line</div>
+              </div>
               <button type="submit" disabled={!isLoaded || isGenerating}>
                 {isGenerating ? "Generating..." : "Send"}
               </button>
