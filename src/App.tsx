@@ -33,22 +33,10 @@ const MODEL_OPTIONS = [
     meta: "Alibaba | ONNX | Fast",
   },
   {
-    id: "onnx-community/Qwen2.5-1.5B-Instruct-ONNX",
-    label: "Qwen2.5 1.5B Instruct",
-    shortLabel: "Qwen2.5",
-    meta: "Alibaba | ONNX | General",
-  },
-  {
     id: "onnx-community/Llama-3.2-1B-Instruct-ONNX",
     label: "Llama 3.2 1B Instruct",
     shortLabel: "Llama 3.2",
     meta: "Meta | ONNX | General",
-  },
-  {
-    id: "onnx-community/Qwen2.5-Coder-1.5B-Instruct-ONNX",
-    label: "Qwen2.5 Coder 1.5B",
-    shortLabel: "Qwen Coder",
-    meta: "Alibaba | ONNX | Code",
   },
 ] as const;
 
@@ -271,8 +259,8 @@ function App() {
       systemPrompt: greeting
         ? `${preset.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
         : preset.systemPrompt,
-      maxNewTokens: greeting ? 48 : preset.maxNewTokens,
-      temperature: preset.temperature,
+      maxNewTokens: greeting ? 28 : preset.maxNewTokens,
+      temperature: greeting ? 0 : preset.temperature,
       repetitionPenalty: preset.repetitionPenalty,
       topP: preset.topP,
       thinkingMode,
@@ -331,23 +319,7 @@ function App() {
               <h2>GROVEE - WEBGPU</h2>
               <p className="top-status">{status}</p>
             </div>
-            <div className="top-actions">
-              <select
-                id="model"
-                value={modelId}
-                onChange={(e) => setModelId(e.target.value)}
-                disabled={isLoading || isGenerating}
-              >
-                {MODEL_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label} - {option.meta}
-                  </option>
-                ))}
-              </select>
-              <button onClick={loadModel} disabled={isLoading || isGenerating}>
-                Reload model
-              </button>
-            </div>
+            <div className="top-actions" />
           </header>
 
           <section className="chat glass">
@@ -374,6 +346,27 @@ function App() {
 
             <form onSubmit={sendPrompt} className="composer">
               <div className="chat-controls">
+                <select
+                  id="model"
+                  className="model-select"
+                  value={modelId}
+                  onChange={(e) => setModelId(e.target.value)}
+                  disabled={isLoading || isGenerating}
+                >
+                  {MODEL_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label} - {option.meta}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="reload-btn"
+                  onClick={loadModel}
+                  disabled={isLoading || isGenerating}
+                >
+                  Reload
+                </button>
                 <label className="toggle">
                   <input
                     type="checkbox"

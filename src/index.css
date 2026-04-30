@@ -179,10 +179,7 @@ body {
 }
 
 .top-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: min(44%, 420px);
+  min-width: 1px;
 }
 
 .row {
@@ -288,6 +285,17 @@ button:disabled {
   gap: 10px;
   align-items: center;
   width: 100%;
+  flex-wrap: wrap;
+}
+
+.model-select {
+  flex: 1 1 360px;
+}
+
+.reload-btn {
+  min-width: 96px;
+  height: 38px;
+  padding: 8px 10px;
 }
 
 .toggle {
@@ -374,7 +382,7 @@ button:disabled {
   }
 
   .chat-controls {
-    flex-wrap: wrap;
+    width: 100%;
   }
 
   .bubble.user,
