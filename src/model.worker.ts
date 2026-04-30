@@ -74,6 +74,33 @@ const normalizePrompt = (message: GenerateMessage) => {
   return `${message.systemPrompt}${thinkingBlock}${webBlock}\n\nQuestion:\n${message.prompt}\n\nAnswer:`;
 };
 
+const buildPrompt = (model: TextGenerator, message: GenerateMessage) => {
+  const tokenizer = (model as { tokenizer?: unknown }).tokenizer as
+    | { apply_chat_template?: (messages: unknown, opts: unknown) => string }
+    | undefined;
+
+  if (tokenizer?.apply_chat_template) {
+    const messages = [
+      { role: "system", content: message.systemPrompt },
+      ...(message.webContext?.trim()
+        ? [{ role: "system", content: `Web context:\n${message.webContext.trim()}` }]
+        : []),
+      { role: "user", content: message.prompt },
+    ];
+
+    try {
+      return tokenizer.apply_chat_template(messages, {
+        tokenize: false,
+        add_generation_prompt: true,
+      });
+    } catch {
+      return normalizePrompt(message);
+    }
+  }
+
+  return normalizePrompt(message);
+};
+
 self.onmessage = async (event: MessageEvent<WorkerInput>) => {
   const message = event.data;
 
@@ -114,7 +141,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
 
       busy = true;
-      const finalPrompt = normalizePrompt(message);
+      const finalPrompt = buildPrompt(generator, message);
       const streamer = new TextStreamer(generator.tokenizer as never, {
         skip_prompt: true,
         callback_function: (text: string) => {
@@ -122,10 +149,11 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         },
       });
 
+      const temperature = message.temperature;
       await generator(finalPrompt, {
         max_new_tokens: message.maxNewTokens,
-        temperature: message.temperature,
-        do_sample: message.temperature > 0,
+        temperature,
+        do_sample: temperature > 0.01,
         repetition_penalty: message.repetitionPenalty,
         top_p: message.topP,
         no_repeat_ngram_size: 3,

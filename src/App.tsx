@@ -18,7 +18,7 @@ type WorkerOutMessage =
   | { type: "done" }
   | { type: "error"; error: string };
 
-const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
+const DEFAULT_MODEL = "onnx-community/Qwen3-0.6B-ONNX";
 const MODEL_OPTIONS = [
   {
     id: "onnx-community/gemma-4-E2B-it-ONNX",
@@ -105,7 +105,9 @@ const cleanModelOutput = (input: string): string => {
   }
   const normalized = deduped.join("\n");
 
-  return normalized.length ? normalized : "I could not generate a stable response. Please try again.";
+  if (normalized.length) return normalized;
+  const raw = input.trim();
+  return raw.length ? raw.slice(0, 900) : "No response generated. Try a different model.";
 };
 
 const isSimpleGreeting = (text: string): boolean => {
