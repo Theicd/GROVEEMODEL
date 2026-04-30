@@ -162,6 +162,11 @@ function App() {
     if (!isLoaded) return "Load the model first...";
     return "Ask anything...";
   }, [isLoaded]);
+  const conversationTitle = useMemo(() => {
+    const firstUser = messages.find((m) => m.role === "user")?.content?.trim();
+    if (!firstUser) return "New chat";
+    return firstUser.slice(0, 28) + (firstUser.length > 28 ? "..." : "");
+  }, [messages]);
 
   useEffect(() => {
     const worker = new Worker(new URL("./model.worker.ts", import.meta.url), {
@@ -313,21 +318,41 @@ function App() {
       )}
 
       {phase === "ready" && (
-        <section className="chat-screen">
-          <header className="chat-top glass">
-            <div className="title-wrap">
-              <h2>GROVEE - WEBGPU</h2>
-              <p className="top-status">{status}</p>
+        <section className="ready-shell">
+          <aside className="sidebar glass">
+            <h3>GROVEE</h3>
+            <button
+              type="button"
+              className="new-chat-btn"
+              onClick={() => {
+                setMessages([]);
+                setAssistantBuffer("");
+                setPrompt("");
+              }}
+              disabled={isGenerating}
+            >
+              + New chat
+            </button>
+            <div className="chat-list">
+              <button type="button" className="chat-item active">
+                {conversationTitle}
+              </button>
             </div>
-            <div className="top-actions" />
-          </header>
+          </aside>
 
-          <section className="chat glass">
+          <section className="chat-panel glass">
+            <header className="chat-header">
+              <div>
+                <h2>{conversationTitle}</h2>
+                <p className="top-status">{status}</p>
+              </div>
+            </header>
+
             <div className="messages">
               {messages.length === 0 && !assistantBuffer && (
                 <div className="empty-state">
-                  <h3>Start a conversation</h3>
-                  <p>Ask a question, summarize text, or request code help.</p>
+                  <h3>Message GROVEE</h3>
+                  <p>Ask anything to start the conversation.</p>
                 </div>
               )}
               {messages.map((msg) => (
@@ -344,7 +369,7 @@ function App() {
               )}
             </div>
 
-            <form onSubmit={sendPrompt} className="composer">
+            <form onSubmit={sendPrompt} className="composer chatgpt-composer">
               <div className="chat-controls">
                 <select
                   id="model"
@@ -359,14 +384,6 @@ function App() {
                     </option>
                   ))}
                 </select>
-                <button
-                  type="button"
-                  className="reload-btn"
-                  onClick={loadModel}
-                  disabled={isLoading || isGenerating}
-                >
-                  Reload
-                </button>
                 <label className="toggle">
                   <input
                     type="checkbox"
@@ -374,7 +391,7 @@ function App() {
                     onChange={(e) => setThinkingMode(e.target.checked)}
                     disabled={isGenerating}
                   />
-                  <span>Thinking</span>
+                  <span>DeepThink</span>
                 </label>
                 <label className="toggle">
                   <input
@@ -383,15 +400,23 @@ function App() {
                     onChange={(e) => setWebSearchMode(e.target.checked)}
                     disabled={isGenerating}
                   />
-                  <span>Web Search</span>
+                  <span>Search</span>
                 </label>
+                <button
+                  type="button"
+                  className="reload-btn"
+                  onClick={loadModel}
+                  disabled={isLoading || isGenerating}
+                >
+                  Reload
+                </button>
               </div>
               <div className="composer-main">
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder={placeholder}
-                  rows={4}
+                  rows={3}
                   disabled={!isLoaded || isGenerating}
                 />
                 <div className="composer-hint">Shift+Enter for new line</div>

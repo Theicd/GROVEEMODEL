@@ -146,45 +146,71 @@ body {
   font-size: 0.95rem;
 }
 
-.chat-screen {
+.ready-shell {
   position: relative;
   z-index: 1;
-  width: min(980px, 100%);
-  display: flex;
-  flex-direction: column;
+  width: min(1240px, 100%);
+  height: min(86vh, 980px);
+  display: grid;
+  grid-template-columns: 250px 1fr;
   gap: 12px;
 }
 
-.chat-top {
+.sidebar {
+  padding: 12px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 16px;
-  gap: 14px;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.chat-top h2 {
+.sidebar h3 {
+  margin: 2px 4px;
+  font-size: 1rem;
+}
+
+.new-chat-btn {
+  width: 100%;
+  height: 38px;
+}
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-item {
+  width: 100%;
+  text-align: left;
+  font-size: 0.86rem;
+  padding: 9px 10px;
+  background: rgba(21, 33, 61, 0.65);
+}
+
+.chat-item.active {
+  border-color: #4e7cdf;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(112, 142, 204, 0.25);
+}
+
+.chat-header h2 {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
 }
 
 .top-status {
   margin: 4px 0 0;
   color: #9eb3df;
   font-size: 0.82rem;
-}
-
-.title-wrap {
-  min-width: 0;
-}
-
-.top-actions {
-  min-width: 1px;
-}
-
-.row {
-  display: flex;
-  gap: 8px;
 }
 
 select,
@@ -219,7 +245,7 @@ button:disabled {
 
 .chat {
   padding: 0;
-  height: min(78vh, 900px);
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -278,6 +304,12 @@ button:disabled {
   border-top: 1px solid rgba(112, 142, 204, 0.25);
   background: linear-gradient(180deg, rgba(9, 15, 29, 0.6), rgba(9, 15, 29, 0.88));
   flex-wrap: wrap;
+}
+
+.chatgpt-composer {
+  margin: 10px;
+  border: 1px solid rgba(112, 142, 204, 0.25);
+  border-radius: 14px;
 }
 
 .chat-controls {
@@ -373,9 +405,15 @@ button:disabled {
     padding: 20px 14px;
   }
 
-  .chat-top,
-  .top-actions,
-  .row,
+  .ready-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
   .composer {
     flex-direction: column;
     align-items: stretch;
