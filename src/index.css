@@ -1,0 +1,167 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  line-height: 1.4;
+  color: #e6e8ee;
+  background: #0b1020;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.7rem;
+}
+
+.topbar p {
+  margin: 8px 0 0;
+  color: #a6afc4;
+}
+
+.panel,
+.chat {
+  background: #111932;
+  border: 1px solid #223159;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.label {
+  display: block;
+  font-size: 0.9rem;
+  color: #b2bdd7;
+  margin-bottom: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+select,
+textarea,
+button {
+  border-radius: 8px;
+  border: 1px solid #33477e;
+  background: #0f1730;
+  color: #eef2ff;
+  font: inherit;
+}
+
+select,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+}
+
+button {
+  min-width: 130px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: #2f66ff;
+  border-color: #2f66ff;
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.status {
+  margin: 10px 0 6px;
+  color: #9fb0da;
+  font-size: 0.9rem;
+}
+
+progress {
+  width: 100%;
+  height: 10px;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.messages {
+  min-height: 340px;
+  max-height: 56vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bubble {
+  border: 1px solid #2c3f70;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.bubble.user {
+  background: #1b2b56;
+}
+
+.bubble.assistant {
+  background: #161d3a;
+}
+
+.bubble strong {
+  display: block;
+  margin-bottom: 6px;
+  color: #d7e0ff;
+}
+
+.bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.composer textarea {
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .app {
+    padding: 14px;
+  }
+
+  .row,
+  .composer {
+    flex-direction: column;
+  }
+
+  button {
+    width: 100%;
+  }
+}
