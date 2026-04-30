@@ -36,9 +36,11 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assistantBuffer, setAssistantBuffer] = useState("");
 
+  const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
+
   const placeholder = useMemo(() => {
     if (!isLoaded) return "Load the model first...";
-    return "Write your prompt here...";
+    return "Ask anything...";
   }, [isLoaded]);
 
   useEffect(() => {
@@ -56,6 +58,7 @@ function App() {
       } else if (msg.type === "loaded") {
         setIsLoaded(true);
         setIsLoading(false);
+        setProgress(100);
         setStatus(`Loaded on ${msg.device}`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
@@ -74,6 +77,7 @@ function App() {
       } else if (msg.type === "error") {
         setIsGenerating(false);
         setIsLoading(false);
+        setProgress(0);
         setStatus(`Error: ${msg.error}`);
       }
     };
@@ -120,68 +124,105 @@ function App() {
   };
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <div>
-          <h1>GROVEE Model WebGPU</h1>
-          <p>Run Gemma-style ONNX models directly in browser using WebGPU.</p>
-        </div>
-      </header>
+    <main className="app theme-space">
+      <div className="bg-overlay" />
+      <div className="corner-note">
+        <span>Runs fully local on your browser</span>
+      </div>
 
-      <section className="panel">
-        <label className="label" htmlFor="model">
-          Model
-        </label>
-        <div className="row">
-          <select
-            id="model"
-            value={modelId}
-            onChange={(e) => setModelId(e.target.value)}
-            disabled={isLoading || isGenerating}
-          >
-            {MODEL_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-          <button onClick={loadModel} disabled={isLoading || isGenerating}>
-            {isLoading ? "Loading..." : "Load model"}
+      {phase === "start" && (
+        <section className="hero-screen glass">
+          <h1>Gemma 4 WebGPU</h1>
+          <p>Multimodal AI, running locally in your browser with WebGPU</p>
+          <div className="selector-row">
+            <select
+              id="model"
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              disabled={isLoading || isGenerating}
+            >
+              {MODEL_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
+            Load model
           </button>
-        </div>
-        <p className="status">{status}</p>
-        <progress max={100} value={progress} />
-      </section>
+        </section>
+      )}
 
-      <section className="chat">
-        <div className="messages">
-          {messages.map((msg) => (
-            <article key={msg.id} className={`bubble ${msg.role}`}>
-              <strong>{msg.role === "user" ? "You" : "Assistant"}</strong>
-              <p>{msg.content}</p>
-            </article>
-          ))}
-          {assistantBuffer && (
-            <article className="bubble assistant">
-              <strong>Assistant</strong>
-              <p>{assistantBuffer}</p>
-            </article>
-          )}
-        </div>
+      {phase === "loading" && (
+        <section className="loading-screen glass">
+          <h2>Gemma 4 WebGPU</h2>
+          <div className="meter">
+            <div className="meter-fill" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="percent">{progress}%</div>
+          <div className="status-line">{status || "Loading model..."}</div>
+          <div className="offline-line">Runs 100% offline</div>
+        </section>
+      )}
 
-        <form onSubmit={sendPrompt} className="composer">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={placeholder}
-            rows={4}
-            disabled={!isLoaded || isGenerating}
-          />
-          <button type="submit" disabled={!isLoaded || isGenerating}>
-            {isGenerating ? "Generating..." : "Send"}
-          </button>
-        </form>
-      </section>
+      {phase === "ready" && (
+        <section className="chat-screen">
+          <header className="chat-top glass">
+            <div>
+              <h2>Gemma 4 WebGPU</h2>
+              <p>{status}</p>
+            </div>
+            <div className="row">
+              <select
+                id="model"
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                disabled={isLoading || isGenerating}
+              >
+                {MODEL_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+              <button onClick={loadModel} disabled={isLoading || isGenerating}>
+                Reload model
+              </button>
+            </div>
+          </header>
+
+          <section className="chat glass">
+            <div className="messages">
+              {messages.map((msg) => (
+                <article key={msg.id} className={`bubble ${msg.role}`}>
+                  <strong>{msg.role === "user" ? "You" : "Assistant"}</strong>
+                  <p>{msg.content}</p>
+                </article>
+              ))}
+              {assistantBuffer && (
+                <article className="bubble assistant">
+                  <strong>Assistant</strong>
+                  <p>{assistantBuffer}</p>
+                </article>
+              )}
+            </div>
+
+            <form onSubmit={sendPrompt} className="composer">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder={placeholder}
+                rows={4}
+                disabled={!isLoaded || isGenerating}
+              />
+              <button type="submit" disabled={!isLoaded || isGenerating}>
+                {isGenerating ? "Generating..." : "Send"}
+              </button>
+            </form>
+          </section>
+        </section>
+      )}
     </main>
   );
 }

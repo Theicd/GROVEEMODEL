@@ -1,9 +1,9 @@
 :root {
   color-scheme: dark;
-  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  font-family: "Google Sans", "Segoe UI", Inter, Roboto, Arial, sans-serif;
   line-height: 1.4;
-  color: #e6e8ee;
-  background: #0b1020;
+  color: #f3f7ff;
+  background: #040811;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -22,37 +22,146 @@ body {
 }
 
 .app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px;
+  min-height: 100vh;
+  width: 100%;
+  padding: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 25%, rgba(95, 152, 255, 0.13) 0%, rgba(95, 152, 255, 0) 40%),
+    radial-gradient(circle at 80% 15%, rgba(31, 219, 255, 0.1) 0%, rgba(31, 219, 255, 0) 35%),
+    radial-gradient(circle at 70% 80%, rgba(130, 173, 255, 0.08) 0%, rgba(130, 173, 255, 0) 30%),
+    linear-gradient(180deg, rgba(6, 11, 24, 0.95), rgba(4, 8, 17, 0.95)),
+    url("https://huggingface.co/spaces/webml-community/Gemma-4-WebGPU/resolve/main/background.jpg")
+      center / cover no-repeat;
+}
+
+.bg-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(46, 95, 168, 0.08) 0 1px,
+      transparent 1px 110px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      rgba(46, 95, 168, 0.08) 0 1px,
+      transparent 1px 110px
+    );
+  pointer-events: none;
+}
+
+.glass {
+  background: rgba(9, 17, 35, 0.52);
+  border: 1px solid rgba(128, 170, 255, 0.25);
+  border-radius: 18px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.45);
+}
+
+.hero-screen,
+.loading-screen {
+  position: relative;
+  z-index: 1;
+  width: min(860px, 100%);
+  min-height: 320px;
+  padding: 34px 30px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 14px;
 }
 
-.topbar h1 {
+.hero-screen h1,
+.loading-screen h2 {
   margin: 0;
-  font-size: 1.7rem;
+  font-size: clamp(2.1rem, 5vw, 3.6rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
 
-.topbar p {
-  margin: 8px 0 0;
-  color: #a6afc4;
+.hero-screen p {
+  margin: 0;
+  color: #b5c6eb;
+  font-size: 1.05rem;
 }
 
-.panel,
-.chat {
-  background: #111932;
-  border: 1px solid #223159;
-  border-radius: 12px;
-  padding: 16px;
+.selector-row {
+  width: min(700px, 100%);
 }
 
-.label {
-  display: block;
-  font-size: 0.9rem;
-  color: #b2bdd7;
-  margin-bottom: 8px;
+.pill-button {
+  border-radius: 999px;
+  min-width: 190px;
+  font-weight: 700;
+}
+
+.loading-screen h2 {
+  font-size: clamp(2rem, 4.6vw, 3rem);
+}
+
+.meter {
+  width: min(520px, 88%);
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #2d8fff, #22d3b4);
+  transition: width 200ms ease;
+}
+
+.percent {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.status-line {
+  color: #c7d5f1;
+}
+
+.offline-line {
+  color: #95abd8;
+  font-size: 0.95rem;
+}
+
+.chat-screen {
+  position: relative;
+  z-index: 1;
+  width: min(1100px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 14px;
+}
+
+.chat-top h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.chat-top p {
+  margin: 4px 0 0;
+  color: #b5c6eb;
+  font-size: 0.93rem;
 }
 
 .row {
@@ -64,8 +173,8 @@ select,
 textarea,
 button {
   border-radius: 8px;
-  border: 1px solid #33477e;
-  background: #0f1730;
+  border: 1px solid #38518b;
+  background: rgba(12, 22, 43, 0.92);
   color: #eef2ff;
   font: inherit;
 }
@@ -73,43 +182,33 @@ button {
 select,
 textarea {
   width: 100%;
-  padding: 10px 12px;
+  padding: 10px 11px;
 }
 
 button {
-  min-width: 130px;
+  min-width: 145px;
   padding: 10px 12px;
   cursor: pointer;
-  background: #2f66ff;
-  border-color: #2f66ff;
+  background: linear-gradient(135deg, #296ee9, #3090fb);
+  border-color: #3686f5;
   font-weight: 600;
 }
 
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
-.status {
-  margin: 10px 0 6px;
-  color: #9fb0da;
-  font-size: 0.9rem;
-}
-
-progress {
-  width: 100%;
-  height: 10px;
-}
-
 .chat {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  padding: 14px;
+  height: min(76vh, 900px);
+  gap: 10px;
 }
 
 .messages {
-  min-height: 340px;
-  max-height: 56vh;
+  min-height: 260px;
+  max-height: none;
+  flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -117,17 +216,20 @@ progress {
 }
 
 .bubble {
-  border: 1px solid #2c3f70;
+  border: 1px solid #2a4477;
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 11px 13px;
 }
 
 .bubble.user {
-  background: #1b2b56;
+  background: rgba(43, 79, 152, 0.42);
+  align-self: flex-end;
+  width: min(76%, 720px);
 }
 
 .bubble.assistant {
-  background: #161d3a;
+  background: rgba(23, 36, 69, 0.74);
+  width: min(82%, 760px);
 }
 
 .bubble strong {
@@ -144,24 +246,54 @@ progress {
 .composer {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
+  align-items: stretch;
 }
 
 .composer textarea {
-  resize: vertical;
+  resize: none;
+  min-height: 82px;
+}
+
+.composer button {
+  min-width: 122px;
 }
 
 @media (max-width: 720px) {
   .app {
-    padding: 14px;
+    padding: 12px;
   }
 
+  .hero-screen,
+  .loading-screen {
+    min-height: 280px;
+    padding: 20px 14px;
+  }
+
+  .chat-top,
   .row,
   .composer {
     flex-direction: column;
+    align-items: stretch;
   }
 
-  button {
+  .bubble.user,
+  .bubble.assistant,
+  button,
+  .pill-button {
     width: 100%;
   }
+
+  .chat {
+    height: calc(100vh - 160px);
+  }
+}
+
+.corner-note {
+  position: absolute;
+  left: 18px;
+  bottom: 16px;
+  z-index: 1;
+  color: #7f94c4;
+  font-size: 0.82rem;
+  opacity: 0.85;
 }
