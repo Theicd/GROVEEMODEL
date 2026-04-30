@@ -18,7 +18,12 @@ type GenerateMessage = {
 
 type WorkerInput = LoadMessage | GenerateMessage;
 
-let generator: any = null;
+type TextGenerator = ((
+  input: string,
+  options: Record<string, unknown>,
+) => Promise<unknown>) & { tokenizer: unknown };
+
+let generator: TextGenerator | null = null;
 let activeModel = "";
 let activeDevice = "unknown";
 let busy = false;
@@ -36,7 +41,7 @@ const clampProgress = (value: number) => {
 
 const loadWithDevice = async (modelId: string, dtype: LoadMessage["dtype"], device: "webgpu" | "wasm") => {
   post({ type: "status", text: `Loading ${modelId} on ${device}...` });
-  const pipe = await pipeline("text-generation", modelId, {
+  const pipe = (await pipeline("text-generation", modelId, {
     device,
     dtype,
     progress_callback: (progressData: { status?: string; progress?: number }) => {
@@ -46,7 +51,7 @@ const loadWithDevice = async (modelId: string, dtype: LoadMessage["dtype"], devi
         progress: clampProgress((progressData.progress ?? 0) * 100),
       });
     },
-  });
+  })) as TextGenerator;
 
   return pipe;
 };
@@ -92,7 +97,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
 
       busy = true;
       const finalPrompt = `${message.systemPrompt}\n\nUser: ${message.prompt}\nAssistant:`;
-      const streamer = new TextStreamer(generator.tokenizer, {
+      const streamer = new TextStreamer(generator.tokenizer as never, {
         skip_prompt: true,
         callback_function: (text: string) => {
           post({ type: "token", text });
