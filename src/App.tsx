@@ -15,6 +15,7 @@ type WorkerOutMessage =
   | { type: "progress"; text: string; progress: number }
   | { type: "loaded"; modelId: string; device: string }
   | { type: "token"; text: string }
+  | { type: "caption_done"; text: string }
   | { type: "done" }
   | { type: "error"; error: string };
 
@@ -145,6 +146,9 @@ function App() {
   const [assistantBuffer, setAssistantBuffer] = useState("");
   const [thinkingMode, setThinkingMode] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
+  const [mode, setMode] = useState<"chat" | "caption" | "image">("chat");
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const activeModelOption = useMemo(
@@ -193,6 +197,19 @@ function App() {
           assistantBufferRef.current = next;
           return next;
         });
+      } else if (msg.type === "caption_done") {
+        setIsGenerating(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: msg.text,
+            modelLabel: "Vision",
+          },
+        ]);
+        setAssistantBuffer("");
+        assistantBufferRef.current = "";
       } else if (msg.type === "done") {
         setIsGenerating(false);
         let output = cleanModelOutput(assistantBufferRef.current);
@@ -240,6 +257,41 @@ function App() {
     if (!workerRef.current || !isLoaded || isGenerating) return;
     const trimmed = prompt.trim();
     if (!trimmed) return;
+
+    if (mode === "caption") {
+      if (!imageDataUrl) return;
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: `Describe this image: ${trimmed}` }]);
+      setPrompt("");
+      setIsGenerating(true);
+      workerRef.current.postMessage({
+        type: "caption",
+        imageDataUrl,
+        prompt: trimmed,
+      });
+      return;
+    }
+
+    if (mode === "image") {
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: `Create image: ${trimmed}` }]);
+      setPrompt("");
+      setIsGenerating(true);
+      try {
+        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(trimmed)}?width=1024&height=1024&model=flux&nologo=true`;
+        setGeneratedImageUrl(url);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Generated image ready.\n${url}`,
+            modelLabel: "Image",
+          },
+        ]);
+      } finally {
+        setIsGenerating(false);
+      }
+      return;
+    }
 
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
     setPrompt("");
@@ -373,6 +425,17 @@ function App() {
 
             <form onSubmit={sendPrompt} className="composer chatgpt-composer">
               <div className="chat-controls">
+                <div className="mode-group">
+                  <button type="button" className={`mode-btn ${mode === "chat" ? "active" : ""}`} onClick={() => setMode("chat")}>
+                    Chat
+                  </button>
+                  <button type="button" className={`mode-btn ${mode === "caption" ? "active" : ""}`} onClick={() => setMode("caption")}>
+                    Image to Text
+                  </button>
+                  <button type="button" className={`mode-btn ${mode === "image" ? "active" : ""}`} onClick={() => setMode("image")}>
+                    Text to Image
+                  </button>
+                </div>
                 <select
                   id="model"
                   className="model-select"
@@ -413,11 +476,38 @@ function App() {
                   Reload
                 </button>
               </div>
+              {mode === "caption" && (
+                <div className="upload-row">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => setImageDataUrl(String(reader.result));
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  {imageDataUrl && <img className="preview-img" src={imageDataUrl} alt="Uploaded preview" />}
+                </div>
+              )}
+              {mode === "image" && generatedImageUrl && (
+                <div className="upload-row">
+                  <img className="preview-img" src={generatedImageUrl} alt="Generated output" />
+                </div>
+              )}
               <div className="composer-main">
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={placeholder}
+                  placeholder={
+                    mode === "chat"
+                      ? placeholder
+                      : mode === "caption"
+                        ? "What should I describe in the image?"
+                        : "Describe the image you want to generate..."
+                  }
                   rows={2}
                   disabled={!isLoaded || isGenerating}
                 />

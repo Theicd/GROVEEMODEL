@@ -331,6 +331,27 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.mode-group {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  min-width: 88px;
+  height: 32px;
+  border-radius: 999px;
+  background: #1b2538;
+  border: 1px solid #324a74;
+  color: #cfdbf8;
+  font-size: 0.78rem;
+}
+
+.mode-btn.active {
+  background: #2f7cff;
+  border-color: #2f7cff;
+  color: #ffffff;
+}
+
 .model-select {
   flex: 1 1 360px;
 }
@@ -397,6 +418,21 @@ button:disabled {
   height: 38px;
   border-radius: 999px;
   padding: 0;
+}
+
+.upload-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+
+.preview-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid #324a74;
 }
 
 .empty-state {

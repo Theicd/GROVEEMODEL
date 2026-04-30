@@ -20,7 +20,13 @@ type GenerateMessage = {
   webContext: string;
 };
 
-type WorkerInput = LoadMessage | GenerateMessage;
+type CaptionMessage = {
+  type: "caption";
+  imageDataUrl: string;
+  prompt?: string;
+};
+
+type WorkerInput = LoadMessage | GenerateMessage | CaptionMessage;
 
 type TextGenerator = ((
   input: string,
@@ -28,6 +34,8 @@ type TextGenerator = ((
 ) => Promise<unknown>) & { tokenizer: unknown };
 
 let generator: TextGenerator | null = null;
+let captioner: ((image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>) | null =
+  null;
 let activeModel = "";
 let activeDevice = "unknown";
 let busy = false;
@@ -62,6 +70,15 @@ const loadWithDevice = async (
   })) as TextGenerator;
 
   return pipe;
+};
+
+const loadCaptioner = async (device: "webgpu" | "wasm") => {
+  const visionModel = "Xenova/vit-gpt2-image-captioning";
+  post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
+  return (await pipeline("image-to-text", visionModel, {
+    device,
+    dtype: "q8",
+  })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
 };
 
 const normalizePrompt = (message: GenerateMessage) => {
@@ -162,6 +179,31 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       });
 
       post({ type: "done" });
+      busy = false;
+      return;
+    }
+
+    if (message.type === "caption") {
+      if (busy) {
+        post({ type: "error", error: "Another task is in progress. Please wait." });
+        return;
+      }
+
+      busy = true;
+      if (!captioner) {
+        try {
+          captioner = await loadCaptioner("webgpu");
+        } catch {
+          captioner = await loadCaptioner("wasm");
+        }
+      }
+
+      const result = await captioner(message.imageDataUrl, {
+        max_new_tokens: 80,
+      });
+      const captionText = result?.[0]?.generated_text?.trim() || "Could not generate image description.";
+      const prefix = message.prompt?.trim() ? `${message.prompt.trim()}\n` : "";
+      post({ type: "caption_done", text: `${prefix}${captionText}` });
       busy = false;
     }
   } catch (error) {
