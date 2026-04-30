@@ -7,6 +7,7 @@ type ChatMessage = {
   id: string;
   role: Role;
   content: string;
+  modelLabel?: string;
 };
 
 type WorkerOutMessage =
@@ -22,26 +23,31 @@ const MODEL_OPTIONS = [
   {
     id: "onnx-community/gemma-4-E2B-it-ONNX",
     label: "Gemma 4 E2B Instruct",
+    shortLabel: "Gemma 4",
     meta: "Google | ONNX | General",
   },
   {
     id: "onnx-community/Qwen3-0.6B-ONNX",
     label: "Qwen3 0.6B",
+    shortLabel: "Qwen3",
     meta: "Alibaba | ONNX | Fast",
   },
   {
     id: "onnx-community/Qwen2.5-1.5B-Instruct-ONNX",
     label: "Qwen2.5 1.5B Instruct",
+    shortLabel: "Qwen2.5",
     meta: "Alibaba | ONNX | General",
   },
   {
     id: "onnx-community/Llama-3.2-1B-Instruct-ONNX",
     label: "Llama 3.2 1B Instruct",
+    shortLabel: "Llama 3.2",
     meta: "Meta | ONNX | General",
   },
   {
     id: "onnx-community/Qwen2.5-Coder-1.5B-Instruct-ONNX",
     label: "Qwen2.5 Coder 1.5B",
+    shortLabel: "Qwen Coder",
     meta: "Alibaba | ONNX | Code",
   },
 ] as const;
@@ -55,12 +61,12 @@ type ModelPreset = {
 };
 
 const DEFAULT_PRESET: ModelPreset = {
-  temperature: 0.3,
-  maxNewTokens: 220,
-  repetitionPenalty: 1.12,
+  temperature: 0.22,
+  maxNewTokens: 160,
+  repetitionPenalty: 1.15,
   topP: 0.92,
   systemPrompt:
-    "You are a concise helpful AI assistant. Respond in the same language as the user and avoid repeating role labels.",
+    "You are a concise helpful AI assistant. Respond in the same language as the user and avoid repeating role labels. Keep answers focused and do not repeat greetings.",
 };
 
 const getModelPreset = (model: string, thinking: boolean): ModelPreset => {
@@ -68,18 +74,18 @@ const getModelPreset = (model: string, thinking: boolean): ModelPreset => {
   if (model.toLowerCase().includes("coder") || model.toLowerCase().includes("code")) {
     return {
       ...base,
-      temperature: 0.15,
-      maxNewTokens: 280,
-      repetitionPenalty: 1.05,
+      temperature: 0.1,
+      maxNewTokens: 220,
+      repetitionPenalty: 1.08,
       systemPrompt:
         "You are a senior coding assistant. Provide practical answers with correct code and brief explanations.",
     };
   }
 
   if (model.toLowerCase().includes("qwen")) {
-    base.temperature = 0.25;
-    base.maxNewTokens = 240;
-    base.repetitionPenalty = 1.08;
+    base.temperature = 0.18;
+    base.maxNewTokens = 140;
+    base.repetitionPenalty = 1.14;
   }
 
   if (thinking) {
@@ -98,9 +104,25 @@ const cleanModelOutput = (input: string): string => {
     .filter((line) => !/^\s*(User|Assistant|System)\s*:/i.test(line))
     .join("\n")
     .replace(/^["']+|["']+$/g, "")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return cleaned.length ? cleaned : "I could not generate a stable response. Please try again.";
+  const lines = cleaned
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const deduped: string[] = [];
+  for (const line of lines) {
+    if (deduped[deduped.length - 1] !== line) deduped.push(line);
+  }
+  const normalized = deduped.join("\n");
+
+  return normalized.length ? normalized : "I could not generate a stable response. Please try again.";
+};
+
+const isSimpleGreeting = (text: string): boolean => {
+  const normalized = text.trim().toLowerCase();
+  return /^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized);
 };
 
 const fetchWebContext = async (query: string): Promise<string> => {
@@ -121,6 +143,7 @@ const fetchWebContext = async (query: string): Promise<string> => {
 function App() {
   const workerRef = useRef<Worker | null>(null);
   const assistantBufferRef = useRef("");
+  const activeModelShortLabelRef = useRef("Assistant");
   const [modelId, setModelId] = useState(DEFAULT_MODEL);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -142,6 +165,10 @@ function App() {
     () => activeModelOption?.label ?? (modelId.split("/").pop() ?? modelId),
     [activeModelOption, modelId],
   );
+
+  useEffect(() => {
+    activeModelShortLabelRef.current = activeModelOption?.shortLabel ?? "Assistant";
+  }, [activeModelOption]);
 
   const placeholder = useMemo(() => {
     if (!isLoaded) return "Load the model first...";
@@ -173,10 +200,16 @@ function App() {
         });
       } else if (msg.type === "done") {
         setIsGenerating(false);
-        const output = cleanModelOutput(assistantBufferRef.current);
+        let output = cleanModelOutput(assistantBufferRef.current);
+        if (output.length > 900) output = `${output.slice(0, 900).trimEnd()}...`;
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: "assistant", content: output },
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: output,
+            modelLabel: activeModelShortLabelRef.current,
+          },
         ]);
         setAssistantBuffer("");
         assistantBufferRef.current = "";
@@ -220,6 +253,7 @@ function App() {
     setIsGenerating(true);
 
     const preset = getModelPreset(modelId, thinkingMode);
+    const greeting = isSimpleGreeting(trimmed);
     let webContext = "";
     if (webSearchMode) {
       setStatus("Searching web context...");
@@ -234,8 +268,10 @@ function App() {
     workerRef.current.postMessage({
       type: "generate",
       prompt: trimmed,
-      systemPrompt: preset.systemPrompt,
-      maxNewTokens: preset.maxNewTokens,
+      systemPrompt: greeting
+        ? `${preset.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
+        : preset.systemPrompt,
+      maxNewTokens: greeting ? 48 : preset.maxNewTokens,
       temperature: preset.temperature,
       repetitionPenalty: preset.repetitionPenalty,
       topP: preset.topP,
@@ -296,9 +332,6 @@ function App() {
               <p className="top-status">{status}</p>
             </div>
             <div className="top-actions">
-              <span className="model-pill">
-                {activeModelOption ? `${activeModelOption.label} - ${activeModelOption.meta}` : modelId}
-              </span>
               <select
                 id="model"
                 value={modelId}
@@ -327,13 +360,13 @@ function App() {
               )}
               {messages.map((msg) => (
                 <article key={msg.id} className={`bubble ${msg.role}`}>
-                  <strong>{msg.role === "user" ? "You" : "Gemma"}</strong>
+                  <strong>{msg.role === "user" ? "You" : msg.modelLabel ?? "Assistant"}</strong>
                   <p>{msg.content}</p>
                 </article>
               ))}
               {assistantBuffer && (
                 <article className="bubble assistant">
-                  <strong>Gemma</strong>
+                  <strong>{activeModelOption?.shortLabel ?? "Assistant"}</strong>
                   <p>{assistantBuffer}</p>
                 </article>
               )}

@@ -182,19 +182,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: min(58%, 560px);
-}
-
-.model-pill {
-  padding: 8px 10px;
-  border: 1px solid #314a82;
-  border-radius: 999px;
-  font-size: 0.74rem;
-  color: #b9cbf2;
-  background: rgba(21, 33, 61, 0.9);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: min(44%, 420px);
 }
 
 .row {
@@ -289,15 +277,17 @@ button:disabled {
   display: flex;
   gap: 10px;
   align-items: flex-end;
-  padding: 14px 16px 16px;
+  padding: 12px 14px 14px;
   border-top: 1px solid rgba(112, 142, 204, 0.25);
   background: linear-gradient(180deg, rgba(9, 15, 29, 0.6), rgba(9, 15, 29, 0.88));
+  flex-wrap: wrap;
 }
 
 .chat-controls {
   display: flex;
   gap: 10px;
   align-items: center;
+  width: 100%;
 }
 
 .toggle {
@@ -317,7 +307,7 @@ button:disabled {
 }
 
 .composer-main {
-  flex: 1;
+  flex: 1 1 560px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -342,6 +332,7 @@ button:disabled {
   height: 42px;
   border-radius: 12px;
   align-self: flex-end;
+  flex: 0 0 auto;
 }
 
 .empty-state {
@@ -384,10 +375,6 @@ button:disabled {
 
   .chat-controls {
     flex-wrap: wrap;
-  }
-
-  .model-pill {
-    max-width: 100%;
   }
 
   .bubble.user,
