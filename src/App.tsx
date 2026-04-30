@@ -19,12 +19,32 @@ type WorkerOutMessage =
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
 const MODEL_OPTIONS = [
-  "onnx-community/gemma-4-E2B-it-ONNX",
-  "onnx-community/Qwen3-0.6B-ONNX",
-  "onnx-community/Qwen2.5-1.5B-Instruct-ONNX",
-  "onnx-community/Llama-3.2-1B-Instruct-ONNX",
-  "onnx-community/Qwen2.5-Coder-1.5B-Instruct-ONNX",
-];
+  {
+    id: "onnx-community/gemma-4-E2B-it-ONNX",
+    label: "Gemma 4 E2B Instruct",
+    meta: "Google | ONNX | General",
+  },
+  {
+    id: "onnx-community/Qwen3-0.6B-ONNX",
+    label: "Qwen3 0.6B",
+    meta: "Alibaba | ONNX | Fast",
+  },
+  {
+    id: "onnx-community/Qwen2.5-1.5B-Instruct-ONNX",
+    label: "Qwen2.5 1.5B Instruct",
+    meta: "Alibaba | ONNX | General",
+  },
+  {
+    id: "onnx-community/Llama-3.2-1B-Instruct-ONNX",
+    label: "Llama 3.2 1B Instruct",
+    meta: "Meta | ONNX | General",
+  },
+  {
+    id: "onnx-community/Qwen2.5-Coder-1.5B-Instruct-ONNX",
+    label: "Qwen2.5 Coder 1.5B",
+    meta: "Alibaba | ONNX | Code",
+  },
+] as const;
 
 type ModelPreset = {
   temperature: number;
@@ -114,7 +134,14 @@ function App() {
   const [webSearchMode, setWebSearchMode] = useState(false);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
-  const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
+  const activeModelOption = useMemo(
+    () => MODEL_OPTIONS.find((option) => option.id === modelId),
+    [modelId],
+  );
+  const modelLabel = useMemo(
+    () => activeModelOption?.label ?? (modelId.split("/").pop() ?? modelId),
+    [activeModelOption, modelId],
+  );
 
   const placeholder = useMemo(() => {
     if (!isLoaded) return "Load the model first...";
@@ -226,7 +253,7 @@ function App() {
 
       {phase === "start" && (
         <section className="hero-screen glass">
-          <h1>GROOVEE - LOCAL MODEL</h1>
+          <h1>GROVEE - WEBGPU</h1>
           <p>AI models running directly on your device with WebGPU</p>
           <div className="selector-row">
             <select
@@ -236,8 +263,8 @@ function App() {
               disabled={isLoading || isGenerating}
             >
               {MODEL_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
+                <option key={option.id} value={option.id}>
+                  {option.label} - {option.meta}
                 </option>
               ))}
             </select>
@@ -250,7 +277,7 @@ function App() {
 
       {phase === "loading" && (
         <section className="loading-screen glass">
-          <h2>GROOVEE - LOCAL MODEL</h2>
+          <h2>GROVEE - WEBGPU</h2>
           <div className="loading-model">{modelLabel}</div>
           <div className="meter">
             <div className="meter-fill" style={{ width: `${progress}%` }} />
@@ -265,11 +292,13 @@ function App() {
         <section className="chat-screen">
           <header className="chat-top glass">
             <div className="title-wrap">
-              <h2>GROOVEE - LOCAL MODEL</h2>
+              <h2>GROVEE - WEBGPU</h2>
               <p className="top-status">{status}</p>
             </div>
             <div className="top-actions">
-              <span className="model-pill">{modelId}</span>
+              <span className="model-pill">
+                {activeModelOption ? `${activeModelOption.label} - ${activeModelOption.meta}` : modelId}
+              </span>
               <select
                 id="model"
                 value={modelId}
@@ -277,8 +306,8 @@ function App() {
                 disabled={isLoading || isGenerating}
               >
                 {MODEL_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
+                  <option key={option.id} value={option.id}>
+                    {option.label} - {option.meta}
                   </option>
                 ))}
               </select>
