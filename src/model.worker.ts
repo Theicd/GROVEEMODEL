@@ -32,7 +32,19 @@ type PreloadCaptionMessage = {
   modelId: string;
 };
 
-type WorkerInput = LoadMessage | GenerateMessage | CaptionMessage | PreloadCaptionMessage;
+type PreloadAllMessage = {
+  type: "preload_all";
+  textModelIds: string[];
+  captionModelIds: string[];
+  dtype: "q4" | "q8" | "fp16" | "fp32";
+};
+
+type WorkerInput =
+  | LoadMessage
+  | GenerateMessage
+  | CaptionMessage
+  | PreloadCaptionMessage
+  | PreloadAllMessage;
 
 type TextGenerator = ((
   input: string,
@@ -40,6 +52,7 @@ type TextGenerator = ((
 ) => Promise<unknown>) & { tokenizer: unknown };
 
 let generator: TextGenerator | null = null;
+const textGeneratorCache = new Map<string, { generator: TextGenerator; device: "webgpu" | "wasm" }>();
 const captionerCache = new Map<
   string,
   (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>
@@ -151,6 +164,23 @@ const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
   })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
 };
 
+const loadTextGenerator = async (modelId: string, dtype: LoadMessage["dtype"]) => {
+  const cached = textGeneratorCache.get(modelId);
+  if (cached) return cached;
+  try {
+    const loaded = await loadWithDevice(modelId, dtype, "webgpu");
+    const entry = { generator: loaded, device: "webgpu" as const };
+    textGeneratorCache.set(modelId, entry);
+    return entry;
+  } catch {
+    post({ type: "status", text: `WebGPU unavailable for ${modelId}. Falling back to WASM...` });
+    const loaded = await loadWithDevice(modelId, dtype, "wasm");
+    const entry = { generator: loaded, device: "wasm" as const };
+    textGeneratorCache.set(modelId, entry);
+    return entry;
+  }
+};
+
 const normalizePrompt = (message: GenerateMessage) => {
   const webBlock = message.webContext?.trim()
     ? `\n\nWeb context:\n${message.webContext.trim()}\nUse it only if relevant.\n`
@@ -202,18 +232,37 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "loaded", modelId: activeModel, device: activeDevice });
         return;
       }
-
-      try {
-        generator = await loadWithDevice(message.modelId, message.dtype, "webgpu");
-        activeDevice = "webgpu";
-      } catch {
-        post({ type: "status", text: "WebGPU unavailable. Falling back to WASM..." });
-        generator = await loadWithDevice(message.modelId, message.dtype, "wasm");
-        activeDevice = "wasm";
-      }
-
+      const loaded = await loadTextGenerator(message.modelId, message.dtype);
+      generator = loaded.generator;
+      activeDevice = loaded.device;
       activeModel = message.modelId;
       post({ type: "loaded", modelId: activeModel, device: activeDevice });
+      return;
+    }
+
+    if (message.type === "preload_all") {
+      if (busy) {
+        post({ type: "error", error: "Another task is in progress. Please wait." });
+        return;
+      }
+      for (const textModelId of message.textModelIds) {
+        await loadTextGenerator(textModelId, message.dtype);
+      }
+      for (const captionModelId of message.captionModelIds) {
+        if (captionerCache.has(captionModelId)) continue;
+        let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+        try {
+          captioner = await loadCaptioner(captionModelId, "webgpu");
+        } catch {
+          captioner = await loadCaptioner(captionModelId, "wasm");
+        }
+        captionerCache.set(captionModelId, captioner);
+      }
+      post({
+        type: "preload_all_done",
+        textModels: message.textModelIds.length,
+        captionModels: message.captionModelIds.length,
+      });
       return;
     }
 

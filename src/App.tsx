@@ -15,30 +15,25 @@ type WorkerOutMessage =
   | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
   | { type: "loaded"; modelId: string; device: string }
   | { type: "caption_model_loaded"; modelId: string; device: string }
+  | { type: "preload_all_done"; textModels: number; captionModels: number }
   | { type: "token"; text: string }
   | { type: "caption_done"; text: string }
   | { type: "done" }
   | { type: "error"; error: string };
 
-const DEFAULT_MODEL = "onnx-community/Qwen3-0.6B-ONNX";
+const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
 const MODEL_OPTIONS = [
   {
     id: "onnx-community/gemma-4-E2B-it-ONNX",
-    label: "Gemma 4 E2B Instruct",
+    label: "Gemma 4 E2B Instruct (Chat)",
     shortLabel: "Gemma 4",
     meta: "Google | ONNX | General",
   },
   {
-    id: "onnx-community/Qwen3-0.6B-ONNX",
-    label: "Qwen3 0.6B",
-    shortLabel: "Qwen3",
-    meta: "Alibaba | ONNX | Fast",
-  },
-  {
-    id: "onnx-community/Llama-3.2-1B-Instruct-ONNX",
-    label: "Llama 3.2 1B Instruct",
-    shortLabel: "Llama 3.2",
-    meta: "Meta | ONNX | General",
+    id: "onnx-community/Qwen2.5-Coder-0.5B-Instruct-ONNX",
+    label: "Qwen2.5 Coder 0.5B Instruct (Code)",
+    shortLabel: "Qwen Coder",
+    meta: "Alibaba | ONNX | Code",
   },
 ] as const;
 
@@ -168,6 +163,7 @@ function App() {
   const [imageGenModelId, setImageGenModelId] = useState<string>(IMAGE_MODEL_OPTIONS[0].id);
   const [visionModelLoading, setVisionModelLoading] = useState(false);
   const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
+  const [preloadAllLoading, setPreloadAllLoading] = useState(false);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const activeModelOption = useMemo(
@@ -218,6 +214,9 @@ function App() {
         setVisionModelLoading(false);
         setVisionReadyMap((prev) => ({ ...prev, [msg.modelId]: true }));
         setStatus(`Vision model ready on ${msg.device}`);
+      } else if (msg.type === "preload_all_done") {
+        setPreloadAllLoading(false);
+        setStatus(`All models downloaded: ${msg.textModels} text + ${msg.captionModels} vision`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -256,6 +255,7 @@ function App() {
         setIsGenerating(false);
         setIsLoading(false);
         setVisionModelLoading(false);
+        setPreloadAllLoading(false);
         setProgress(0);
         setProgressDetail("");
         setProgressFile("");
@@ -272,14 +272,30 @@ function App() {
 
   const loadModel = () => {
     if (!workerRef.current) return;
+    setModelId(DEFAULT_MODEL);
     setIsLoading(true);
-    setStatus("Loading model...");
+    setStatus("Loading Gemma 4 controller...");
     setProgress(0);
     setProgressDetail("Preparing local runtime...");
     setProgressFile("");
     workerRef.current.postMessage({
       type: "load",
-      modelId,
+      modelId: DEFAULT_MODEL,
+      dtype: "q4",
+    });
+  };
+
+  const preloadAllModels = () => {
+    if (!workerRef.current || preloadAllLoading || isLoading || isGenerating) return;
+    setPreloadAllLoading(true);
+    setStatus("Downloading all models to this browser...");
+    setProgress(0);
+    setProgressDetail("Preparing full local model set...");
+    setProgressFile("");
+    workerRef.current.postMessage({
+      type: "preload_all",
+      textModelIds: MODEL_OPTIONS.map((option) => option.id),
+      captionModelIds: VISION_MODEL_OPTIONS.map((option) => option.id),
       dtype: "q4",
     });
   };
@@ -388,23 +404,12 @@ function App() {
       {phase === "start" && (
         <section className="hero-screen glass">
           <h1>GROVEE - WEBGPU</h1>
-          <p>AI models running directly on your device with WebGPU</p>
-          <div className="selector-row">
-            <select
-              id="model"
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              disabled={isLoading || isGenerating}
-            >
-              {MODEL_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label} - {option.meta}
-                </option>
-              ))}
-            </select>
-          </div>
+          <p>Primary controller: Gemma 4. Image tasks run inside this interface.</p>
           <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-            Load model
+            Load Gemma 4
+          </button>
+          <button className="pill-button subtle-btn" onClick={preloadAllModels} disabled={preloadAllLoading || isLoading || isGenerating}>
+            {preloadAllLoading ? "Downloading all..." : "Download all models"}
           </button>
         </section>
       )}
@@ -534,26 +539,22 @@ function App() {
                     ))}
                   </select>
                 )}
-                <select
-                  id="model"
-                  className="model-select"
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                  disabled={isLoading || isGenerating}
-                >
-                  {MODEL_OPTIONS.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label} - {option.meta}
-                    </option>
-                  ))}
-                </select>
                 <button
                   type="button"
                   className="reload-btn subtle-btn"
                   onClick={loadModel}
                   disabled={isLoading || isGenerating}
                 >
-                  Reload
+                  Reload Gemma 4
+                </button>
+                <button
+                  type="button"
+                  className="reload-btn subtle-btn"
+                  onClick={preloadAllModels}
+                  disabled={preloadAllLoading || isLoading || isGenerating}
+                  title="Download chat + code + vision models to local browser cache"
+                >
+                  {preloadAllLoading ? "Downloading all..." : "Download all models"}
                 </button>
               </div>
             </div>
