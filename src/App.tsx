@@ -213,6 +213,16 @@ function App() {
         setStatus(`Loaded on ${msg.device}`);
         setProgressDetail("Model ready");
         setProgressFile("");
+        if (workerRef.current && !preloadAllLoading) {
+          setPreloadAllLoading(true);
+          setStatus("Gemma is ready. Downloading additional models in background...");
+          workerRef.current.postMessage({
+            type: "warmup_all",
+            textModelIds: MODEL_OPTIONS.map((option) => option.id).filter((id) => id !== DEFAULT_MODEL),
+            captionModelIds: VISION_MODEL_OPTIONS.map((option) => option.id),
+            dtype: "q4",
+          });
+        }
       } else if (msg.type === "caption_model_loaded") {
         setVisionReadyMap((prev) => ({ ...prev, [msg.modelId]: true }));
         setStatus(`Vision model ready on ${msg.device}`);
@@ -220,7 +230,11 @@ function App() {
         setPreloadAllLoading(false);
         const allVisionReady = Object.fromEntries(VISION_MODEL_OPTIONS.map((option) => [option.id, true]));
         setVisionReadyMap(allVisionReady);
+        setIsLoading(false);
         setIsLoaded(true);
+        setProgress(100);
+        setProgressDetail("All local models are ready");
+        setProgressFile("");
         setStatus(`All models downloaded: ${msg.textModels} text + ${msg.captionModels} vision`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
@@ -278,15 +292,14 @@ function App() {
     if (!workerRef.current) return;
     setModelId(DEFAULT_MODEL);
     setIsLoading(true);
-    setPreloadAllLoading(true);
-    setStatus("Downloading and initializing all models...");
+    setPreloadAllLoading(false);
+    setStatus("Loading Gemma controller...");
     setProgress(0);
-    setProgressDetail("Preparing full local model set...");
+    setProgressDetail("Preparing local runtime...");
     setProgressFile("");
     workerRef.current.postMessage({
-      type: "preload_all",
-      textModelIds: MODEL_OPTIONS.map((option) => option.id),
-      captionModelIds: VISION_MODEL_OPTIONS.map((option) => option.id),
+      type: "load",
+      modelId: DEFAULT_MODEL,
       dtype: "q4",
     });
   };

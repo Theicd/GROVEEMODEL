@@ -27,11 +27,13 @@ async function run(url) {
     result.details = `title=${title}; headerVisible=${hasAppHeader}`;
 
     if (hasAppHeader) {
-      const loadButton = page.getByRole("button", { name: "Load model" });
+      const loadButton = page
+        .getByRole("button", { name: /^(Start|Load model|Load Gemma 4)$/ })
+        .first();
       if (await loadButton.isVisible().catch(() => false)) {
         await loadButton.click();
         await page.waitForSelector(".loading-screen .status-line", { timeout: 20000 }).catch(() => {});
-        await page.waitForTimeout(7000);
+        await page.waitForTimeout(10000);
         const status = await page.locator(".loading-screen .status-line").first().innerText().catch(() => "status not found");
         const progress = await page.locator(".loading-screen .percent").innerText().catch(() => "n/a");
         const detail = await page
@@ -46,12 +48,12 @@ async function run(url) {
           .catch(() => "file not found");
         result.details += `; status=${status}; progress=${progress}; detail=${detail}; file=${file}; hfRequests=${hfRequests.length}`;
         const readyShell = page.locator(".ready-shell");
-        await readyShell.waitFor({ timeout: 240000 }).catch(() => {});
+        await readyShell.waitFor({ timeout: 360000 }).catch(() => {});
         if (await readyShell.isVisible().catch(() => false)) {
           const promptBox = page.locator("textarea").first();
-          await promptBox.fill("Hi");
+          await promptBox.fill("Hi, are you ready?");
           await page.locator(".send-btn").click();
-          await page.waitForTimeout(5000);
+          await page.waitForTimeout(12000);
           const bubbles = await page.locator(".bubble").count();
           const assistantLast = await page
             .locator(".bubble.assistant p")
@@ -59,7 +61,7 @@ async function run(url) {
             .innerText()
             .catch(() => "");
           result.details += `; bubbles=${bubbles}; assistantLastLen=${assistantLast.trim().length}`;
-          result.ok = hfRequests.length > 0 && bubbles >= 2;
+          result.ok = hfRequests.length > 0 && bubbles >= 2 && assistantLast.trim().length > 0;
         } else {
           result.ok = hfRequests.length > 0;
         }
@@ -75,7 +77,7 @@ async function run(url) {
   return result;
 }
 
-const targets = ["http://127.0.0.1:4173/GROVEEMODEL/", "https://theicd.github.io/GROVEEMODEL/"];
+const targets = ["http://127.0.0.1:4173/GROVEEMODEL/", "https://theicd.github.io/GROVEEMODEL/?v=e2e"];
 const outputs = [];
 for (const t of targets) outputs.push(await run(t));
 

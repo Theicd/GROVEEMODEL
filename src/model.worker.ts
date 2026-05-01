@@ -40,12 +40,20 @@ type PreloadAllMessage = {
   dtype: "q4" | "q8" | "fp16" | "fp32";
 };
 
+type WarmupAllMessage = {
+  type: "warmup_all";
+  textModelIds: string[];
+  captionModelIds: string[];
+  dtype: "q4" | "q8" | "fp16" | "fp32";
+};
+
 type WorkerInput =
   | LoadMessage
   | GenerateMessage
   | CaptionMessage
   | PreloadCaptionMessage
-  | PreloadAllMessage;
+  | PreloadAllMessage
+  | WarmupAllMessage;
 
 type TextGenerator = ((
   input: string,
@@ -246,18 +254,97 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "error", error: "Another task is in progress. Please wait." });
         return;
       }
+      const total = message.textModelIds.length + message.captionModelIds.length;
+      let completed = 0;
+      post({
+        type: "progress",
+        text: "Starting full local model download...",
+        progress: 0,
+        detail: `0 / ${total} models ready`,
+        file: "",
+      });
       for (const textModelId of message.textModelIds) {
+        post({ type: "status", text: `Preparing text model ${completed + 1}/${total}: ${textModelId}` });
         await loadTextGenerator(textModelId, message.dtype);
+        completed += 1;
+        post({
+          type: "progress",
+          text: "Downloaded local models",
+          progress: clampProgress((completed / total) * 100),
+          detail: `${completed} / ${total} models ready`,
+          file: textModelId,
+        });
       }
       for (const captionModelId of message.captionModelIds) {
-        if (captionerCache.has(captionModelId)) continue;
-        let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
-        try {
-          captioner = await loadCaptioner(captionModelId, "webgpu");
-        } catch {
-          captioner = await loadCaptioner(captionModelId, "wasm");
+        post({ type: "status", text: `Preparing vision model ${completed + 1}/${total}: ${captionModelId}` });
+        if (!captionerCache.has(captionModelId)) {
+          let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+          try {
+            captioner = await loadCaptioner(captionModelId, "webgpu");
+          } catch {
+            captioner = await loadCaptioner(captionModelId, "wasm");
+          }
+          captionerCache.set(captionModelId, captioner);
         }
-        captionerCache.set(captionModelId, captioner);
+        completed += 1;
+        post({
+          type: "progress",
+          text: "Downloaded local models",
+          progress: clampProgress((completed / total) * 100),
+          detail: `${completed} / ${total} models ready`,
+          file: captionModelId,
+        });
+      }
+      post({
+        type: "preload_all_done",
+        textModels: message.textModelIds.length,
+        captionModels: message.captionModelIds.length,
+      });
+      return;
+    }
+
+    if (message.type === "warmup_all") {
+      if (busy) {
+        post({ type: "error", error: "Another task is in progress. Please wait." });
+        return;
+      }
+      const total = message.textModelIds.length + message.captionModelIds.length;
+      let completed = 0;
+      post({
+        type: "status",
+        text: "Gemma is ready. Downloading additional models in background...",
+      });
+      for (const textModelId of message.textModelIds) {
+        if (!textGeneratorCache.has(textModelId)) {
+          await loadTextGenerator(textModelId, message.dtype);
+        }
+        completed += 1;
+        post({
+          type: "progress",
+          text: "Background model warmup",
+          progress: clampProgress((completed / total) * 100),
+          detail: `${completed} / ${total} background models ready`,
+          file: textModelId,
+        });
+      }
+      for (const captionModelId of message.captionModelIds) {
+        if (!captionerCache.has(captionModelId)) {
+          let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+          try {
+            captioner = await loadCaptioner(captionModelId, "webgpu");
+          } catch {
+            captioner = await loadCaptioner(captionModelId, "wasm");
+          }
+          captionerCache.set(captionModelId, captioner);
+        }
+        completed += 1;
+        post({
+          type: "progress",
+          text: "Background model warmup",
+          progress: clampProgress((completed / total) * 100),
+          detail: `${completed} / ${total} background models ready`,
+          file: captionModelId,
+        });
       }
       post({
         type: "preload_all_done",
