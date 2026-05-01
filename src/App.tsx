@@ -22,6 +22,7 @@ type WorkerOutMessage =
   | { type: "error"; error: string };
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
+const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct-ONNX";
 const MODEL_OPTIONS = [
   {
     id: "onnx-community/gemma-4-E2B-it-ONNX",
@@ -30,7 +31,7 @@ const MODEL_OPTIONS = [
     meta: "Google | ONNX | General",
   },
   {
-    id: "onnx-community/Qwen2.5-Coder-0.5B-Instruct-ONNX",
+    id: CODE_MODEL,
     label: "Qwen2.5 Coder 0.5B Instruct (Code)",
     shortLabel: "Qwen Coder",
     meta: "Alibaba | ONNX | Code",
@@ -123,6 +124,11 @@ const isSimpleGreeting = (text: string): boolean => {
   return /^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized);
 };
 
+const isCodeRequest = (text: string): boolean => {
+  const normalized = text.trim().toLowerCase();
+  return /(code|debug|bug|stack trace|typescript|javascript|python|function|class|compile|error)/.test(normalized);
+};
+
 const fetchWebContext = async (query: string): Promise<string> => {
   const encoded = encodeURIComponent(query);
   const endpoint = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encoded}&limit=3&namespace=0&format=json&origin=*`;
@@ -159,9 +165,6 @@ function App() {
   const [mode, setMode] = useState<"chat" | "caption" | "image">("chat");
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
-  const [visionModelId, setVisionModelId] = useState<string>(VISION_MODEL_OPTIONS[0].id);
-  const [imageGenModelId, setImageGenModelId] = useState<string>(IMAGE_MODEL_OPTIONS[0].id);
-  const [visionModelLoading, setVisionModelLoading] = useState(false);
   const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
   const [preloadAllLoading, setPreloadAllLoading] = useState(false);
 
@@ -211,11 +214,13 @@ function App() {
         setProgressDetail("Model ready");
         setProgressFile("");
       } else if (msg.type === "caption_model_loaded") {
-        setVisionModelLoading(false);
         setVisionReadyMap((prev) => ({ ...prev, [msg.modelId]: true }));
         setStatus(`Vision model ready on ${msg.device}`);
       } else if (msg.type === "preload_all_done") {
         setPreloadAllLoading(false);
+        const allVisionReady = Object.fromEntries(VISION_MODEL_OPTIONS.map((option) => [option.id, true]));
+        setVisionReadyMap(allVisionReady);
+        setIsLoaded(true);
         setStatus(`All models downloaded: ${msg.textModels} text + ${msg.captionModels} vision`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
@@ -254,7 +259,6 @@ function App() {
       } else if (msg.type === "error") {
         setIsGenerating(false);
         setIsLoading(false);
-        setVisionModelLoading(false);
         setPreloadAllLoading(false);
         setProgress(0);
         setProgressDetail("");
@@ -274,21 +278,8 @@ function App() {
     if (!workerRef.current) return;
     setModelId(DEFAULT_MODEL);
     setIsLoading(true);
-    setStatus("Loading Gemma 4 controller...");
-    setProgress(0);
-    setProgressDetail("Preparing local runtime...");
-    setProgressFile("");
-    workerRef.current.postMessage({
-      type: "load",
-      modelId: DEFAULT_MODEL,
-      dtype: "q4",
-    });
-  };
-
-  const preloadAllModels = () => {
-    if (!workerRef.current || preloadAllLoading || isLoading || isGenerating) return;
     setPreloadAllLoading(true);
-    setStatus("Downloading all models to this browser...");
+    setStatus("Downloading and initializing all models...");
     setProgress(0);
     setProgressDetail("Preparing full local model set...");
     setProgressFile("");
@@ -300,16 +291,6 @@ function App() {
     });
   };
 
-  const preloadVisionModel = () => {
-    if (!workerRef.current || visionModelLoading) return;
-    setVisionModelLoading(true);
-    setStatus("Loading vision model...");
-    workerRef.current.postMessage({
-      type: "preload_caption",
-      modelId: visionModelId,
-    });
-  };
-
   const sendPrompt = async (e: FormEvent) => {
     e.preventDefault();
     if (!workerRef.current || !isLoaded || isGenerating) return;
@@ -317,9 +298,9 @@ function App() {
     if (!trimmed) return;
 
     if (mode === "caption") {
-      if (!visionReadyMap[visionModelId]) {
-        setStatus("Vision model not ready. Loading it now...");
-        preloadVisionModel();
+      const captionModelId = VISION_MODEL_OPTIONS[0].id;
+      if (!visionReadyMap[captionModelId]) {
+        setStatus("Vision model is still loading. Please wait a few seconds.");
         return;
       }
       if (!imageDataUrl) {
@@ -333,7 +314,7 @@ function App() {
         type: "caption",
         imageDataUrl,
         prompt: trimmed,
-        modelId: visionModelId,
+        modelId: captionModelId,
       });
       return;
     }
@@ -343,7 +324,8 @@ function App() {
       setPrompt("");
       setIsGenerating(true);
       try {
-        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(trimmed)}?width=1024&height=1024&model=${encodeURIComponent(imageGenModelId)}&nologo=true`;
+        const imageModelId = IMAGE_MODEL_OPTIONS[0].id;
+        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(trimmed)}?width=1024&height=1024&model=${encodeURIComponent(imageModelId)}&nologo=true`;
         setGeneratedImageUrl(url);
         setMessages((prev) => [
           ...prev,
@@ -351,7 +333,7 @@ function App() {
             id: crypto.randomUUID(),
             role: "assistant",
             content: `Generated image ready.\n${url}`,
-            modelLabel: `Image (${imageGenModelId})`,
+            modelLabel: `Image (${imageModelId})`,
           },
         ]);
       } finally {
@@ -366,7 +348,8 @@ function App() {
     assistantBufferRef.current = "";
     setIsGenerating(true);
 
-    const preset = getModelPreset(modelId, thinkingMode);
+    const targetModelId = isCodeRequest(trimmed) ? CODE_MODEL : DEFAULT_MODEL;
+    const preset = getModelPreset(targetModelId, thinkingMode);
     const greeting = isSimpleGreeting(trimmed);
     let webContext = "";
     if (webSearchMode) {
@@ -381,6 +364,7 @@ function App() {
 
     workerRef.current.postMessage({
       type: "generate",
+      modelId: targetModelId,
       prompt: trimmed,
       systemPrompt: greeting
         ? `${preset.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
@@ -406,10 +390,7 @@ function App() {
           <h1>GROVEE - WEBGPU</h1>
           <p>Primary controller: Gemma 4. Image tasks run inside this interface.</p>
           <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-            Load Gemma 4
-          </button>
-          <button className="pill-button subtle-btn" onClick={preloadAllModels} disabled={preloadAllLoading || isLoading || isGenerating}>
-            {preloadAllLoading ? "Downloading all..." : "Download all models"}
+            {preloadAllLoading ? "Loading all models..." : "Start"}
           </button>
         </section>
       )}
@@ -494,68 +475,7 @@ function App() {
                     Text to Image
                   </button>
                 </div>
-                {mode === "caption" && (
-                  <select
-                    className="model-select"
-                    value={visionModelId}
-                    onChange={(e) => {
-                      setVisionModelId(e.target.value);
-                    }}
-                    disabled={isGenerating}
-                  >
-                    {VISION_MODEL_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                {mode === "caption" && (
-                  <button
-                    type="button"
-                    className="reload-btn subtle-btn"
-                    onClick={preloadVisionModel}
-                    disabled={visionModelLoading || isGenerating}
-                    title="Download and initialize selected image-to-text model"
-                  >
-                    {visionModelLoading
-                      ? "Loading vision..."
-                      : visionReadyMap[visionModelId]
-                        ? "Vision ready"
-                        : "Load vision model"}
-                  </button>
-                )}
-                {mode === "image" && (
-                  <select
-                    className="model-select"
-                    value={imageGenModelId}
-                    onChange={(e) => setImageGenModelId(e.target.value)}
-                    disabled={isGenerating}
-                  >
-                    {IMAGE_MODEL_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <button
-                  type="button"
-                  className="reload-btn subtle-btn"
-                  onClick={loadModel}
-                  disabled={isLoading || isGenerating}
-                >
-                  Reload Gemma 4
-                </button>
-                <button
-                  type="button"
-                  className="reload-btn subtle-btn"
-                  onClick={preloadAllModels}
-                  disabled={preloadAllLoading || isLoading || isGenerating}
-                  title="Download chat + code + vision models to local browser cache"
-                >
-                  {preloadAllLoading ? "Downloading all..." : "Download all models"}
-                </button>
+                <span className="mode-note">Gemma 4 controller active</span>
               </div>
             </div>
 

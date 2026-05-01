@@ -339,6 +339,11 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.mode-note {
+  color: #9eb3df;
+  font-size: 0.82rem;
+}
+
 .mode-group {
   display: inline-flex;
   gap: 6px;

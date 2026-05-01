@@ -10,6 +10,7 @@ type LoadMessage = {
 
 type GenerateMessage = {
   type: "generate";
+  modelId: string;
   prompt: string;
   systemPrompt: string;
   maxNewTokens: number;
@@ -274,6 +275,13 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       if (busy) {
         post({ type: "error", error: "Generation already in progress." });
         return;
+      }
+
+      if (message.modelId !== activeModel) {
+        const switched = await loadTextGenerator(message.modelId, "q4");
+        generator = switched.generator;
+        activeModel = message.modelId;
+        activeDevice = switched.device;
       }
 
       busy = true;
