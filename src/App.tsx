@@ -14,6 +14,7 @@ type WorkerOutMessage =
   | { type: "status"; text: string }
   | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
   | { type: "loaded"; modelId: string; device: string }
+  | { type: "caption_model_loaded"; modelId: string; device: string }
   | { type: "token"; text: string }
   | { type: "caption_done"; text: string }
   | { type: "done" }
@@ -165,6 +166,8 @@ function App() {
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [visionModelId, setVisionModelId] = useState<string>(VISION_MODEL_OPTIONS[0].id);
   const [imageGenModelId, setImageGenModelId] = useState<string>(IMAGE_MODEL_OPTIONS[0].id);
+  const [visionModelLoading, setVisionModelLoading] = useState(false);
+  const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const activeModelOption = useMemo(
@@ -211,6 +214,10 @@ function App() {
         setStatus(`Loaded on ${msg.device}`);
         setProgressDetail("Model ready");
         setProgressFile("");
+      } else if (msg.type === "caption_model_loaded") {
+        setVisionModelLoading(false);
+        setVisionReadyMap((prev) => ({ ...prev, [msg.modelId]: true }));
+        setStatus(`Vision model ready on ${msg.device}`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -248,6 +255,7 @@ function App() {
       } else if (msg.type === "error") {
         setIsGenerating(false);
         setIsLoading(false);
+        setVisionModelLoading(false);
         setProgress(0);
         setProgressDetail("");
         setProgressFile("");
@@ -276,6 +284,16 @@ function App() {
     });
   };
 
+  const preloadVisionModel = () => {
+    if (!workerRef.current || visionModelLoading) return;
+    setVisionModelLoading(true);
+    setStatus("Loading vision model...");
+    workerRef.current.postMessage({
+      type: "preload_caption",
+      modelId: visionModelId,
+    });
+  };
+
   const sendPrompt = async (e: FormEvent) => {
     e.preventDefault();
     if (!workerRef.current || !isLoaded || isGenerating) return;
@@ -283,7 +301,15 @@ function App() {
     if (!trimmed) return;
 
     if (mode === "caption") {
-      if (!imageDataUrl) return;
+      if (!visionReadyMap[visionModelId]) {
+        setStatus("Vision model not ready. Loading it now...");
+        preloadVisionModel();
+        return;
+      }
+      if (!imageDataUrl) {
+        setStatus("Please attach an image first.");
+        return;
+      }
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: `Describe this image: ${trimmed}` }]);
       setPrompt("");
       setIsGenerating(true);
@@ -467,7 +493,9 @@ function App() {
                   <select
                     className="model-select"
                     value={visionModelId}
-                    onChange={(e) => setVisionModelId(e.target.value)}
+                    onChange={(e) => {
+                      setVisionModelId(e.target.value);
+                    }}
                     disabled={isGenerating}
                   >
                     {VISION_MODEL_OPTIONS.map((option) => (
@@ -476,6 +504,21 @@ function App() {
                       </option>
                     ))}
                   </select>
+                )}
+                {mode === "caption" && (
+                  <button
+                    type="button"
+                    className="reload-btn subtle-btn"
+                    onClick={preloadVisionModel}
+                    disabled={visionModelLoading || isGenerating}
+                    title="Download and initialize selected image-to-text model"
+                  >
+                    {visionModelLoading
+                      ? "Loading vision..."
+                      : visionReadyMap[visionModelId]
+                        ? "Vision ready"
+                        : "Load vision model"}
+                  </button>
                 )}
                 {mode === "image" && (
                   <select

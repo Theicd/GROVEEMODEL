@@ -27,7 +27,12 @@ type CaptionMessage = {
   modelId: string;
 };
 
-type WorkerInput = LoadMessage | GenerateMessage | CaptionMessage;
+type PreloadCaptionMessage = {
+  type: "preload_caption";
+  modelId: string;
+};
+
+type WorkerInput = LoadMessage | GenerateMessage | CaptionMessage | PreloadCaptionMessage;
 
 type TextGenerator = ((
   input: string,
@@ -272,6 +277,32 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const prefix = message.prompt?.trim() ? `${message.prompt.trim()}\n` : "";
       post({ type: "caption_done", text: `${prefix}${captionText}` });
       busy = false;
+      return;
+    }
+
+    if (message.type === "preload_caption") {
+      if (busy) {
+        post({ type: "error", error: "Another task is in progress. Please wait." });
+        return;
+      }
+
+      const existing = captionerCache.get(message.modelId);
+      if (existing) {
+        post({ type: "caption_model_loaded", modelId: message.modelId, device: "cache" });
+        return;
+      }
+
+      let device: "webgpu" | "wasm" = "webgpu";
+      let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+      try {
+        captioner = await loadCaptioner(message.modelId, "webgpu");
+        device = "webgpu";
+      } catch {
+        captioner = await loadCaptioner(message.modelId, "wasm");
+        device = "wasm";
+      }
+      captionerCache.set(message.modelId, captioner);
+      post({ type: "caption_model_loaded", modelId: message.modelId, device });
     }
   } catch (error) {
     busy = false;
