@@ -71,6 +71,7 @@ let activeDevice = "unknown";
 let busy = false;
 
 env.allowLocalModels = false;
+env.useBrowserCache = true;
 
 const post = (msg: unknown) => {
   self.postMessage(msg);

@@ -23,6 +23,7 @@ type WorkerOutMessage =
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
 const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct-ONNX";
+const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
 const MODEL_OPTIONS = [
   {
     id: "onnx-community/gemma-4-E2B-it-ONNX",
@@ -167,6 +168,13 @@ function App() {
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
   const [preloadAllLoading, setPreloadAllLoading] = useState(false);
+  const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
+    try {
+      return localStorage.getItem(MODEL_CACHE_FLAG) !== "1";
+    } catch {
+      return true;
+    }
+  });
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const activeModelOption = useMemo(
@@ -213,7 +221,7 @@ function App() {
         setStatus(`Loaded on ${msg.device}`);
         setProgressDetail("Model ready");
         setProgressFile("");
-        if (workerRef.current && !preloadAllLoading) {
+        if (workerRef.current && !preloadAllLoading && shouldWarmupOnStart) {
           setPreloadAllLoading(true);
           setStatus("Gemma is ready. Downloading additional models in background...");
           workerRef.current.postMessage({
@@ -222,6 +230,10 @@ function App() {
             captionModelIds: VISION_MODEL_OPTIONS.map((option) => option.id),
             dtype: "q4",
           });
+        } else {
+          setStatus(`Gemma controller ready on ${msg.device}`);
+          setProgressDetail("Using local browser cache");
+          setProgressFile("");
         }
       } else if (msg.type === "caption_model_loaded") {
         setVisionReadyMap((prev) => ({ ...prev, [msg.modelId]: true }));
@@ -232,6 +244,12 @@ function App() {
         setVisionReadyMap(allVisionReady);
         setIsLoading(false);
         setIsLoaded(true);
+        setShouldWarmupOnStart(false);
+        try {
+          localStorage.setItem(MODEL_CACHE_FLAG, "1");
+        } catch {
+          // Ignore storage errors; app still runs.
+        }
         setProgress(100);
         setProgressDetail("All local models are ready");
         setProgressFile("");
