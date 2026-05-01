@@ -12,7 +12,7 @@ type ChatMessage = {
 
 type WorkerOutMessage =
   | { type: "status"; text: string }
-  | { type: "progress"; text: string; progress: number }
+  | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
   | { type: "loaded"; modelId: string; device: string }
   | { type: "token"; text: string }
   | { type: "caption_done"; text: string }
@@ -153,6 +153,8 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("Not loaded");
   const [progress, setProgress] = useState(0);
+  const [progressDetail, setProgressDetail] = useState("");
+  const [progressFile, setProgressFile] = useState("");
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [assistantBuffer, setAssistantBuffer] = useState("");
@@ -200,11 +202,15 @@ function App() {
       } else if (msg.type === "progress") {
         setStatus(msg.text);
         setProgress(msg.progress);
+        setProgressDetail(msg.detail ?? "");
+        setProgressFile(msg.file ?? "");
       } else if (msg.type === "loaded") {
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
         setStatus(`Loaded on ${msg.device}`);
+        setProgressDetail("Model ready");
+        setProgressFile("");
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -243,6 +249,8 @@ function App() {
         setIsGenerating(false);
         setIsLoading(false);
         setProgress(0);
+        setProgressDetail("");
+        setProgressFile("");
         setStatus(`Error: ${msg.error}`);
       }
     };
@@ -259,6 +267,8 @@ function App() {
     setIsLoading(true);
     setStatus("Loading model...");
     setProgress(0);
+    setProgressDetail("Preparing local runtime...");
+    setProgressFile("");
     workerRef.current.postMessage({
       type: "load",
       modelId,
@@ -382,6 +392,8 @@ function App() {
           </div>
           <div className="percent">{progress}%</div>
           <div className="status-line">{status || "Loading model..."}</div>
+          {progressDetail && <div className="status-line secondary">{progressDetail}</div>}
+          {progressFile && <div className="status-line secondary">File: {progressFile}</div>}
           <div className="offline-line">Runs 100% offline</div>
         </section>
       )}

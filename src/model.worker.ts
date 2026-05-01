@@ -49,9 +49,35 @@ const post = (msg: unknown) => {
   self.postMessage(msg);
 };
 
+const fmtBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+};
+
+const clampPercent = (raw: unknown) => {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  const pct = raw <= 1 ? raw * 100 : raw;
+  return Math.max(0, Math.min(100, Math.round(pct)));
+};
+
 const clampProgress = (value: number) => {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
+};
+
+const normalizeProgressStatus = (status?: string, percent?: number) => {
+  const raw = (status ?? "").trim().toLowerCase();
+  if (!raw || raw === "progress") {
+    return (percent ?? 0) >= 100 ? "Finalizing model runtime..." : "Downloading model files...";
+  }
+  return status ?? "Downloading model files...";
 };
 
 const loadWithDevice = async (
@@ -60,17 +86,53 @@ const loadWithDevice = async (
   device: "webgpu" | "wasm",
 ) => {
   post({ type: "status", text: `Loading ${modelId} on ${device}...` });
+  const startedAt = Date.now();
+  let lastLoaded = 0;
+  let lastTs = startedAt;
   const pipe = (await pipeline("text-generation", modelId, {
     device,
     dtype,
-    progress_callback: (progressData: { status?: string; progress?: number }) => {
+    progress_callback: (progressData: {
+      status?: string;
+      progress?: number;
+      loaded?: number;
+      total?: number;
+      file?: string;
+      name?: string;
+    }) => {
+      const percent = clampPercent(progressData.progress);
+      const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
+      const total = typeof progressData.total === "number" ? progressData.total : 0;
+      const now = Date.now();
+      const dt = Math.max(1, (now - lastTs) / 1000);
+      const speed = loaded > 0 && loaded >= lastLoaded ? (loaded - lastLoaded) / dt : 0;
+      lastLoaded = loaded;
+      lastTs = now;
+      const elapsed = Math.max(1, (now - startedAt) / 1000);
+      const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "calculating...";
+      const detailText =
+        loaded > 0 && total > 0
+          ? `${fmtBytes(loaded)} / ${fmtBytes(total)} (${speedText})`
+          : `elapsed ${elapsed.toFixed(1)}s`;
+      const statusText = normalizeProgressStatus(progressData.status, percent);
+
       post({
         type: "progress",
-        text: progressData.status ?? "Downloading model files...",
-        progress: clampProgress((progressData.progress ?? 0) * 100),
+        text: statusText,
+        progress: clampProgress(percent),
+        detail: detailText,
+        file: progressData.file ?? progressData.name ?? "",
       });
     },
   })) as TextGenerator;
+
+  post({
+    type: "progress",
+    text: "Finalizing model runtime...",
+    progress: 100,
+    detail: "Preparing tokenizer and graph in your browser...",
+    file: "",
+  });
 
   return pipe;
 };

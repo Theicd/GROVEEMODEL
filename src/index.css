@@ -34,9 +34,7 @@ body {
     radial-gradient(circle at 20% 25%, rgba(95, 152, 255, 0.13) 0%, rgba(95, 152, 255, 0) 40%),
     radial-gradient(circle at 80% 15%, rgba(31, 219, 255, 0.1) 0%, rgba(31, 219, 255, 0) 35%),
     radial-gradient(circle at 70% 80%, rgba(130, 173, 255, 0.08) 0%, rgba(130, 173, 255, 0) 30%),
-    linear-gradient(180deg, rgba(6, 11, 24, 0.95), rgba(4, 8, 17, 0.95)),
-    url("https://huggingface.co/spaces/webml-community/Gemma-4-WebGPU/resolve/main/background.jpg")
-      center / cover no-repeat;
+    linear-gradient(180deg, rgba(6, 11, 24, 0.95), rgba(4, 8, 17, 0.95));
 }
 
 .bg-overlay {
@@ -139,6 +137,11 @@ body {
 
 .status-line {
   color: #c7d5f1;
+}
+
+.status-line.secondary {
+  color: #95abd8;
+  font-size: 0.9rem;
 }
 
 .offline-line {

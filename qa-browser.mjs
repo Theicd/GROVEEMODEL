@@ -4,9 +4,16 @@ async function run(url) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   const errors = [];
+  const hfRequests = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error") errors.push(m.text());
+  });
+  page.on("requestfinished", (req) => {
+    const target = req.url();
+    if (target.includes("huggingface.co") || target.includes("cdn-lfs")) {
+      hfRequests.push(target);
+    }
   });
 
   const result = { url, ok: false, details: "", errors: [] };
@@ -23,10 +30,39 @@ async function run(url) {
       const loadButton = page.getByRole("button", { name: "Load model" });
       if (await loadButton.isVisible().catch(() => false)) {
         await loadButton.click();
-        await page.waitForTimeout(6000);
-        const status = await page.locator(".status").innerText().catch(() => "status not found");
-        const progress = await page.locator("progress").getAttribute("value").catch(() => "n/a");
-        result.details += `; status=${status}; progress=${progress}`;
+        await page.waitForSelector(".loading-screen .status-line", { timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(7000);
+        const status = await page.locator(".loading-screen .status-line").first().innerText().catch(() => "status not found");
+        const progress = await page.locator(".loading-screen .percent").innerText().catch(() => "n/a");
+        const detail = await page
+          .locator(".loading-screen .status-line.secondary")
+          .first()
+          .innerText()
+          .catch(() => "detail not found");
+        const file = await page
+          .locator(".loading-screen .status-line.secondary")
+          .nth(1)
+          .innerText()
+          .catch(() => "file not found");
+        result.details += `; status=${status}; progress=${progress}; detail=${detail}; file=${file}; hfRequests=${hfRequests.length}`;
+        const readyShell = page.locator(".ready-shell");
+        await readyShell.waitFor({ timeout: 240000 }).catch(() => {});
+        if (await readyShell.isVisible().catch(() => false)) {
+          const promptBox = page.locator("textarea").first();
+          await promptBox.fill("Hi");
+          await page.locator(".send-btn").click();
+          await page.waitForTimeout(5000);
+          const bubbles = await page.locator(".bubble").count();
+          const assistantLast = await page
+            .locator(".bubble.assistant p")
+            .last()
+            .innerText()
+            .catch(() => "");
+          result.details += `; bubbles=${bubbles}; assistantLastLen=${assistantLast.trim().length}`;
+          result.ok = hfRequests.length > 0 && bubbles >= 2;
+        } else {
+          result.ok = hfRequests.length > 0;
+        }
       }
     }
   } catch (e) {
@@ -39,7 +75,7 @@ async function run(url) {
   return result;
 }
 
-const targets = ["http://127.0.0.1:4174/", "https://theicd.github.io/GROVEEMODEL/"];
+const targets = ["http://127.0.0.1:4173/GROVEEMODEL/", "https://theicd.github.io/GROVEEMODEL/"];
 const outputs = [];
 for (const t of targets) outputs.push(await run(t));
 
