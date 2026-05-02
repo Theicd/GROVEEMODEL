@@ -106,11 +106,22 @@ const clampProgress = (value: number) => {
   return Math.max(0, Math.min(100, Math.round(value)));
 };
 
-const normalizeProgressStatus = (status?: string, percent?: number) => {
+const normalizeProgressStatus = (status?: string, displayPercent?: number) => {
   const raw = (status ?? "").trim().toLowerCase();
+  const pct = displayPercent ?? 0;
+  /**
+   * Transformers often reports status "done" while `pipeline()` is still compiling the ONNX graph
+   * (WebGPU/WASM). Users see 99% + "done" and think the tab froze — explain explicitly.
+   */
+  if (raw === "done" || raw === "complete" || raw === "completed") {
+    if (pct < 100) {
+      return "קבצים מוכנים — מאתחל ONNX בדפדפן (WebGPU/WASM). לעיתים 30 שנ׳ עד כ־2 דק׳ — זה תקין, לא תקיעה.";
+    }
+    return "מסיים הפעלת המודל…";
+  }
   if (!raw || raw === "progress") {
-    return (percent ?? 0) >= 100
-      ? "Finalizing model runtime..."
+    return pct >= 100
+      ? "מסיים הפעלת המודל…"
       : "Loading model files (from browser cache when available)…";
   }
   return status ?? "Loading model files…";
@@ -155,10 +166,15 @@ const createMonotonicProgressBridge = (startedAt: number) => {
     const elapsed = Math.max(1, (now - startedAt) / 1000);
     const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "calculating…";
     const fname = (progressData.file ?? progressData.name ?? "").trim();
-    const detailText =
+    let detailText =
       loaded > 0 && total > 0
         ? `This file: ${fmtBytes(loaded)} / ${fmtBytes(total)} · ~${speedText}${fname ? ` · ${fname}` : ""}`
         : `Elapsed ${elapsed.toFixed(1)}s${fname ? ` · ${fname}` : ""}`;
+
+    const rawStatus = (progressData.status ?? "").trim().toLowerCase();
+    if ((rawStatus === "done" || rawStatus === "complete") && displayPct < 100) {
+      detailText = `${detailText} · Still compiling graph — please wait`;
+    }
 
     const statusText = normalizeProgressStatus(progressData.status, displayPct);
 
@@ -188,9 +204,9 @@ const loadWithDevice = async (
 
   post({
     type: "progress",
-    text: "Finalizing model runtime...",
+    text: "כמעט סיימנו — פותחים את מסך השיחה…",
     progress: 100,
-    detail: "Preparing tokenizer and graph in your browser...",
+    detail: "Tokenizer + graph ready in this tab",
     file: "",
   });
 
@@ -209,9 +225,9 @@ const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
   })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
   post({
     type: "progress",
-    text: "Finalizing vision runtime...",
+    text: "מודל תמונה מוכן — ממשיכים…",
     progress: 100,
-    detail: "Vision model ready in browser…",
+    detail: "Vision runtime ready",
     file: "",
   });
   return pipe;

@@ -1246,10 +1246,23 @@ function App() {
           <h2>GROVEE</h2>
           <div className="loading-model">{modelLabel}</div>
           <div className="meter">
-            <div className="meter-fill" style={{ width: `${progress}%` }} />
+            <div
+              className={`meter-fill${progress >= 94 && progress < 100 ? " meter-fill-await" : ""}`}
+              style={{ width: `${progress}%` }}
+            />
           </div>
           <div className="percent">{progress}%</div>
           <div className="status-line">{status || "Loading…"}</div>
+          {progress >= 90 && progress < 100 && (
+            <div className="loading-final-phase" role="status">
+              <p className="loading-final-phase-title">לא תקוע — שלב אחרון</p>
+              <p className="loading-final-phase-body">
+                כשההורדה מהרשת נגמרת, האחוז עלול להישאר סביב <strong>99%</strong> בזמן שהדפדפן מרכיב את גרף ONNX
+                (WebGPU או WASM) וטוען את המודל לזיכרון. זה יכול לקחת מ־כמה שניות ועד כ־שתי דקות במחשבים איטיים.
+                <span className="loading-final-phase-nowrap"> אין צורך לרענן את הדף.</span>
+              </p>
+            </div>
+          )}
           {progressDetail && <div className="status-line secondary">{progressDetail}</div>}
           {progressFile && <div className="status-line secondary">File: {progressFile}</div>}
         </section>
