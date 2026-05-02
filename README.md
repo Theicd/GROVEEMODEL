@@ -42,6 +42,7 @@ npm run build
 
 - **Repo root `index.html`** only redirects to **`docs/index.html`** (production bundle). No `/src` paths — works even if Pages uses **`main` / `/ (root)`**.
 - **Vite** uses **`app/index.html`** + **`app/src/`** for `npm run dev` and `npm run build`.
+- **Build uses `base: './'`** so JS/CSS load as `./assets/...` from `docs/index.html`. A fixed `/GROVEEMODEL/` base was wrong: the browser requested `/GROVEEMODEL/assets/` while files sit under **`/GROVEEMODEL/docs/assets/`** → blank page.
 - The folder **`docs/`** is updated by **`sync-docs-folder.yml`** after each push (copy of `dist/`).
 
 Optional: set Pages to **`/docs`** so the site root is the bundle directly (no redirect). **GitHub Actions** deploy is also supported (`deploy-pages.yml`).
