@@ -1364,43 +1364,65 @@ function App() {
                 </div>
               ) : null}
 
-              <div className="composer-pill-row">
-                <div className={`composer-pill ${composerDragOver ? "composer-pill--dropping" : ""}`}>
-                  <button
-                    type="button"
-                    className="composer-pill-plus"
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label="Attach image"
-                    title="Attach image"
-                    disabled={!isLoaded || isGenerating}
-                  >
-                    +
-                  </button>
-                  {imageDataUrl ? (
-                    <div className="composer-attach-preview">
-                      <img src={imageDataUrl} alt="" />
-                      <button
-                        type="button"
-                        className="composer-attach-remove"
-                        onClick={() => setImageDataUrl(null)}
+              <div className="composer-shell">
+                <div className={`composer-card ${composerDragOver ? "composer-card--dropping" : ""}`}>
+                  <div className="composer-input-line">
+                    <button
+                      type="button"
+                      className="composer-lead-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      aria-label="Attach image"
+                      title="Attach image"
+                      disabled={!isLoaded || isGenerating}
+                    >
+                      +
+                    </button>
+                    {imageDataUrl ? (
+                      <div className="composer-inline-thumb">
+                        <img src={imageDataUrl} alt="" />
+                        <button
+                          type="button"
+                          className="composer-inline-thumb-remove"
+                          onClick={() => setImageDataUrl(null)}
+                          disabled={isGenerating}
+                          aria-label="Remove image"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ) : null}
+                    <textarea
+                      ref={textareaRef}
+                      className="composer-field"
+                      dir="auto"
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      placeholder={placeholder}
+                      title={composerHint}
+                      rows={1}
+                      disabled={!isLoaded || isGenerating}
+                    />
+                  </div>
+                  <div className="composer-card-toolbar" aria-label="Options">
+                    <label className="composer-mode-pill">
+                      <input
+                        type="checkbox"
+                        checked={thinkingMode}
+                        onChange={(e) => setThinkingMode(e.target.checked)}
                         disabled={isGenerating}
-                        aria-label="Remove image"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ) : null}
-                  <textarea
-                    ref={textareaRef}
-                    className="composer-pill-input"
-                    dir="auto"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder={placeholder}
-                    title={composerHint}
-                    rows={1}
-                    disabled={!isLoaded || isGenerating}
-                  />
+                      />
+                      <span>Think</span>
+                    </label>
+                    <label className="composer-mode-pill">
+                      <input
+                        type="checkbox"
+                        checked={webSearchMode}
+                        onChange={(e) => setWebSearchMode(e.target.checked)}
+                        disabled={isGenerating}
+                      />
+                      <span>Search</span>
+                    </label>
+                  </div>
                 </div>
                 <button
                   type="submit"
@@ -1411,27 +1433,6 @@ function App() {
                 >
                   {isGenerating ? "…" : "↑"}
                 </button>
-              </div>
-
-              <div className="composer-chips-row composer-chips-below">
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={thinkingMode}
-                    onChange={(e) => setThinkingMode(e.target.checked)}
-                    disabled={isGenerating}
-                  />
-                  <span>Think</span>
-                </label>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={webSearchMode}
-                    onChange={(e) => setWebSearchMode(e.target.checked)}
-                    disabled={isGenerating}
-                  />
-                  <span>Search</span>
-                </label>
               </div>
 
               <input
