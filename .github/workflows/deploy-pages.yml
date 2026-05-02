@@ -1,3 +1,5 @@
+# Publishes dist/ via GitHub Actions. Requires repo Settings → Pages → Source: GitHub Actions.
+# If you use "Deploy from branch" instead, point the folder at /docs (see sync-docs-folder.yml + README).
 name: Deploy to GitHub Pages
 
 on:

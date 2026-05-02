@@ -1,0 +1,47 @@
+# Keeps docs/ in sync with npm run build so GitHub Pages can use "Branch: main / Folder: docs".
+# Without this, if Pages points at repo root, the dev index.html (/src/main.tsx) is served and the app is blank.
+name: Sync docs/ for Pages
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - name: Copy dist to docs/
+        run: |
+          rm -rf docs
+          mkdir -p docs
+          cp -r dist/* docs/
+
+      - name: Commit docs/ if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          if git diff --staged --quiet; then
+            echo "No docs changes."
+          else
+            git commit -m "chore(pages): sync docs/ from dist"
+            git push
+          fi
