@@ -360,11 +360,7 @@ function SettingsModal({
   settings: AppSettings;
   onSave: (s: AppSettings) => void;
 }) {
-  const [draft, setDraft] = useState<AppSettings>(settings);
-
-  useEffect(() => {
-    if (open) setDraft(settings);
-  }, [open, settings]);
+  const [draft, setDraft] = useState<AppSettings>(() => settings);
 
   if (!open) return null;
 
@@ -592,6 +588,7 @@ function App() {
   const [modelId, setModelId] = useState(DEFAULT_MODEL);
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsModalKey, setSettingsModalKey] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1165,7 +1162,13 @@ function App() {
   return (
     <main className="app theme-space">
       <div className="bg-overlay" />
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={appSettings} onSave={persistSettings} />
+      <SettingsModal
+        key={settingsModalKey}
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={appSettings}
+        onSave={persistSettings}
+      />
 
       {phase === "start" && (
         <section className="hero-screen glass hero-minimal">
@@ -1237,7 +1240,10 @@ function App() {
                     className="icon-gear"
                     title="Model settings"
                     aria-label="Open settings"
-                    onClick={() => setSettingsOpen(true)}
+                    onClick={() => {
+                      setSettingsModalKey((k) => k + 1);
+                      setSettingsOpen(true);
+                    }}
                   >
                     ⚙
                   </button>
