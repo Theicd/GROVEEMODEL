@@ -26,6 +26,7 @@ type CaptionMessage = {
   imageDataUrl: string;
   prompt?: string;
   modelId: string;
+  maxNewTokens?: number;
 };
 
 type PreloadCaptionMessage = {
@@ -47,13 +48,18 @@ type WarmupAllMessage = {
   dtype: "q4" | "q8" | "fp16" | "fp32";
 };
 
+type ClearRuntimeCacheMessage = {
+  type: "clear_runtime_cache";
+};
+
 type WorkerInput =
   | LoadMessage
   | GenerateMessage
   | CaptionMessage
   | PreloadCaptionMessage
   | PreloadAllMessage
-  | WarmupAllMessage;
+  | WarmupAllMessage
+  | ClearRuntimeCacheMessage;
 
 type TextGenerator = ((
   input: string,
@@ -355,6 +361,17 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       return;
     }
 
+    if (message.type === "clear_runtime_cache") {
+      generator = null;
+      textGeneratorCache.clear();
+      captionerCache.clear();
+      activeModel = "";
+      activeDevice = "unknown";
+      busy = false;
+      post({ type: "status", text: "Runtime model cache cleared." });
+      return;
+    }
+
     if (message.type === "generate") {
       if (!generator) {
         post({ type: "error", error: "Model is not loaded yet." });
@@ -416,7 +433,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
 
       const result = await captioner(message.imageDataUrl, {
-        max_new_tokens: 80,
+        max_new_tokens: message.maxNewTokens ?? 80,
       });
       const captionText = result?.[0]?.generated_text?.trim() || "Could not generate image description.";
       const prefix = message.prompt?.trim() ? `${message.prompt.trim()}\n` : "";

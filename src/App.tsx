@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 
 type Role = "user" | "assistant";
 
@@ -24,20 +24,7 @@ type WorkerOutMessage =
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
 const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct-ONNX";
 const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
-const MODEL_OPTIONS = [
-  {
-    id: "onnx-community/gemma-4-E2B-it-ONNX",
-    label: "Gemma 4 E2B Instruct (Chat)",
-    shortLabel: "Gemma 4",
-    meta: "Google | ONNX | General",
-  },
-  {
-    id: CODE_MODEL,
-    label: "Qwen2.5 Coder 0.5B Instruct (Code)",
-    shortLabel: "Qwen Coder",
-    meta: "Alibaba | ONNX | Code",
-  },
-] as const;
+const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 
 const VISION_MODEL_OPTIONS = [
   { id: "Xenova/vit-gpt2-image-captioning", label: "ViT-GPT2 Captioning (Fast)" },
@@ -50,7 +37,7 @@ const IMAGE_MODEL_OPTIONS = [
   { id: "sdxl", label: "SDXL style" },
 ] as const;
 
-type ModelPreset = {
+type TunableModelSettings = {
   temperature: number;
   maxNewTokens: number;
   repetitionPenalty: number;
@@ -58,42 +45,74 @@ type ModelPreset = {
   systemPrompt: string;
 };
 
-const DEFAULT_PRESET: ModelPreset = {
-  temperature: 0.22,
-  maxNewTokens: 160,
-  repetitionPenalty: 1.15,
-  topP: 0.92,
+const defaultGemmaSettings: TunableModelSettings = {
+  temperature: 0.2,
+  maxNewTokens: 512,
+  repetitionPenalty: 1.12,
+  topP: 0.9,
   systemPrompt:
-    "You are a concise helpful AI assistant. Respond in the same language as the user and avoid repeating role labels. Keep answers focused and do not repeat greetings.",
+    "You are a helpful assistant. Always respond in clear, well-formed sentences in the same language as the user (Hebrew stays RTL-friendly: full sentences, correct punctuation at end of sentence). Do not repeat role labels.",
 };
 
-const getModelPreset = (model: string, thinking: boolean): ModelPreset => {
-  const base = { ...DEFAULT_PRESET };
-  if (model.toLowerCase().includes("coder") || model.toLowerCase().includes("code")) {
+const defaultCoderSettings: TunableModelSettings = {
+  temperature: 0.08,
+  maxNewTokens: 768,
+  repetitionPenalty: 1.06,
+  topP: 0.88,
+  systemPrompt:
+    "You are an expert programmer. Output working code with brief comments. Prefer markdown code fences with language tags.",
+};
+
+type AppSettings = {
+  gemma: TunableModelSettings;
+  coder: TunableModelSettings;
+  visionMaxTokens: number;
+  imageBackendModel: string;
+};
+
+const defaultAppSettings = (): AppSettings => ({
+  gemma: { ...defaultGemmaSettings },
+  coder: { ...defaultCoderSettings },
+  visionMaxTokens: 96,
+  imageBackendModel: IMAGE_MODEL_OPTIONS[0].id,
+});
+
+const loadSettings = (): AppSettings => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return defaultAppSettings();
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
-      ...base,
-      temperature: 0.1,
-      maxNewTokens: 220,
-      repetitionPenalty: 1.08,
-      systemPrompt:
-        "You are a senior coding assistant. Provide practical answers with correct code and brief explanations.",
+      ...defaultAppSettings(),
+      ...parsed,
+      gemma: { ...defaultGemmaSettings, ...parsed.gemma },
+      coder: { ...defaultCoderSettings, ...parsed.coder },
     };
+  } catch {
+    return defaultAppSettings();
   }
-
-  if (model.toLowerCase().includes("qwen")) {
-    base.temperature = 0.18;
-    base.maxNewTokens = 140;
-    base.repetitionPenalty = 1.14;
-  }
-
-  if (thinking) {
-    base.temperature = Math.max(0.15, base.temperature - 0.05);
-    base.maxNewTokens += 80;
-    base.systemPrompt +=
-      " Think carefully step by step internally, then provide a clean final answer without exposing chain-of-thought.";
-  }
-  return base;
 };
+
+const saveSettings = (s: AppSettings) => {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    // ignore
+  }
+};
+
+type ImageOrch =
+  | { step: "translate"; userText: string }
+  | { step: "summarize"; userText: string; englishPrompt: string; imageUrl: string };
+
+type CodeOrch =
+  | { step: "route"; userText: string }
+  | { step: "code"; userText: string; techTask: string }
+  | { step: "summarize"; userText: string; techTask: string; codeOut: string };
+
+type CaptionOrch = { step: "polish"; userText: string; rawCaption: string };
+
+type Orchestration = { kind: "image"; data: ImageOrch } | { kind: "code"; data: CodeOrch } | { kind: "caption"; data: CaptionOrch };
 
 const cleanModelOutput = (input: string): string => {
   const cleaned = input
@@ -117,7 +136,14 @@ const cleanModelOutput = (input: string): string => {
 
   if (normalized.length) return normalized;
   const raw = input.trim();
-  return raw.length ? raw.slice(0, 900) : "No response generated. Try a different model.";
+  return raw.length ? raw.slice(0, 2000) : "No response generated.";
+};
+
+const cleanEnglishImagePrompt = (raw: string): string => {
+  let t = cleanModelOutput(raw).replace(/^[\s\-*]+/, "");
+  t = t.split("\n")[0] ?? t;
+  t = t.replace(/^["']|["']$/g, "").trim();
+  return t.slice(0, 500) || "high quality detailed scene";
 };
 
 const isSimpleGreeting = (text: string): boolean => {
@@ -125,9 +151,22 @@ const isSimpleGreeting = (text: string): boolean => {
   return /^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized);
 };
 
+const isRtlText = (text: string): boolean => /[\u0590-\u05FF]/.test(text);
+
 const isCodeRequest = (text: string): boolean => {
-  const normalized = text.trim().toLowerCase();
-  return /(code|debug|bug|stack trace|typescript|javascript|python|function|class|compile|error)/.test(normalized);
+  const t = text.toLowerCase();
+  const he = /קוד|פונקציה|דיבאג|שגיאה|תוכנית|סקריפט|html|css|פייתון|ג'אווהסקריפט|טייפסקריפט/.test(text);
+  return (
+    he ||
+    /(code|debug|bug|stack trace|typescript|javascript|python|function|class|compile|error|implement|refactor|api)\b/.test(t)
+  );
+};
+
+const isImageGenerationRequest = (text: string): boolean => {
+  const t = text.toLowerCase();
+  const he =
+    /צור תמונה|תמונה של|הפק תמונה|ייצר תמונה|צייר|איור של|תאר תמונה ש|בנה תמונה/.test(text);
+  return he || /(create|generate|draw|make)\s+(an?\s+)?image|text-to-image|image of\b/.test(t);
 };
 
 const fetchWebContext = async (query: string): Promise<string> => {
@@ -145,12 +184,289 @@ const fetchWebContext = async (query: string): Promise<string> => {
     .join("\n");
 };
 
+type MsgPart = { type: "text" | "html" | "image"; value: string };
+
+const extractRichParts = (content: string): MsgPart[] => {
+  const parts: MsgPart[] = [];
+  let remaining = content;
+  const pushText = (t: string) => {
+    if (t) parts.push({ type: "text", value: t });
+  };
+  while (remaining.length) {
+    const htmlMatch = remaining.match(/```html\s*([\s\S]*?)```/i);
+    const imgMatch = remaining.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+    let nextIdx = Infinity;
+    let kind: "html" | "image" | null = null;
+    let htmlIdx = htmlMatch && htmlMatch.index !== undefined ? htmlMatch.index : Infinity;
+    let imgIdx = imgMatch && imgMatch.index !== undefined ? imgMatch.index : Infinity;
+    if (htmlIdx < nextIdx) {
+      nextIdx = htmlIdx;
+      kind = "html";
+    }
+    if (imgIdx < nextIdx) {
+      nextIdx = imgIdx;
+      kind = "image";
+    }
+    if (!kind || nextIdx === Infinity) {
+      pushText(remaining);
+      break;
+    }
+    pushText(remaining.slice(0, nextIdx));
+    if (kind === "html" && htmlMatch) {
+      parts.push({ type: "html", value: htmlMatch[1].trim() });
+      remaining = remaining.slice(nextIdx + htmlMatch[0].length);
+    } else if (kind === "image" && imgMatch) {
+      parts.push({ type: "image", value: imgMatch[2].trim() });
+      remaining = remaining.slice(nextIdx + imgMatch[0].length);
+    } else break;
+  }
+  if (!parts.length) parts.push({ type: "text", value: content });
+  return parts;
+};
+
+function MessageBody({ content }: { content: string }) {
+  const parts = useMemo(() => extractRichParts(content), [content]);
+  const dir = isRtlText(content) ? "rtl" : "ltr";
+
+  return (
+    <div className="msg-body" dir={dir}>
+      {parts.map((part, i) => {
+        if (part.type === "html" && part.value.length > 0) {
+          const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui,sans-serif;background:#0f141f;color:#e7eeff;padding:8px;}</style></head><body>${part.value}</body></html>`;
+          return (
+            <div key={i} className="html-preview-wrap">
+              <span className="html-preview-label">Preview</span>
+              <iframe className="html-preview-frame" title="HTML preview" sandbox="allow-scripts" srcDoc={srcDoc} />
+            </div>
+          );
+        }
+        if (part.type === "image") {
+          return (
+            <div key={i} className="msg-image-wrap">
+              <img className="msg-image" src={part.value} alt="Generated" loading="lazy" />
+            </div>
+          );
+        }
+        return (
+          <p key={i} className="msg-text">
+            {part.value}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function SettingsModal({
+  open,
+  onClose,
+  settings,
+  onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  settings: AppSettings;
+  onSave: (s: AppSettings) => void;
+}) {
+  const [draft, setDraft] = useState<AppSettings>(settings);
+
+  useEffect(() => {
+    if (open) setDraft(settings);
+  }, [open, settings]);
+
+  if (!open) return null;
+
+  const row = (label: string, children: ReactNode) => (
+    <label className="settings-row">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+
+  return (
+    <div className="settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div className="settings-panel glass">
+        <div className="settings-head">
+          <h2 id="settings-title">Model settings</h2>
+          <button type="button" className="icon-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <p className="settings-hint">
+          Tune generation per role. Gemma orchestrates chat, Hebrew replies, and routing; the code model runs technical
+          steps; image backend uses English prompts produced by Gemma.
+        </p>
+
+        <section className="settings-section">
+          <h3>Gemma 4 (controller / chat)</h3>
+          {row(
+            "Temperature",
+            <input
+              type="number"
+              step={0.05}
+              min={0}
+              max={2}
+              value={draft.gemma.temperature}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, gemma: { ...d.gemma, temperature: Number(e.target.value) } }))
+              }
+            />,
+          )}
+          {row(
+            "Max tokens",
+            <input
+              type="number"
+              min={32}
+              max={2048}
+              value={draft.gemma.maxNewTokens}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, gemma: { ...d.gemma, maxNewTokens: Number(e.target.value) } }))
+              }
+            />,
+          )}
+          {row(
+            "Top P",
+            <input
+              type="number"
+              step={0.05}
+              min={0}
+              max={1}
+              value={draft.gemma.topP}
+              onChange={(e) => setDraft((d) => ({ ...d, gemma: { ...d.gemma, topP: Number(e.target.value) } }))}
+            />,
+          )}
+          {row(
+            "Repetition penalty",
+            <input
+              type="number"
+              step={0.02}
+              min={1}
+              max={2}
+              value={draft.gemma.repetitionPenalty}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, gemma: { ...d.gemma, repetitionPenalty: Number(e.target.value) } }))
+              }
+            />,
+          )}
+          <label className="settings-row block">
+            <span>System prompt</span>
+            <textarea
+              rows={3}
+              value={draft.gemma.systemPrompt}
+              onChange={(e) => setDraft((d) => ({ ...d, gemma: { ...d.gemma, systemPrompt: e.target.value } }))}
+            />
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Code model (Qwen Coder)</h3>
+          {row(
+            "Temperature",
+            <input
+              type="number"
+              step={0.05}
+              min={0}
+              max={1.5}
+              value={draft.coder.temperature}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, coder: { ...d.coder, temperature: Number(e.target.value) } }))
+              }
+            />,
+          )}
+          {row(
+            "Max tokens",
+            <input
+              type="number"
+              min={64}
+              max={2048}
+              value={draft.coder.maxNewTokens}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, coder: { ...d.coder, maxNewTokens: Number(e.target.value) } }))
+              }
+            />,
+          )}
+          {row(
+            "Top P",
+            <input
+              type="number"
+              step={0.05}
+              min={0}
+              max={1}
+              value={draft.coder.topP}
+              onChange={(e) => setDraft((d) => ({ ...d, coder: { ...d.coder, topP: Number(e.target.value) } }))}
+            />,
+          )}
+          <label className="settings-row block">
+            <span>System prompt</span>
+            <textarea
+              rows={2}
+              value={draft.coder.systemPrompt}
+              onChange={(e) => setDraft((d) => ({ ...d, coder: { ...d.coder, systemPrompt: e.target.value } }))}
+            />
+          </label>
+        </section>
+
+        <section className="settings-section">
+          <h3>Vision caption</h3>
+          {row(
+            "Max caption tokens",
+            <input
+              type="number"
+              min={32}
+              max={256}
+              value={draft.visionMaxTokens}
+              onChange={(e) => setDraft((d) => ({ ...d, visionMaxTokens: Number(e.target.value) }))}
+            />,
+          )}
+        </section>
+
+        <section className="settings-section">
+          <h3>Image backend (Pollinations)</h3>
+          <label className="settings-row block">
+            <span>Model id</span>
+            <select
+              value={draft.imageBackendModel}
+              onChange={(e) => setDraft((d) => ({ ...d, imageBackendModel: e.target.value }))}
+            >
+              {IMAGE_MODEL_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+
+        <div className="settings-actions">
+          <button type="button" className="subtle-btn" onClick={() => setDraft(defaultAppSettings())}>
+            Reset defaults
+          </button>
+          <button
+            type="button"
+            className="pill-button"
+            onClick={() => {
+              onSave(draft);
+              onClose();
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const workerRef = useRef<Worker | null>(null);
   const assistantBufferRef = useRef("");
   const activeModelShortLabelRef = useRef("Assistant");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const orchRef = useRef<Orchestration | null>(null);
+
   const [modelId, setModelId] = useState(DEFAULT_MODEL);
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -163,7 +479,6 @@ function App() {
   const [assistantBuffer, setAssistantBuffer] = useState("");
   const [thinkingMode, setThinkingMode] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
-  const [mode, setMode] = useState<"chat" | "caption" | "image">("chat");
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
@@ -176,29 +491,83 @@ function App() {
     }
   });
 
-  const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
-  const activeModelOption = useMemo(
-    () => MODEL_OPTIONS.find((option) => option.id === modelId),
-    [modelId],
-  );
-  const modelLabel = useMemo(
-    () => activeModelOption?.label ?? (modelId.split("/").pop() ?? modelId),
-    [activeModelOption, modelId],
-  );
+  const appSettingsRef = useRef(appSettings);
+  const thinkingRef = useRef(thinkingMode);
+  const webSearchRef = useRef(webSearchMode);
+  const preloadAllLoadingRef = useRef(preloadAllLoading);
+  const shouldWarmupOnStartRef = useRef(shouldWarmupOnStart);
 
   useEffect(() => {
-    activeModelShortLabelRef.current = activeModelOption?.shortLabel ?? "Assistant";
-  }, [activeModelOption]);
+    appSettingsRef.current = appSettings;
+  }, [appSettings]);
+  useEffect(() => {
+    thinkingRef.current = thinkingMode;
+  }, [thinkingMode]);
+  useEffect(() => {
+    webSearchRef.current = webSearchMode;
+  }, [webSearchMode]);
+  useEffect(() => {
+    preloadAllLoadingRef.current = preloadAllLoading;
+  }, [preloadAllLoading]);
+  useEffect(() => {
+    shouldWarmupOnStartRef.current = shouldWarmupOnStart;
+  }, [shouldWarmupOnStart]);
+
+  const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
+  const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
+
+  useEffect(() => {
+    activeModelShortLabelRef.current = "Gemma 4";
+  }, []);
 
   const placeholder = useMemo(() => {
-    if (!isLoaded) return "Load the model first...";
-    return "Ask anything...";
+    if (!isLoaded) return "Start the app first…";
+    return "Message… (Hebrew or English) · attach image to describe · ask for code or images";
   }, [isLoaded]);
   const conversationTitle = useMemo(() => {
     const firstUser = messages.find((m) => m.role === "user")?.content?.trim();
     if (!firstUser) return "New chat";
-    return firstUser.slice(0, 28) + (firstUser.length > 28 ? "..." : "");
+    return firstUser.slice(0, 28) + (firstUser.length > 28 ? "…" : "");
   }, [messages]);
+
+  const runGemmaGenerate = (
+    promptText: string,
+    systemPrompt: string,
+    maxNewTokens: number,
+    temperature: number,
+    repetitionPenalty: number,
+    topP: number,
+    webContext: string,
+  ) => {
+    workerRef.current?.postMessage({
+      type: "generate",
+      modelId: DEFAULT_MODEL,
+      prompt: promptText,
+      systemPrompt,
+      maxNewTokens,
+      temperature,
+      repetitionPenalty,
+      topP,
+      thinkingMode: thinkingRef.current,
+      webContext,
+    });
+  };
+
+  const runCoderGenerate = (promptText: string, webContext: string) => {
+    const c = appSettingsRef.current.coder;
+    workerRef.current?.postMessage({
+      type: "generate",
+      modelId: CODE_MODEL,
+      prompt: promptText,
+      systemPrompt: c.systemPrompt,
+      maxNewTokens: c.maxNewTokens,
+      temperature: c.temperature,
+      repetitionPenalty: c.repetitionPenalty,
+      topP: c.topP,
+      thinkingMode: false,
+      webContext,
+    });
+  };
 
   useEffect(() => {
     const worker = new Worker(new URL("./model.worker.ts", import.meta.url), {
@@ -221,12 +590,12 @@ function App() {
         setStatus(`Loaded on ${msg.device}`);
         setProgressDetail("Model ready");
         setProgressFile("");
-        if (workerRef.current && !preloadAllLoading && shouldWarmupOnStart) {
+        if (workerRef.current && !preloadAllLoadingRef.current && shouldWarmupOnStartRef.current) {
           setPreloadAllLoading(true);
-          setStatus("Gemma is ready. Downloading additional models in background...");
+          setStatus("Gemma is ready. Downloading additional models in background…");
           workerRef.current.postMessage({
             type: "warmup_all",
-            textModelIds: MODEL_OPTIONS.map((option) => option.id).filter((id) => id !== DEFAULT_MODEL),
+            textModelIds: [CODE_MODEL],
             captionModelIds: VISION_MODEL_OPTIONS.map((option) => option.id),
             dtype: "q4",
           });
@@ -248,12 +617,12 @@ function App() {
         try {
           localStorage.setItem(MODEL_CACHE_FLAG, "1");
         } catch {
-          // Ignore storage errors; app still runs.
+          // ignore
         }
         setProgress(100);
         setProgressDetail("All local models are ready");
         setProgressFile("");
-        setStatus(`All models downloaded: ${msg.textModels} text + ${msg.captionModels} vision`);
+        setStatus(`All models ready: ${msg.textModels} text + ${msg.captionModels} vision`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -261,22 +630,169 @@ function App() {
           return next;
         });
       } else if (msg.type === "caption_done") {
-        setIsGenerating(false);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: msg.text,
-            modelLabel: "Vision",
-          },
-        ]);
+        const raw = msg.text.trim();
+        if (!raw) {
+          setIsGenerating(false);
+          return;
+        }
+        orchRef.current = {
+          kind: "caption",
+          data: { step: "polish", userText: "", rawCaption: raw },
+        };
         setAssistantBuffer("");
         assistantBufferRef.current = "";
+        setStatus("Gemma: formatting caption in your language…");
+        const g = appSettingsRef.current.gemma;
+        runGemmaGenerate(
+          `Raw image description (English):\n${raw}\n\nRewrite for the user: one short paragraph in their language if the chat is Hebrew use Hebrew; keep meaning; no preamble.`,
+          g.systemPrompt,
+          Math.min(256, g.maxNewTokens),
+          Math.min(0.25, g.temperature),
+          g.repetitionPenalty,
+          g.topP,
+          "",
+        );
       } else if (msg.type === "done") {
+        const orch = orchRef.current;
+        const buf = cleanModelOutput(assistantBufferRef.current);
+
+        if (orch?.kind === "caption" && orch.data.step === "polish") {
+          const polished = buf || orch.data.rawCaption;
+          orchRef.current = null;
+          setIsGenerating(false);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: polished,
+              modelLabel: "Gemma 4",
+            },
+          ]);
+          setAssistantBuffer("");
+          assistantBufferRef.current = "";
+          return;
+        }
+
+        if (orch?.kind === "image" && orch.data.step === "translate") {
+          const english = cleanEnglishImagePrompt(assistantBufferRef.current);
+          const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(english)}?width=1024&height=1024&model=${encodeURIComponent(appSettingsRef.current.imageBackendModel)}&nologo=true`;
+          setGeneratedImageUrl(url);
+          orchRef.current = {
+            kind: "image",
+            data: {
+              step: "summarize",
+              userText: orch.data.userText,
+              englishPrompt: english,
+              imageUrl: url,
+            },
+          };
+          assistantBufferRef.current = "";
+          setAssistantBuffer("");
+          setStatus("Gemma: replying in your language…");
+          const g = appSettingsRef.current.gemma;
+          const userLang = isRtlText(orch.data.userText) ? "Hebrew" : "the same language as the user";
+          runGemmaGenerate(
+            `User request:\n${orch.data.userText}\n\nWe generated an image using this English prompt for the image model:\n${english}\n\nReply in ${userLang}: 2–4 sentences explaining what was created; mention that the prompt was translated for the image engine. Then add a line with the image URL:\n${url}`,
+            g.systemPrompt,
+            Math.min(320, g.maxNewTokens),
+            g.temperature,
+            g.repetitionPenalty,
+            g.topP,
+            "",
+          );
+          return;
+        }
+
+        if (orch?.kind === "image" && orch.data.step === "summarize") {
+          const summary = buf || "Image ready.";
+          const imageUrl = orch.data.imageUrl;
+          orchRef.current = null;
+          setIsGenerating(false);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `${summary}\n\n![Generated](${imageUrl})`,
+              modelLabel: "Gemma 4",
+            },
+          ]);
+          setAssistantBuffer("");
+          assistantBufferRef.current = "";
+          return;
+        }
+
+        if (orch?.kind === "code" && orch.data.step === "route") {
+          const tech = buf || orch.data.userText;
+          orchRef.current = { kind: "code", data: { step: "code", userText: orch.data.userText, techTask: tech } };
+          assistantBufferRef.current = "";
+          setAssistantBuffer("");
+          setStatus("Code model running…");
+          void (async () => {
+            const techTask = tech;
+            let webContext = "";
+            if (webSearchRef.current) {
+              try {
+                webContext = await fetchWebContext(techTask);
+              } catch {
+                webContext = "";
+              }
+            }
+            runCoderGenerate(techTask, webContext);
+          })();
+          return;
+        }
+
+        if (orch?.kind === "code" && orch.data.step === "code") {
+          const codeOut = assistantBufferRef.current.trim() || buf;
+          orchRef.current = {
+            kind: "code",
+            data: {
+              step: "summarize",
+              userText: orch.data.userText,
+              techTask: orch.data.techTask,
+              codeOut,
+            },
+          };
+          assistantBufferRef.current = "";
+          setAssistantBuffer("");
+          setStatus("Gemma: summarizing in your language…");
+          const g = appSettingsRef.current.gemma;
+          const userLang = isRtlText(orch.data.userText) ? "Hebrew" : "the user's language";
+          runGemmaGenerate(
+            `Original user request:\n${orch.data.userText}\n\nTechnical task (English):\n${orch.data.techTask}\n\nCode model output:\n${codeOut}\n\nSummarize in ${userLang} what was done. Then include the full code in a markdown fenced block with the right language tag.`,
+            g.systemPrompt,
+            Math.min(700, g.maxNewTokens),
+            g.temperature,
+            g.repetitionPenalty,
+            g.topP,
+            "",
+          );
+          return;
+        }
+
+        if (orch?.kind === "code" && orch.data.step === "summarize") {
+          const finalText = buf;
+          orchRef.current = null;
+          setIsGenerating(false);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: finalText,
+              modelLabel: "Gemma 4",
+            },
+          ]);
+          setAssistantBuffer("");
+          assistantBufferRef.current = "";
+          return;
+        }
+
         setIsGenerating(false);
-        let output = cleanModelOutput(assistantBufferRef.current);
-        if (output.length > 900) output = `${output.slice(0, 900).trimEnd()}...`;
+        let output = buf;
+        if (output.length > 4000) output = `${output.slice(0, 4000).trimEnd()}…`;
         setMessages((prev) => [
           ...prev,
           {
@@ -289,6 +805,7 @@ function App() {
         setAssistantBuffer("");
         assistantBufferRef.current = "";
       } else if (msg.type === "error") {
+        orchRef.current = null;
         setIsGenerating(false);
         setIsLoading(false);
         setPreloadAllLoading(false);
@@ -311,9 +828,9 @@ function App() {
     setModelId(DEFAULT_MODEL);
     setIsLoading(true);
     setPreloadAllLoading(false);
-    setStatus("Loading Gemma controller...");
+    setStatus("Loading Gemma controller…");
     setProgress(0);
-    setProgressDetail("Preparing local runtime...");
+    setProgressDetail("Preparing local runtime…");
     setProgressFile("");
     workerRef.current.postMessage({
       type: "load",
@@ -322,54 +839,126 @@ function App() {
     });
   };
 
+  const clearModelCache = async () => {
+    if (isGenerating) return;
+    setStatus("Clearing local model cache…");
+    try {
+      workerRef.current?.postMessage({ type: "clear_runtime_cache" });
+      localStorage.removeItem(MODEL_CACHE_FLAG);
+      setShouldWarmupOnStart(true);
+      setVisionReadyMap({});
+      orchRef.current = null;
+
+      if ("caches" in window) {
+        const cacheKeys = await caches.keys();
+        await Promise.all(
+          cacheKeys
+            .filter((key) => key.toLowerCase().includes("transformers") || key.toLowerCase().includes("huggingface"))
+            .map((key) => caches.delete(key)),
+        );
+      }
+
+      const indexedDbGlobal = indexedDB as IDBFactory & {
+        databases?: () => Promise<Array<{ name?: string }>>;
+      };
+      if (indexedDbGlobal.databases) {
+        const dbs = await indexedDbGlobal.databases();
+        for (const db of dbs) {
+          const name = db.name ?? "";
+          if (!name) continue;
+          const lower = name.toLowerCase();
+          if (lower.includes("transformers") || lower.includes("huggingface") || lower.includes("onnx")) {
+            indexedDB.deleteDatabase(name);
+          }
+        }
+      }
+      setStatus("Cache cleared. Press Start again.");
+      setProgress(0);
+      setProgressDetail("");
+      setProgressFile("");
+      setIsLoaded(false);
+      setIsLoading(false);
+      setPreloadAllLoading(false);
+      setMessages([]);
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Cache clear failed: ${message}`);
+    }
+  };
+
+  const persistSettings = (s: AppSettings) => {
+    setAppSettings(s);
+    saveSettings(s);
+  };
+
   const sendPrompt = async (e: FormEvent) => {
     e.preventDefault();
     if (!workerRef.current || !isLoaded || isGenerating) return;
     const trimmed = prompt.trim();
-    if (!trimmed) return;
+    if (!trimmed && !imageDataUrl) return;
 
-    if (mode === "caption") {
+    if (imageDataUrl) {
       const captionModelId = VISION_MODEL_OPTIONS[0].id;
       if (!visionReadyMap[captionModelId]) {
-        setStatus("Vision model is still loading. Please wait a few seconds.");
+        setStatus("Vision model still loading…");
         return;
       }
-      if (!imageDataUrl) {
-        setStatus("Please attach an image first.");
-        return;
-      }
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: `Describe this image: ${trimmed}` }]);
+      const userLine = trimmed || "תאר את התמונה";
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: userLine }]);
       setPrompt("");
       setIsGenerating(true);
+      orchRef.current = null;
       workerRef.current.postMessage({
         type: "caption",
         imageDataUrl,
-        prompt: trimmed,
+        prompt: trimmed || undefined,
         modelId: captionModelId,
+        maxNewTokens: appSettings.visionMaxTokens,
       });
       return;
     }
 
-    if (mode === "image") {
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: `Create image: ${trimmed}` }]);
+    if (!trimmed) return;
+
+    if (isImageGenerationRequest(trimmed)) {
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
       setPrompt("");
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
       setIsGenerating(true);
-      try {
-        const imageModelId = IMAGE_MODEL_OPTIONS[0].id;
-        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(trimmed)}?width=1024&height=1024&model=${encodeURIComponent(imageModelId)}&nologo=true`;
-        setGeneratedImageUrl(url);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: `Generated image ready.\n${url}`,
-            modelLabel: `Image (${imageModelId})`,
-          },
-        ]);
-      } finally {
-        setIsGenerating(false);
-      }
+      orchRef.current = { kind: "image", data: { step: "translate", userText: trimmed } };
+      setStatus("Gemma: preparing English image prompt…");
+      runGemmaGenerate(
+        `User message (may be Hebrew):\n${trimmed}\n\nOutput ONLY a single English image-generation prompt, max 40 words, no quotes, no explanation.`,
+        "You output only the English prompt text for an image model. No other text.",
+        120,
+        0.1,
+        1.05,
+        0.85,
+        "",
+      );
+      return;
+    }
+
+    if (isCodeRequest(trimmed)) {
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
+      setPrompt("");
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
+      setIsGenerating(true);
+      orchRef.current = { kind: "code", data: { step: "route", userText: trimmed } };
+      setStatus("Gemma: routing to code model…");
+      runGemmaGenerate(
+        `User message (may be Hebrew):\n${trimmed}\n\nOutput ONLY a concise technical coding task in English (one short paragraph). No preamble, no labels.`,
+        "You extract a coding task for a code LLM. English only in the answer body.",
+        200,
+        0.05,
+        1.05,
+        0.85,
+        "",
+      );
       return;
     }
 
@@ -378,66 +967,71 @@ function App() {
     setAssistantBuffer("");
     assistantBufferRef.current = "";
     setIsGenerating(true);
+    orchRef.current = null;
 
-    const targetModelId = isCodeRequest(trimmed) ? CODE_MODEL : DEFAULT_MODEL;
-    const preset = getModelPreset(targetModelId, thinkingMode);
+    const g = appSettings.gemma;
     const greeting = isSimpleGreeting(trimmed);
     let webContext = "";
     if (webSearchMode) {
-      setStatus("Searching web context...");
+      setStatus("Searching…");
       try {
         webContext = await fetchWebContext(trimmed);
       } catch {
         webContext = "";
       }
     }
-    setStatus("Generating...");
+    setStatus("Generating…");
 
-    workerRef.current.postMessage({
-      type: "generate",
-      modelId: targetModelId,
-      prompt: trimmed,
-      systemPrompt: greeting
-        ? `${preset.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
-        : preset.systemPrompt,
-      maxNewTokens: greeting ? 28 : preset.maxNewTokens,
-      temperature: greeting ? 0 : preset.temperature,
-      repetitionPenalty: preset.repetitionPenalty,
-      topP: preset.topP,
-      thinkingMode,
+    runGemmaGenerate(
+      trimmed,
+      greeting
+        ? `${g.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
+        : g.systemPrompt,
+      greeting ? 40 : g.maxNewTokens,
+      greeting ? 0 : g.temperature,
+      g.repetitionPenalty,
+      g.topP,
       webContext,
-    });
+    );
   };
 
   return (
     <main className="app theme-space">
       <div className="bg-overlay" />
       <div className="corner-note">
-        <span>Runs fully local on your browser</span>
+        <span>Local models · Gemma orchestrates · see </span>
+        <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer" className="corner-link">
+          webml-community
+        </a>
+        <span> for new WebGPU demos</span>
       </div>
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={appSettings} onSave={persistSettings} />
 
       {phase === "start" && (
         <section className="hero-screen glass">
-          <h1>GROVEE - WEBGPU</h1>
-          <p>Primary controller: Gemma 4. Image tasks run inside this interface.</p>
+          <h1>GROVEE</h1>
+          <p>Gemma 4 loads first; code and vision models follow. One chat surface — routing is automatic.</p>
           <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-            {preloadAllLoading ? "Loading all models..." : "Start"}
+            {preloadAllLoading ? "Finishing setup…" : "Start"}
+          </button>
+          <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
+            Clear cache
           </button>
         </section>
       )}
 
       {phase === "loading" && (
         <section className="loading-screen glass">
-          <h2>GROVEE - WEBGPU</h2>
+          <h2>GROVEE</h2>
           <div className="loading-model">{modelLabel}</div>
           <div className="meter">
             <div className="meter-fill" style={{ width: `${progress}%` }} />
           </div>
           <div className="percent">{progress}%</div>
-          <div className="status-line">{status || "Loading model..."}</div>
+          <div className="status-line">{status || "Loading…"}</div>
           {progressDetail && <div className="status-line secondary">{progressDetail}</div>}
           {progressFile && <div className="status-line secondary">File: {progressFile}</div>}
-          <div className="offline-line">Runs 100% offline</div>
         </section>
       )}
 
@@ -452,6 +1046,9 @@ function App() {
                 setMessages([]);
                 setAssistantBuffer("");
                 setPrompt("");
+                setImageDataUrl(null);
+                setGeneratedImageUrl(null);
+                orchRef.current = null;
               }}
               disabled={isGenerating}
             >
@@ -466,59 +1063,65 @@ function App() {
 
           <section className="chat-panel">
             <header className="chat-header">
-              <div>
-                <h2>{conversationTitle}</h2>
-                <p className="top-status">{status}</p>
+              <div className="chat-header-row">
+                <div>
+                  <h2>{conversationTitle}</h2>
+                  <p className="top-status">{status}</p>
+                </div>
+                <div className="header-actions">
+                  <button
+                    type="button"
+                    className="icon-gear"
+                    title="Model settings"
+                    aria-label="Open settings"
+                    onClick={() => setSettingsOpen(true)}
+                  >
+                    ⚙
+                  </button>
+                </div>
               </div>
             </header>
 
             <div className="messages">
               {messages.length === 0 && !assistantBuffer && (
                 <div className="empty-state">
-                  <h3>Message GROVEE</h3>
-                  <p>Ask anything to start the conversation.</p>
+                  <h3>GROVEE</h3>
+                  <p>Ask in Hebrew or English. Attach an image to describe it. Ask for code or images — Gemma routes the rest.</p>
                 </div>
               )}
               {messages.map((msg) => (
-                <article key={msg.id} className={`bubble ${msg.role}`}>
+                <article key={msg.id} className={`bubble ${msg.role}`} dir={isRtlText(msg.content) ? "rtl" : "ltr"}>
                   <strong>{msg.role === "user" ? "You" : msg.modelLabel ?? "Assistant"}</strong>
-                  <p>{msg.content}</p>
+                  <MessageBody content={msg.content} />
                 </article>
               ))}
               {assistantBuffer && (
                 <article className="bubble assistant">
-                  <strong>{activeModelOption?.shortLabel ?? "Assistant"}</strong>
-                  <p>{assistantBuffer}</p>
+                  <strong>Gemma 4</strong>
+                  <div className="msg-body" dir="auto">
+                    <p className="msg-text">{assistantBuffer}</p>
+                  </div>
                 </article>
               )}
             </div>
 
-            <div className="chat-toolbar">
-              <div className="chat-controls">
-                <div className="mode-group">
-                  <button type="button" className={`mode-btn ${mode === "chat" ? "active" : ""}`} onClick={() => setMode("chat")}>
-                    Chat
-                  </button>
-                  <button type="button" className={`mode-btn ${mode === "caption" ? "active" : ""}`} onClick={() => setMode("caption")}>
-                    Image to Text
-                  </button>
-                  <button type="button" className={`mode-btn ${mode === "image" ? "active" : ""}`} onClick={() => setMode("image")}>
-                    Text to Image
-                  </button>
-                </div>
-                <span className="mode-note">Gemma 4 controller active</span>
-              </div>
-            </div>
-
-            <form onSubmit={sendPrompt} className="composer chatgpt-composer">
-              {mode === "caption" && (
-                <div className="upload-row">
-                  {imageDataUrl && <img className="preview-img" src={imageDataUrl} alt="Uploaded preview" />}
+            <form onSubmit={sendPrompt} className="composer chatgpt-composer compact-composer">
+              {generatedImageUrl && (
+                <div className="composer-thumb-row">
+                  <img className="composer-thumb" src={generatedImageUrl} alt="Last generated" />
                 </div>
               )}
-              {mode === "image" && generatedImageUrl && (
-                <div className="upload-row">
-                  <img className="preview-img" src={generatedImageUrl} alt="Generated output" />
+              {imageDataUrl && (
+                <div className="composer-thumb-row">
+                  <img className="composer-thumb" src={imageDataUrl} alt="Attached" />
+                  <button
+                    type="button"
+                    className="text-btn"
+                    onClick={() => setImageDataUrl(null)}
+                    disabled={isGenerating}
+                  >
+                    Remove image
+                  </button>
                 </div>
               )}
               <input
@@ -532,7 +1135,6 @@ function App() {
                   const reader = new FileReader();
                   reader.onload = () => {
                     setImageDataUrl(String(reader.result));
-                    setMode("caption");
                   };
                   reader.readAsDataURL(file);
                 }}
@@ -542,14 +1144,8 @@ function App() {
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={
-                    mode === "chat"
-                      ? placeholder
-                      : mode === "caption"
-                        ? "What should I describe in the image?"
-                        : "Describe the image you want to generate..."
-                  }
-                  rows={2}
+                  placeholder={placeholder}
+                  rows={1}
                   disabled={!isLoaded || isGenerating}
                 />
                 <div className="ds-actions-row">
@@ -561,7 +1157,7 @@ function App() {
                         onChange={(e) => setThinkingMode(e.target.checked)}
                         disabled={isGenerating}
                       />
-                      <span>DeepThink</span>
+                      <span>Think</span>
                     </label>
                     <label className="toggle">
                       <input
@@ -584,12 +1180,22 @@ function App() {
                       📎
                     </button>
                     <button className="send-btn" type="submit" disabled={!isLoaded || isGenerating}>
-                      {isGenerating ? "..." : "↑"}
+                      {isGenerating ? "…" : "↑"}
                     </button>
                   </div>
                 </div>
               </div>
             </form>
+            <div className="composer-footer-tools">
+              <button
+                type="button"
+                className="text-btn"
+                onClick={clearModelCache}
+                disabled={isGenerating || isLoading}
+              >
+                Clear model cache
+              </button>
+            </div>
           </section>
         </section>
       )}
