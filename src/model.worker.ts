@@ -270,9 +270,19 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         detail: `0 / ${total} models ready`,
         file: "",
       });
+      const failedTextModelIds: string[] = [];
+      const failedCaptionModelIds: string[] = [];
       for (const textModelId of message.textModelIds) {
         post({ type: "status", text: `Preparing text model ${completed + 1}/${total}: ${textModelId}` });
-        await loadTextGenerator(textModelId, message.dtype);
+        try {
+          if (!textGeneratorCache.has(textModelId)) {
+            await loadTextGenerator(textModelId, message.dtype);
+          }
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          failedTextModelIds.push(textModelId);
+          post({ type: "status", text: `Could not load ${textModelId}: ${err}` });
+        }
         completed += 1;
         post({
           type: "progress",
@@ -285,13 +295,19 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       for (const captionModelId of message.captionModelIds) {
         post({ type: "status", text: `Preparing vision model ${completed + 1}/${total}: ${captionModelId}` });
         if (!captionerCache.has(captionModelId)) {
-          let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
           try {
-            captioner = await loadCaptioner(captionModelId, "webgpu");
-          } catch {
-            captioner = await loadCaptioner(captionModelId, "wasm");
+            let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+            try {
+              captioner = await loadCaptioner(captionModelId, "webgpu");
+            } catch {
+              captioner = await loadCaptioner(captionModelId, "wasm");
+            }
+            captionerCache.set(captionModelId, captioner);
+          } catch (e) {
+            const err = e instanceof Error ? e.message : String(e);
+            failedCaptionModelIds.push(captionModelId);
+            post({ type: "status", text: `Could not load vision ${captionModelId}: ${err}` });
           }
-          captionerCache.set(captionModelId, captioner);
         }
         completed += 1;
         post({
@@ -306,6 +322,8 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         type: "preload_all_done",
         textModels: message.textModelIds.length,
         captionModels: message.captionModelIds.length,
+        ...(failedTextModelIds.length ? { failedTextModelIds } : {}),
+        ...(failedCaptionModelIds.length ? { failedCaptionModelIds } : {}),
       });
       return;
     }
@@ -321,9 +339,17 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         type: "status",
         text: "Gemma is ready. Downloading additional models in background...",
       });
+      const failedTextModelIds: string[] = [];
+      const failedCaptionModelIds: string[] = [];
       for (const textModelId of message.textModelIds) {
-        if (!textGeneratorCache.has(textModelId)) {
-          await loadTextGenerator(textModelId, message.dtype);
+        try {
+          if (!textGeneratorCache.has(textModelId)) {
+            await loadTextGenerator(textModelId, message.dtype);
+          }
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          failedTextModelIds.push(textModelId);
+          post({ type: "status", text: `Warmup failed for ${textModelId}: ${err}` });
         }
         completed += 1;
         post({
@@ -336,13 +362,19 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
       for (const captionModelId of message.captionModelIds) {
         if (!captionerCache.has(captionModelId)) {
-          let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
           try {
-            captioner = await loadCaptioner(captionModelId, "webgpu");
-          } catch {
-            captioner = await loadCaptioner(captionModelId, "wasm");
+            let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+            try {
+              captioner = await loadCaptioner(captionModelId, "webgpu");
+            } catch {
+              captioner = await loadCaptioner(captionModelId, "wasm");
+            }
+            captionerCache.set(captionModelId, captioner);
+          } catch (e) {
+            const err = e instanceof Error ? e.message : String(e);
+            failedCaptionModelIds.push(captionModelId);
+            post({ type: "status", text: `Vision warmup failed for ${captionModelId}: ${err}` });
           }
-          captionerCache.set(captionModelId, captioner);
         }
         completed += 1;
         post({
@@ -357,6 +389,8 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         type: "preload_all_done",
         textModels: message.textModelIds.length,
         captionModels: message.captionModelIds.length,
+        ...(failedTextModelIds.length ? { failedTextModelIds } : {}),
+        ...(failedCaptionModelIds.length ? { failedCaptionModelIds } : {}),
       });
       return;
     }

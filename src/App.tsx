@@ -29,14 +29,21 @@ type WorkerOutMessage =
   | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
   | { type: "loaded"; modelId: string; device: string }
   | { type: "caption_model_loaded"; modelId: string; device: string }
-  | { type: "preload_all_done"; textModels: number; captionModels: number }
+  | {
+      type: "preload_all_done";
+      textModels: number;
+      captionModels: number;
+      failedTextModelIds?: string[];
+      failedCaptionModelIds?: string[];
+    }
   | { type: "token"; text: string }
   | { type: "caption_done"; text: string }
   | { type: "done" }
   | { type: "error"; error: string };
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
-const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct-ONNX";
+/** Public ONNX repo for Transformers.js (the *-Instruct-ONNX* repo returns 401 for anonymous fetch). */
+const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
 const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 
@@ -662,20 +669,43 @@ function App() {
         setStatus(`Vision model ready on ${msg.device}`);
       } else if (msg.type === "preload_all_done") {
         setPreloadAllLoading(false);
-        const allVisionReady = Object.fromEntries(VISION_MODEL_OPTIONS.map((option) => [option.id, true]));
-        setVisionReadyMap(allVisionReady);
+        const visionOk = Object.fromEntries(
+          VISION_MODEL_OPTIONS.map((option) => [option.id, !msg.failedCaptionModelIds?.includes(option.id)]),
+        );
+        setVisionReadyMap(visionOk);
         setIsLoading(false);
         setIsLoaded(true);
         setShouldWarmupOnStart(false);
+        const warmupIncomplete = Boolean(
+          msg.failedTextModelIds?.length || msg.failedCaptionModelIds?.length,
+        );
         try {
-          localStorage.setItem(MODEL_CACHE_FLAG, "1");
+          if (warmupIncomplete) {
+            localStorage.removeItem(MODEL_CACHE_FLAG);
+          } else {
+            localStorage.setItem(MODEL_CACHE_FLAG, "1");
+          }
         } catch {
           // ignore
         }
         setProgress(100);
-        setProgressDetail("All local models are ready");
+        const failedT = msg.failedTextModelIds?.length
+          ? ` · נכשלו מודלי טקסט: ${msg.failedTextModelIds.join(", ")}`
+          : "";
+        const failedC = msg.failedCaptionModelIds?.length
+          ? ` · נכשלו vision: ${msg.failedCaptionModelIds.join(", ")}`
+          : "";
+        setProgressDetail(
+          failedT || failedC
+            ? "חלק מהמודלים לא נטענו — בדקו רשת/חסימות Hugging Face"
+            : "כל המודלים המקומיים מוכנים",
+        );
         setProgressFile("");
-        setStatus(`All models ready: ${msg.textModels} text + ${msg.captionModels} vision`);
+        setStatus(
+          failedT || failedC
+            ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
+            : `כל המודלים מוכנים: ${msg.textModels} טקסט + ${msg.captionModels} vision`,
+        );
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
