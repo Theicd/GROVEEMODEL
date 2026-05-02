@@ -92,6 +92,63 @@ body {
   font-size: 1.05rem;
 }
 
+.hero-eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7a93c4;
+}
+
+.hero-lead {
+  max-width: 34rem;
+  line-height: 1.55;
+}
+
+.hero-facts {
+  margin: 0.25rem 0 0;
+  padding: 0 0 0 1.1rem;
+  max-width: 36rem;
+  text-align: start;
+  color: #c8d4f0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.hero-facts li {
+  margin-bottom: 0.45rem;
+}
+
+.hero-facts strong {
+  color: #e8eefc;
+  font-weight: 600;
+}
+
+.hero-foot {
+  max-width: 32rem;
+  font-size: 0.88rem !important;
+  color: #8fa3cf !important;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.settings-micro {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #8fa3cf;
+}
+
+.settings-micro a {
+  color: #9ec5ff;
+}
+
 .selector-row {
   width: min(700px, 100%);
 }

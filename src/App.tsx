@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import {
+  cleanEnglishImagePrompt,
+  isCodeRequest,
+  isImageGenerationRequest,
+  isRtlText,
+  isSimpleGreeting,
+} from "./chatIntents";
+import {
+  generateSdTurboPng,
+  getSdTurboSizeNote,
+  revokeImageUrl,
+  terminateLocalImageWorker,
+} from "./localImageGen";
 
 type Role = "user" | "assistant";
 
@@ -63,11 +76,14 @@ const defaultCoderSettings: TunableModelSettings = {
     "You are an expert programmer. Output working code with brief comments. Prefer markdown code fences with language tags.",
 };
 
+type ImageProviderId = "pollinations" | "local_sd_turbo";
+
 type AppSettings = {
   gemma: TunableModelSettings;
   coder: TunableModelSettings;
   visionMaxTokens: number;
   imageBackendModel: string;
+  imageProvider: ImageProviderId;
 };
 
 const defaultAppSettings = (): AppSettings => ({
@@ -75,6 +91,7 @@ const defaultAppSettings = (): AppSettings => ({
   coder: { ...defaultCoderSettings },
   visionMaxTokens: 96,
   imageBackendModel: IMAGE_MODEL_OPTIONS[0].id,
+  imageProvider: "pollinations",
 });
 
 const loadSettings = (): AppSettings => {
@@ -87,6 +104,10 @@ const loadSettings = (): AppSettings => {
       ...parsed,
       gemma: { ...defaultGemmaSettings, ...parsed.gemma },
       coder: { ...defaultCoderSettings, ...parsed.coder },
+      imageProvider:
+        parsed.imageProvider === "local_sd_turbo" || parsed.imageProvider === "pollinations"
+          ? parsed.imageProvider
+          : defaultAppSettings().imageProvider,
     };
   } catch {
     return defaultAppSettings();
@@ -114,6 +135,7 @@ type CaptionOrch = { step: "polish"; userText: string; rawCaption: string };
 
 type Orchestration = { kind: "image"; data: ImageOrch } | { kind: "code"; data: CodeOrch } | { kind: "caption"; data: CaptionOrch };
 
+/** Strip common chat-template junk from raw model output. */
 const cleanModelOutput = (input: string): string => {
   const cleaned = input
     .replace(/\r/g, "")
@@ -137,36 +159,6 @@ const cleanModelOutput = (input: string): string => {
   if (normalized.length) return normalized;
   const raw = input.trim();
   return raw.length ? raw.slice(0, 2000) : "No response generated.";
-};
-
-const cleanEnglishImagePrompt = (raw: string): string => {
-  let t = cleanModelOutput(raw).replace(/^[\s\-*]+/, "");
-  t = t.split("\n")[0] ?? t;
-  t = t.replace(/^["']|["']$/g, "").trim();
-  return t.slice(0, 500) || "high quality detailed scene";
-};
-
-const isSimpleGreeting = (text: string): boolean => {
-  const normalized = text.trim().toLowerCase();
-  return /^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized);
-};
-
-const isRtlText = (text: string): boolean => /[\u0590-\u05FF]/.test(text);
-
-const isCodeRequest = (text: string): boolean => {
-  const t = text.toLowerCase();
-  const he = /קוד|פונקציה|דיבאג|שגיאה|תוכנית|סקריפט|html|css|פייתון|ג'אווהסקריפט|טייפסקריפט/.test(text);
-  return (
-    he ||
-    /(code|debug|bug|stack trace|typescript|javascript|python|function|class|compile|error|implement|refactor|api)\b/.test(t)
-  );
-};
-
-const isImageGenerationRequest = (text: string): boolean => {
-  const t = text.toLowerCase();
-  const he =
-    /צור תמונה|תמונה של|הפק תמונה|ייצר תמונה|צייר|איור של|תאר תמונה ש|בנה תמונה/.test(text);
-  return he || /(create|generate|draw|make)\s+(an?\s+)?image|text-to-image|image of\b/.test(t);
 };
 
 const fetchWebContext = async (query: string): Promise<string> => {
@@ -293,8 +285,8 @@ function SettingsModal({
           </button>
         </div>
         <p className="settings-hint">
-          Tune generation per role. Gemma orchestrates chat, Hebrew replies, and routing; the code model runs technical
-          steps; image backend uses English prompts produced by Gemma.
+          Gemma 4 מנהל את השיחה והעברית; לקוד הוא מפיק משימה טכנית באנגלית ואז <strong>Qwen Coder</strong> כותב את הקוד (Gemma
+          יכולה לנחש קוד קצר, אבל לא זה התפקיד שלה). תמונות: פרומפט באנגלית אוטומטית, מנוע ענן או SD-Turbo מקומי.
         </p>
 
         <section className="settings-section">
@@ -421,20 +413,53 @@ function SettingsModal({
         </section>
 
         <section className="settings-section">
-          <h3>Image backend (Pollinations)</h3>
+          <h3>Image generation</h3>
           <label className="settings-row block">
-            <span>Model id</span>
+            <span>Engine</span>
             <select
-              value={draft.imageBackendModel}
-              onChange={(e) => setDraft((d) => ({ ...d, imageBackendModel: e.target.value }))}
+              value={draft.imageProvider}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  imageProvider: e.target.value as ImageProviderId,
+                }))
+              }
             >
-              {IMAGE_MODEL_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
+              <option value="pollinations">Cloud — Pollinations (fast, needs network)</option>
+              <option value="local_sd_turbo">Local — SD-Turbo in browser ({getSdTurboSizeNote()})</option>
             </select>
           </label>
+          <p className="settings-micro">
+            Smaller experimental ONNX demos (under ~400MB) exist in the community, but this app ships with SD-Turbo as the
+            practical single-step local option. See{" "}
+            <a href="https://github.com/lacerbi/web-txt2img" target="_blank" rel="noreferrer">
+              web-txt2img
+            </a>{" "}
+            and{" "}
+            <a
+              href="https://huggingface.co/IlyasMoutawwakil/tiny-stable-diffusion-onnx"
+              target="_blank"
+              rel="noreferrer"
+            >
+              tiny-stable-diffusion-onnx
+            </a>{" "}
+            for research builds.
+          </p>
+          {draft.imageProvider === "pollinations" && (
+            <label className="settings-row block">
+              <span>Pollinations model id</span>
+              <select
+                value={draft.imageBackendModel}
+                onChange={(e) => setDraft((d) => ({ ...d, imageBackendModel: e.target.value }))}
+              >
+                {IMAGE_MODEL_OPTIONS.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </section>
 
         <div className="settings-actions">
@@ -481,6 +506,7 @@ function App() {
   const [webSearchMode, setWebSearchMode] = useState(false);
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
+  const lastGeneratedUrlRef = useRef<string | null>(null);
   const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
   const [preloadAllLoading, setPreloadAllLoading] = useState(false);
   const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
@@ -512,6 +538,14 @@ function App() {
   useEffect(() => {
     shouldWarmupOnStartRef.current = shouldWarmupOnStart;
   }, [shouldWarmupOnStart]);
+
+  useEffect(() => {
+    const prev = lastGeneratedUrlRef.current;
+    if (prev && prev !== generatedImageUrl && prev.startsWith("blob:")) {
+      revokeImageUrl(prev);
+    }
+    lastGeneratedUrlRef.current = generatedImageUrl;
+  }, [generatedImageUrl]);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
@@ -676,31 +710,50 @@ function App() {
 
         if (orch?.kind === "image" && orch.data.step === "translate") {
           const english = cleanEnglishImagePrompt(assistantBufferRef.current);
-          const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(english)}?width=1024&height=1024&model=${encodeURIComponent(appSettingsRef.current.imageBackendModel)}&nologo=true`;
-          setGeneratedImageUrl(url);
-          orchRef.current = {
-            kind: "image",
-            data: {
-              step: "summarize",
-              userText: orch.data.userText,
-              englishPrompt: english,
-              imageUrl: url,
-            },
-          };
+          const userText = orch.data.userText;
           assistantBufferRef.current = "";
           setAssistantBuffer("");
-          setStatus("Gemma: replying in your language…");
-          const g = appSettingsRef.current.gemma;
-          const userLang = isRtlText(orch.data.userText) ? "Hebrew" : "the same language as the user";
-          runGemmaGenerate(
-            `User request:\n${orch.data.userText}\n\nWe generated an image using this English prompt for the image model:\n${english}\n\nReply in ${userLang}: 2–4 sentences explaining what was created; mention that the prompt was translated for the image engine. Then add a line with the image URL:\n${url}`,
-            g.systemPrompt,
-            Math.min(320, g.maxNewTokens),
-            g.temperature,
-            g.repetitionPenalty,
-            g.topP,
-            "",
-          );
+
+          const cloudUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(english)}?width=1024&height=1024&model=${encodeURIComponent(appSettingsRef.current.imageBackendModel)}&nologo=true`;
+
+          const runSummarize = (imageUrl: string) => {
+            setGeneratedImageUrl(imageUrl);
+            orchRef.current = {
+              kind: "image",
+              data: {
+                step: "summarize",
+                userText,
+                englishPrompt: english,
+                imageUrl,
+              },
+            };
+            setStatus("Gemma: replying in your language…");
+            const g = appSettingsRef.current.gemma;
+            const userLang = isRtlText(userText) ? "Hebrew" : "the same language as the user";
+            runGemmaGenerate(
+              `User request:\n${userText}\n\nWe generated an image using this English prompt for the image model:\n${english}\n\nReply in ${userLang}: 2–4 sentences explaining what was created; mention that the prompt was translated for the image engine. Then add a line with the image URL:\n${imageUrl}`,
+              g.systemPrompt,
+              Math.min(320, g.maxNewTokens),
+              g.temperature,
+              g.repetitionPenalty,
+              g.topP,
+              "",
+            );
+          };
+
+          if (appSettingsRef.current.imageProvider === "local_sd_turbo") {
+            void (async () => {
+              const local = await generateSdTurboPng(english, (s) => setStatus(s));
+              if (local.ok) {
+                runSummarize(local.objectUrl);
+              } else {
+                setStatus(`Local image failed (${local.message}). Using cloud…`);
+                runSummarize(cloudUrl);
+              }
+            })();
+          } else {
+            runSummarize(cloudUrl);
+          }
           return;
         }
 
@@ -843,6 +896,10 @@ function App() {
     if (isGenerating) return;
     setStatus("Clearing local model cache…");
     try {
+      terminateLocalImageWorker();
+      revokeImageUrl(generatedImageUrl);
+      setGeneratedImageUrl(null);
+      lastGeneratedUrlRef.current = null;
       workerRef.current?.postMessage({ type: "clear_runtime_cache" });
       localStorage.removeItem(MODEL_CACHE_FLAG);
       setShouldWarmupOnStart(true);
@@ -999,25 +1056,47 @@ function App() {
     <main className="app theme-space">
       <div className="bg-overlay" />
       <div className="corner-note">
-        <span>Local models · Gemma orchestrates · see </span>
-        <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer" className="corner-link">
-          webml-community
-        </a>
-        <span> for new WebGPU demos</span>
+        <span>Gemma 4 · Qwen Coder · Vision — הגדרות ב־⚙</span>
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={appSettings} onSave={persistSettings} />
 
       {phase === "start" && (
         <section className="hero-screen glass">
+          <p className="hero-eyebrow">Private · In-browser · WebGPU when available</p>
           <h1>GROVEE</h1>
-          <p>Gemma 4 loads first; code and vision models follow. One chat surface — routing is automatic.</p>
-          <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-            {preloadAllLoading ? "Finishing setup…" : "Start"}
-          </button>
-          <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
-            Clear cache
-          </button>
+          <p className="hero-lead">
+            צ&apos;אט אחד שמדבר עברית ואנגלית, מנתב אוטומטית לקוד, ליצירת תמונה ולתיאור תמונה. דומה לחוויית OpenAI — הכל רץ אצלך בדפדפן.
+          </p>
+          <ul className="hero-facts">
+            <li>
+              <strong>Gemma 4</strong> — שליטה, סיכומים, עברית נקייה, ניתוב בקשות.
+            </li>
+            <li>
+              <strong>Qwen2.5 Coder 0.5B</strong> — יצירת קוד; Gemma מנסחת משימה באנגלית ומחזירה לך הסבר + קוד.
+            </li>
+            <li>
+              <strong>Vision</strong> — כיתוב תמונה (ViT-GPT2 או Moondream2 לפי טעינה).
+            </li>
+            <li>
+              <strong>תמונה מטקסט</strong> — ענן (Pollinations) או מקומי <strong>SD-Turbo</strong> (~2.3GB, WebGPU) מההגדרות.
+            </li>
+          </ul>
+          <p className="hero-foot">
+            מודלים נוספים ל-WebGPU:{" "}
+            <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer">
+              webml-community
+            </a>
+            .
+          </p>
+          <div className="hero-actions">
+            <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
+              {preloadAllLoading ? "Finishing setup…" : "התחל טעינה"}
+            </button>
+            <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
+              נקה מטמון
+            </button>
+          </div>
         </section>
       )}
 
@@ -1047,7 +1126,9 @@ function App() {
                 setAssistantBuffer("");
                 setPrompt("");
                 setImageDataUrl(null);
+                revokeImageUrl(generatedImageUrl);
                 setGeneratedImageUrl(null);
+                lastGeneratedUrlRef.current = null;
                 orchRef.current = null;
               }}
               disabled={isGenerating}
@@ -1085,8 +1166,10 @@ function App() {
             <div className="messages">
               {messages.length === 0 && !assistantBuffer && (
                 <div className="empty-state">
-                  <h3>GROVEE</h3>
-                  <p>Ask in Hebrew or English. Attach an image to describe it. Ask for code or images — Gemma routes the rest.</p>
+                  <h3>שיחה חדשה</h3>
+                  <p>
+                    כתוב בעברית או באנגלית. צרף תמונה לתיאור. בקש קוד או &quot;צור תמונה&quot; — המערכת תבחר את המודל המתאים ותחזיר תשובה אחת ברורה.
+                  </p>
                 </div>
               )}
               {messages.map((msg) => (
