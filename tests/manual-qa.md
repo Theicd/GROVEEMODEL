@@ -2,8 +2,6 @@
 
 Run after `npm run dev` or on the deployed site. Models must finish downloading first.
 
-On the **start screen**, confirm **בדיקת מכשיר** shows WebGPU/RAM hints consistent with your machine (Chrome vs Safari, 8GB+ RAM, etc.).
-
 | # | Goal | Try (paste or attach) | Expect |
 |---|------|------------------------|--------|
 | 1 | Chat / Hebrew | `ספר משפט אחד על קפה.` | Short Hebrew reply, readable punctuation. |

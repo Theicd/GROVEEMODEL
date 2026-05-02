@@ -13,7 +13,6 @@ import {
   revokeImageUrl,
   terminateLocalImageWorker,
 } from "./localImageGen";
-import { runDeviceCapabilityCheck, type DeviceCheckResult } from "./deviceCapabilities";
 
 type Role = "user" | "assistant";
 
@@ -524,9 +523,6 @@ function App() {
       return true;
     }
   });
-  const [deviceCheck, setDeviceCheck] = useState<DeviceCheckResult | null>(null);
-  const [deviceCheckLoading, setDeviceCheckLoading] = useState(false);
-
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
@@ -559,22 +555,6 @@ function App() {
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
-
-  useEffect(() => {
-    if (isLoaded || isLoading) return;
-    let cancelled = false;
-    setDeviceCheckLoading(true);
-    runDeviceCapabilityCheck()
-      .then((r) => {
-        if (!cancelled) setDeviceCheck(r);
-      })
-      .finally(() => {
-        if (!cancelled) setDeviceCheckLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isLoaded, isLoading]);
 
   useEffect(() => {
     activeModelShortLabelRef.current = "Gemma 4";
@@ -1118,56 +1098,6 @@ function App() {
               נקה מטמון
             </button>
           </div>
-          <details className="hero-more">
-            <summary className="hero-more-summary">פרטים טכניים (אופציונלי)</summary>
-            <div className="hero-more-body" dir="rtl">
-              <p className="hero-more-line">
-                Gemma 4 מנהל את השיחה; Qwen Coder לקוד; כיתוב תמונה; תמונה מטקסט (ענן או SD-Turbo מקומי). אחרי הטעינה: ⚙ להגדרות.
-              </p>
-              <p className="hero-more-line">
-                <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer">
-                  webml-community
-                </a>
-                {" · "}
-                <a
-                  href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Transformers.js V4 demos
-                </a>
-              </p>
-              <details className="hero-device-details">
-                <summary className="hero-device-summary">בדיקת מכשיר</summary>
-                <div className="device-check-wrap device-check-wrap--nested">
-                  {deviceCheckLoading && <p className="device-check-loading">בודקים…</p>}
-                  {!deviceCheckLoading && deviceCheck && (
-                    <div className={`device-check device-check--${deviceCheck.tier}`}>
-                      <p className="device-check-summary">{deviceCheck.summaryHe}</p>
-                      <ul className="device-check-list">
-                        {deviceCheck.items.map((it) => (
-                          <li
-                            key={it.id}
-                            className={
-                              it.ok ? "device-check-item device-check-item--ok" : "device-check-item device-check-item--bad"
-                            }
-                          >
-                            <span className="device-check-mark" aria-hidden>
-                              {it.ok ? "✓" : "✕"}
-                            </span>
-                            <div>
-                              <strong>{it.label}</strong>
-                              <span className="device-check-hint"> — {it.hint}</span>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </details>
-            </div>
-          </details>
         </section>
       )}
 
