@@ -1,5 +1,4 @@
-# Keeps docs/ in sync with npm run build so GitHub Pages can use "Branch: main / Folder: docs".
-# Without this, if Pages points at repo root, the dev index.html (/src/main.tsx) is served and the app is blank.
+# Keeps docs/ in sync with npm run build. Root index.html redirects here; Pages can use main / (root) or /docs.
 name: Sync docs/ for Pages
 
 on:

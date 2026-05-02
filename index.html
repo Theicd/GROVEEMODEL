@@ -1,20 +1,20 @@
 <!doctype html>
-<!-- Dev entry for Vite only (npm run dev). Production static files live in docs/ after build — see README “GitHub Pages”. -->
+<!-- GitHub Pages publishes repo root: this file must NOT reference /src (dev only lives under app/). -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap"
-      rel="stylesheet"
-    />
+    <meta http-equiv="refresh" content="0; url=docs/index.html" />
     <title>GROVEE</title>
+    <link rel="icon" type="image/svg+xml" href="docs/favicon.svg" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <p style="font-family: system-ui; padding: 1rem">
+      מעביר ליישום… אם לא קורה כלום,
+      <a href="docs/index.html">לחץ כאן</a>.
+    </p>
+    <script>
+      location.replace(new URL("docs/index.html", location.href).href);
+    </script>
   </body>
 </html>

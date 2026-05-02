@@ -40,17 +40,11 @@ npm run build
 
 ### GitHub Pages (this repo)
 
-The file **`index.html` in the repo root is for Vite dev** (`npm run dev`) and points at `/src/main.tsx`.  
-If GitHub Pages is set to **“Deploy from branch `main` / folder `/ (root)`”**, the live site will 404 on `/src/main.tsx` and look blank.
+- **Repo root `index.html`** only redirects to **`docs/index.html`** (production bundle). No `/src` paths — works even if Pages uses **`main` / `/ (root)`**.
+- **Vite** uses **`app/index.html`** + **`app/src/`** for `npm run dev` and `npm run build`.
+- The folder **`docs/`** is updated by **`sync-docs-folder.yml`** after each push (copy of `dist/`).
 
-**Do this once:** Repository **Settings → Pages → Build and deployment**
-
-1. **Source:** *Deploy from a branch*
-2. **Branch:** `main`
-3. **Folder:** **`/docs`** (not `/ (root)`)
-
-The production bundle is copied into **`docs/`** on each push (workflow `sync-docs-folder.yml`).  
-Alternatively set **Source: GitHub Actions** and use `Deploy to GitHub Pages` workflow (artifact = `dist/` only).
+Optional: set Pages to **`/docs`** so the site root is the bundle directly (no redirect). **GitHub Actions** deploy is also supported (`deploy-pages.yml`).
 
 Console warnings like `Permissions-Policy ... browsing-topics` come from **github.io** response headers, not from this app; they can be ignored.
 
@@ -61,4 +55,4 @@ The repo has a **root `.nojekyll`** file so GitHub Pages does not run Jekyll (wh
 - `onnx-community/gemma-4-E2B-it-ONNX`
 - `onnx-community/Qwen3-0.6B-ONNX`
 
-You can add more supported ONNX models by editing `MODEL_OPTIONS` in `src/App.tsx`.
+You can add more supported ONNX models by editing constants in `app/src/App.tsx`.
