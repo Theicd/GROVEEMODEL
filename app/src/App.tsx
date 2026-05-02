@@ -620,6 +620,7 @@ function App() {
   const webSearchRef = useRef(webSearchMode);
   const preloadAllLoadingRef = useRef(preloadAllLoading);
   const shouldWarmupOnStartRef = useRef(shouldWarmupOnStart);
+  const isLoadingRef = useRef(isLoading);
 
   useEffect(() => {
     appSettingsRef.current = appSettings;
@@ -636,6 +637,9 @@ function App() {
   useEffect(() => {
     shouldWarmupOnStartRef.current = shouldWarmupOnStart;
   }, [shouldWarmupOnStart]);
+  useEffect(() => {
+    isLoadingRef.current = isLoading;
+  }, [isLoading]);
 
   useEffect(() => {
     const prev = lastGeneratedUrlRef.current;
@@ -712,7 +716,8 @@ function App() {
         setStatus(msg.text);
       } else if (msg.type === "progress") {
         setStatus(msg.text);
-        setProgress(msg.progress);
+        const loadingPhase = isLoadingRef.current || preloadAllLoadingRef.current;
+        setProgress((prev) => (loadingPhase ? Math.max(prev, msg.progress) : msg.progress));
         setProgressDetail(msg.detail ?? "");
         setProgressFile(msg.file ?? "");
       } else if (msg.type === "loaded") {

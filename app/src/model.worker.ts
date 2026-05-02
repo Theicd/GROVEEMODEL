@@ -116,6 +116,62 @@ const normalizeProgressStatus = (status?: string, percent?: number) => {
   return status ?? "Loading model files…";
 };
 
+type HfProgress = {
+  status?: string;
+  progress?: number;
+  loaded?: number;
+  total?: number;
+  file?: string;
+  name?: string;
+};
+
+/**
+ * Transformers.js reports progress per shard/file; each new file resets % and byte counters.
+ * Keep a monotonic bar (never jumps backward) and label bytes as "this file only".
+ */
+const createMonotonicProgressBridge = (startedAt: number) => {
+  let highWaterPct = 0;
+  /** If % drops by more than this vs the peak, treat as a new file starting. */
+  const NEW_FILE_DROP = 15;
+  let lastLoaded = 0;
+  let lastTs = startedAt;
+
+  return (progressData: HfProgress) => {
+    const rawPct = clampPercent(progressData.progress);
+    if (rawPct + NEW_FILE_DROP < highWaterPct) {
+      // New ONNX shard — hold the bar steady
+    } else {
+      highWaterPct = Math.max(highWaterPct, rawPct);
+    }
+    const displayPct = Math.min(99, highWaterPct);
+
+    const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
+    const total = typeof progressData.total === "number" ? progressData.total : 0;
+    const now = Date.now();
+    const dt = Math.max(1, (now - lastTs) / 1000);
+    const speed = loaded > 0 && loaded >= lastLoaded ? (loaded - lastLoaded) / dt : 0;
+    lastLoaded = loaded;
+    lastTs = now;
+    const elapsed = Math.max(1, (now - startedAt) / 1000);
+    const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "calculating…";
+    const fname = (progressData.file ?? progressData.name ?? "").trim();
+    const detailText =
+      loaded > 0 && total > 0
+        ? `This file: ${fmtBytes(loaded)} / ${fmtBytes(total)} · ~${speedText}${fname ? ` · ${fname}` : ""}`
+        : `Elapsed ${elapsed.toFixed(1)}s${fname ? ` · ${fname}` : ""}`;
+
+    const statusText = normalizeProgressStatus(progressData.status, displayPct);
+
+    post({
+      type: "progress",
+      text: statusText,
+      progress: clampProgress(displayPct),
+      detail: detailText,
+      file: fname,
+    });
+  };
+};
+
 const loadWithDevice = async (
   modelId: string,
   dtype: LoadMessage["dtype"],
@@ -123,43 +179,11 @@ const loadWithDevice = async (
 ) => {
   post({ type: "status", text: `Loading ${modelId} on ${device}...` });
   const startedAt = Date.now();
-  let lastLoaded = 0;
-  let lastTs = startedAt;
+  const onProgress = createMonotonicProgressBridge(startedAt);
   const pipe = (await pipeline("text-generation", modelId, {
     device,
     dtype,
-    progress_callback: (progressData: {
-      status?: string;
-      progress?: number;
-      loaded?: number;
-      total?: number;
-      file?: string;
-      name?: string;
-    }) => {
-      const percent = clampPercent(progressData.progress);
-      const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
-      const total = typeof progressData.total === "number" ? progressData.total : 0;
-      const now = Date.now();
-      const dt = Math.max(1, (now - lastTs) / 1000);
-      const speed = loaded > 0 && loaded >= lastLoaded ? (loaded - lastLoaded) / dt : 0;
-      lastLoaded = loaded;
-      lastTs = now;
-      const elapsed = Math.max(1, (now - startedAt) / 1000);
-      const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "calculating...";
-      const detailText =
-        loaded > 0 && total > 0
-          ? `${fmtBytes(loaded)} / ${fmtBytes(total)} (${speedText})`
-          : `elapsed ${elapsed.toFixed(1)}s`;
-      const statusText = normalizeProgressStatus(progressData.status, percent);
-
-      post({
-        type: "progress",
-        text: statusText,
-        progress: clampProgress(percent),
-        detail: detailText,
-        file: progressData.file ?? progressData.name ?? "",
-      });
-    },
+    progress_callback: onProgress,
   })) as TextGenerator;
 
   post({
@@ -176,10 +200,21 @@ const loadWithDevice = async (
 const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
   const visionModel = modelId;
   post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
-  return (await pipeline("image-to-text", visionModel, {
+  const startedAt = Date.now();
+  const onProgress = createMonotonicProgressBridge(startedAt);
+  const pipe = (await pipeline("image-to-text", visionModel, {
     device,
     dtype: "q8",
+    progress_callback: onProgress,
   })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+  post({
+    type: "progress",
+    text: "Finalizing vision runtime...",
+    progress: 100,
+    detail: "Vision model ready in browser…",
+    file: "",
+  });
+  return pipe;
 };
 
 const loadTextGenerator = async (modelId: string, dtype: LoadMessage["dtype"]) => {
