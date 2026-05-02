@@ -138,6 +138,92 @@ body {
   margin-top: 6px;
 }
 
+.device-check-wrap {
+  width: min(100%, 34rem);
+  margin-top: 0.5rem;
+  text-align: start;
+}
+
+.device-check-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #dce6ff;
+}
+
+.device-check-loading {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #9cb3df;
+}
+
+.device-check {
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  border: 1px solid rgba(120, 160, 220, 0.35);
+  background: rgba(12, 20, 40, 0.55);
+}
+
+.device-check--likely_ok {
+  border-color: rgba(80, 200, 140, 0.45);
+}
+
+.device-check--mixed {
+  border-color: rgba(230, 180, 80, 0.5);
+}
+
+.device-check--unlikely {
+  border-color: rgba(230, 100, 100, 0.45);
+}
+
+.device-check-summary {
+  margin: 0 0 0.6rem;
+  color: #e2eaff;
+}
+
+.device-check-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-check-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 0.35rem;
+  color: #c5d4f0;
+}
+
+.device-check-item--ok .device-check-mark {
+  color: #5fd49a;
+}
+
+.device-check-item--bad .device-check-mark {
+  color: #ff8a8a;
+}
+
+.device-check-mark {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.device-check-hint {
+  color: #9cb0d8;
+  font-weight: 400;
+}
+
+.device-check-arch {
+  margin: 0.75rem 0 0;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(100, 130, 190, 0.25);
+  font-size: 0.78rem;
+  color: #a8b8e0;
+  line-height: 1.5;
+}
+
 .settings-micro {
   margin: 0 0 0.75rem;
   font-size: 0.78rem;

@@ -13,6 +13,7 @@ import {
   revokeImageUrl,
   terminateLocalImageWorker,
 } from "./localImageGen";
+import { runDeviceCapabilityCheck, type DeviceCheckResult } from "./deviceCapabilities";
 
 type Role = "user" | "assistant";
 
@@ -516,6 +517,8 @@ function App() {
       return true;
     }
   });
+  const [deviceCheck, setDeviceCheck] = useState<DeviceCheckResult | null>(null);
+  const [deviceCheckLoading, setDeviceCheckLoading] = useState(false);
 
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
@@ -549,6 +552,22 @@ function App() {
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
   const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
+
+  useEffect(() => {
+    if (isLoaded || isLoading) return;
+    let cancelled = false;
+    setDeviceCheckLoading(true);
+    runDeviceCapabilityCheck()
+      .then((r) => {
+        if (!cancelled) setDeviceCheck(r);
+      })
+      .finally(() => {
+        if (!cancelled) setDeviceCheckLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isLoading]);
 
   useEffect(() => {
     activeModelShortLabelRef.current = "Gemma 4";
@@ -1081,14 +1100,63 @@ function App() {
             <li>
               <strong>תמונה מטקסט</strong> — ענן (Pollinations) או מקומי <strong>SD-Turbo</strong> (~2.3GB, WebGPU) מההגדרות.
             </li>
+            <li>
+              <strong>רעיונות משדרוגים</strong> — מאוסף הדמוים של Transformers.js v4:{" "}
+              <a
+                href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Qwen3.5
+              </a>
+              , Nemotron Nano, LFM2.5 Thinking, TranslateGemma, Voxtral — כל אחד יכול להחליף או להעשיר שכבה (תרגום, חשיבה, דיבור).
+            </li>
           </ul>
           <p className="hero-foot">
-            מודלים נוספים ל-WebGPU:{" "}
+            עוד מודלים:{" "}
             <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer">
               webml-community
+            </a>{" "}
+            · אוסף הדמוים:{" "}
+            <a
+              href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Transformers.js V4 demos
             </a>
             .
           </p>
+
+          <div className="device-check-wrap" dir="rtl">
+            <h3 className="device-check-title">בדיקת מכשיר</h3>
+            {deviceCheckLoading && <p className="device-check-loading">בודקים דפדפן ו-GPU…</p>}
+            {!deviceCheckLoading && deviceCheck && (
+              <div className={`device-check device-check--${deviceCheck.tier}`}>
+                <p className="device-check-summary">{deviceCheck.summaryHe}</p>
+                <ul className="device-check-list">
+                  {deviceCheck.items.map((it) => (
+                    <li key={it.id} className={it.ok ? "device-check-item device-check-item--ok" : "device-check-item device-check-item--bad"}>
+                      <span className="device-check-mark" aria-hidden>
+                        {it.ok ? "✓" : "✕"}
+                      </span>
+                      <div>
+                        <strong>{it.label}</strong>
+                        <span className="device-check-hint"> — {it.hint}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="device-check-arch">
+                  <strong>זיכרון ומודלים:</strong> אחרי ה-warmup, <strong>Gemma</strong> ו-<strong>Qwen Coder</strong> נשמרים יחד ב-cache של
+                  ה-worker (לא מוחקים אחד כדי לטעון את השני). מודלי <strong>vision</strong> נשמרים בנפרד באותו worker. <strong>SD-Turbo</strong>{" "}
+                  רץ ב-worker אחר — כלומר כן אפשר &quot;במקביל&quot;, אבל סך הזיכרון וה-VRAM גדל. אין כרגע החלפה אוטומטית כדי לחסוך RAM;
+                  &quot;נקה מטמון&quot; משחרר הכל.
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="hero-actions">
             <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
               {preloadAllLoading ? "Finishing setup…" : "התחל טעינה"}
