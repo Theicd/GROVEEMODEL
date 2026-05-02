@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent, FormEvent, ReactNode } from "react";
 import {
   cleanEnglishImagePrompt,
   isCodeRequest,
@@ -21,6 +21,8 @@ type ChatMessage = {
   role: Role;
   content: string;
   modelLabel?: string;
+  /** Inline preview for user messages sent with an image */
+  imageDataUrl?: string;
 };
 
 type WorkerOutMessage =
@@ -583,6 +585,7 @@ function App() {
   const assistantBufferRef = useRef("");
   const activeModelShortLabelRef = useRef("Assistant");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const orchRef = useRef<Orchestration | null>(null);
 
   const [modelId, setModelId] = useState(DEFAULT_MODEL);
@@ -604,6 +607,7 @@ function App() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const lastGeneratedUrlRef = useRef<string | null>(null);
+  const [composerDragOver, setComposerDragOver] = useState(false);
   const [preloadAllLoading, setPreloadAllLoading] = useState(false);
   const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
     try {
@@ -655,13 +659,60 @@ function App() {
 
   const placeholder = useMemo(() => {
     if (!isLoaded) return "Start the app first…";
-    return "Message… (Hebrew or English) · attach image to describe · ask for code or images";
+    return "Ask anything…";
   }, [isLoaded]);
+  const composerHint =
+    "Hebrew or English · + or drag an image · code or image requests — עברית או אנגלית · צרף תמונה בגרירה";
   const conversationTitle = useMemo(() => {
     const firstUser = messages.find((m) => m.role === "user")?.content?.trim();
     if (!firstUser) return "New chat";
     return firstUser.slice(0, 28) + (firstUser.length > 28 ? "…" : "");
   }, [messages]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || phase !== "ready") return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
+  }, [prompt, phase, imageDataUrl]);
+
+  const ingestImageFile = useCallback((file: File | undefined) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => setImageDataUrl(String(reader.result));
+    reader.readAsDataURL(file);
+  }, []);
+
+  const onComposerDragEnter = useCallback((e: DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.dataTransfer.types.includes("Files")) return;
+    setComposerDragOver(true);
+  }, []);
+
+  const onComposerDragLeave = useCallback((e: DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const related = e.relatedTarget as Node | null;
+    if (related && e.currentTarget.contains(related)) return;
+    setComposerDragOver(false);
+  }, []);
+
+  const onComposerDragOver = useCallback((e: DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const onComposerDrop = useCallback(
+    (e: DragEvent<HTMLElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setComposerDragOver(false);
+      ingestImageFile(e.dataTransfer.files?.[0]);
+    },
+    [ingestImageFile],
+  );
 
   const runGemmaGenerate = (
     promptText: string,
@@ -1070,13 +1121,18 @@ function App() {
     if (imageDataUrl) {
       const captionModelId = DEFAULT_CAPTION_MODEL_ID;
       const userLine = trimmed || "תאר את התמונה";
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: userLine }]);
+      const attachment = imageDataUrl;
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "user", content: userLine, imageDataUrl: attachment },
+      ]);
       setPrompt("");
+      setImageDataUrl(null);
       setIsGenerating(true);
       orchRef.current = null;
       workerRef.current.postMessage({
         type: "caption",
-        imageDataUrl,
+        imageDataUrl: attachment,
         prompt: trimmed || undefined,
         modelId: captionModelId,
         maxNewTokens: appSettings.visionMaxTokens,
@@ -1211,6 +1267,7 @@ function App() {
                 setAssistantBuffer("");
                 setPrompt("");
                 setImageDataUrl(null);
+                setComposerDragOver(false);
                 revokeImageUrl(generatedImageUrl);
                 setGeneratedImageUrl(null);
                 lastGeneratedUrlRef.current = null;
@@ -1263,6 +1320,11 @@ function App() {
               {messages.map((msg) => (
                 <article key={msg.id} className={`bubble ${msg.role}`} dir={isRtlText(msg.content) ? "rtl" : "ltr"}>
                   <strong>{msg.role === "user" ? "You" : msg.modelLabel ?? "Assistant"}</strong>
+                  {msg.role === "user" && msg.imageDataUrl ? (
+                    <div className="bubble-user-image">
+                      <img src={msg.imageDataUrl} alt="" />
+                    </div>
+                  ) : null}
                   <MessageBody content={msg.content} />
                 </article>
               ))}
@@ -1274,87 +1336,101 @@ function App() {
               )}
             </div>
 
-            <form onSubmit={sendPrompt} className="composer chatgpt-composer compact-composer">
-              {generatedImageUrl && (
-                <div className="composer-thumb-row">
-                  <img className="composer-thumb" src={generatedImageUrl} alt="Last generated" />
+            <form
+              className="composer chatgpt-composer compact-composer composer-modern"
+              onSubmit={sendPrompt}
+              onDragEnter={onComposerDragEnter}
+              onDragLeave={onComposerDragLeave}
+              onDragOver={onComposerDragOver}
+              onDrop={onComposerDrop}
+            >
+              {generatedImageUrl ? (
+                <div className="composer-last-gen-strip">
+                  <img className="composer-last-gen-thumb" src={generatedImageUrl} alt="" />
+                  <span className="composer-last-gen-label">Last generated</span>
                 </div>
-              )}
-              {imageDataUrl && (
-                <div className="composer-thumb-row">
-                  <img className="composer-thumb" src={imageDataUrl} alt="Attached" />
+              ) : null}
+
+              <div className="composer-pill-row">
+                <div className={`composer-pill ${composerDragOver ? "composer-pill--dropping" : ""}`}>
                   <button
                     type="button"
-                    className="text-btn"
-                    onClick={() => setImageDataUrl(null)}
-                    disabled={isGenerating}
+                    className="composer-pill-plus"
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label="Attach image"
+                    title="Attach image"
+                    disabled={!isLoaded || isGenerating}
                   >
-                    Remove image
+                    +
                   </button>
+                  {imageDataUrl ? (
+                    <div className="composer-attach-preview">
+                      <img src={imageDataUrl} alt="" />
+                      <button
+                        type="button"
+                        className="composer-attach-remove"
+                        onClick={() => setImageDataUrl(null)}
+                        disabled={isGenerating}
+                        aria-label="Remove image"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                  <textarea
+                    ref={textareaRef}
+                    className="composer-pill-input"
+                    dir="auto"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder={placeholder}
+                    title={composerHint}
+                    rows={1}
+                    disabled={!isLoaded || isGenerating}
+                  />
                 </div>
-              )}
+                <button
+                  type="submit"
+                  className="composer-send-fab"
+                  disabled={!isLoaded || isGenerating}
+                  aria-label="Send"
+                  title="Send"
+                >
+                  {isGenerating ? "…" : "↑"}
+                </button>
+              </div>
+
+              <div className="composer-chips-row composer-chips-below">
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={thinkingMode}
+                    onChange={(e) => setThinkingMode(e.target.checked)}
+                    disabled={isGenerating}
+                  />
+                  <span>Think</span>
+                </label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={webSearchMode}
+                    onChange={(e) => setWebSearchMode(e.target.checked)}
+                    disabled={isGenerating}
+                  />
+                  <span>Search</span>
+                </label>
+              </div>
+
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
                 className="hidden-file-input"
                 onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    setImageDataUrl(String(reader.result));
-                  };
-                  reader.readAsDataURL(file);
+                  ingestImageFile(event.target.files?.[0]);
+                  event.target.value = "";
                 }}
               />
-
-              <div className="composer-stack">
-                <div className="composer-input-row">
-                  <textarea
-                    className="composer-textarea-grow"
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder={placeholder}
-                    rows={1}
-                    disabled={!isLoaded || isGenerating}
-                  />
-                  <div className="composer-trailing-actions">
-                    <button
-                      type="button"
-                      className="icon-btn subtle-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      aria-label="Attach image"
-                      title="Attach image"
-                    >
-                      📎
-                    </button>
-                    <button className="send-btn" type="submit" disabled={!isLoaded || isGenerating}>
-                      {isGenerating ? "…" : "↑"}
-                    </button>
-                  </div>
-                </div>
-                <div className="composer-chips-row">
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={thinkingMode}
-                      onChange={(e) => setThinkingMode(e.target.checked)}
-                      disabled={isGenerating}
-                    />
-                    <span>Think</span>
-                  </label>
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={webSearchMode}
-                      onChange={(e) => setWebSearchMode(e.target.checked)}
-                      disabled={isGenerating}
-                    />
-                    <span>Search</span>
-                  </label>
-                </div>
-              </div>
             </form>
             <div className="composer-footer-tools">
               <button
