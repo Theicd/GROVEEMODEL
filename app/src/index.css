@@ -138,6 +138,90 @@ body {
   margin-top: 6px;
 }
 
+.hero-minimal {
+  min-height: 260px;
+  gap: 20px;
+  padding: 40px 24px 32px;
+}
+
+.hero-brand {
+  margin: 0;
+  font-size: clamp(2.35rem, 6vw, 3.75rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  text-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+.hero-minimal .hero-tagline {
+  margin: 0;
+  max-width: 20rem;
+  font-size: 0.92rem;
+  color: #95a8d4;
+  line-height: 1.5;
+}
+
+.hero-more {
+  width: min(100%, 28rem);
+  margin-top: 4px;
+  text-align: start;
+  align-self: center;
+  border: 1px solid rgba(100, 130, 190, 0.22);
+  border-radius: 12px;
+  padding: 0 14px;
+  background: rgba(6, 12, 26, 0.45);
+}
+
+.hero-more-summary,
+.hero-device-summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #8fa3cf;
+  padding: 11px 2px;
+  list-style: none;
+  user-select: none;
+}
+
+.hero-more-summary::-webkit-details-marker,
+.hero-device-summary::-webkit-details-marker {
+  display: none;
+}
+
+.hero-more-body {
+  padding: 0 2px 14px;
+  border-top: 1px solid rgba(100, 130, 190, 0.14);
+}
+
+.hero-more-line {
+  margin: 10px 0;
+  font-size: 0.78rem;
+  color: #a8b8e0;
+  line-height: 1.5;
+}
+
+.hero-more-line a {
+  color: #9ec5ff;
+}
+
+.hero-device-details {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(100, 130, 190, 0.12);
+}
+
+.device-check-wrap--nested {
+  margin-top: 6px;
+  width: 100%;
+}
+
+.device-check-wrap--nested .device-check {
+  font-size: 0.74rem;
+  padding: 10px 12px;
+}
+
+.device-check-wrap--nested .device-check-list {
+  margin-top: 6px;
+}
+
 .device-check-wrap {
   width: min(100%, 34rem);
   margin-top: 0.5rem;

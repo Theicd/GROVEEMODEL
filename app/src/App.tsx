@@ -1104,97 +1104,70 @@ function App() {
   return (
     <main className="app theme-space">
       <div className="bg-overlay" />
-      <div className="corner-note">
-        <span>Gemma 4 · Qwen Coder · Vision — הגדרות ב־⚙</span>
-      </div>
-
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={appSettings} onSave={persistSettings} />
 
       {phase === "start" && (
-        <section className="hero-screen glass">
-          <p className="hero-eyebrow">Private · In-browser · WebGPU when available</p>
-          <h1>GROVEE</h1>
-          <p className="hero-lead">
-            צ&apos;אט אחד שמדבר עברית ואנגלית, מנתב אוטומטית לקוד, ליצירת תמונה ולתיאור תמונה. דומה לחוויית OpenAI — הכל רץ אצלך בדפדפן.
-          </p>
-          <ul className="hero-facts">
-            <li>
-              <strong>Gemma 4</strong> — שליטה, סיכומים, עברית נקייה, ניתוב בקשות.
-            </li>
-            <li>
-              <strong>Qwen2.5 Coder 0.5B</strong> — יצירת קוד; Gemma מנסחת משימה באנגלית ומחזירה לך הסבר + קוד.
-            </li>
-            <li>
-              <strong>Vision</strong> — כיתוב תמונה (ViT-GPT2 או Moondream2 לפי טעינה).
-            </li>
-            <li>
-              <strong>תמונה מטקסט</strong> — ענן (Pollinations) או מקומי <strong>SD-Turbo</strong> (~2.3GB, WebGPU) מההגדרות.
-            </li>
-            <li>
-              <strong>רעיונות משדרוגים</strong> — מאוסף הדמוים של Transformers.js v4:{" "}
-              <a
-                href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Qwen3.5
-              </a>
-              , Nemotron Nano, LFM2.5 Thinking, TranslateGemma, Voxtral — כל אחד יכול להחליף או להעשיר שכבה (תרגום, חשיבה, דיבור).
-            </li>
-          </ul>
-          <p className="hero-foot">
-            עוד מודלים:{" "}
-            <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer">
-              webml-community
-            </a>{" "}
-            · אוסף הדמוים:{" "}
-            <a
-              href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Transformers.js V4 demos
-            </a>
-            .
-          </p>
-
-          <div className="device-check-wrap" dir="rtl">
-            <h3 className="device-check-title">בדיקת מכשיר</h3>
-            {deviceCheckLoading && <p className="device-check-loading">בודקים דפדפן ו-GPU…</p>}
-            {!deviceCheckLoading && deviceCheck && (
-              <div className={`device-check device-check--${deviceCheck.tier}`}>
-                <p className="device-check-summary">{deviceCheck.summaryHe}</p>
-                <ul className="device-check-list">
-                  {deviceCheck.items.map((it) => (
-                    <li key={it.id} className={it.ok ? "device-check-item device-check-item--ok" : "device-check-item device-check-item--bad"}>
-                      <span className="device-check-mark" aria-hidden>
-                        {it.ok ? "✓" : "✕"}
-                      </span>
-                      <div>
-                        <strong>{it.label}</strong>
-                        <span className="device-check-hint"> — {it.hint}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                <p className="device-check-arch">
-                  <strong>זיכרון ומודלים:</strong> אחרי ה-warmup, <strong>Gemma</strong> ו-<strong>Qwen Coder</strong> נשמרים יחד ב-cache של
-                  ה-worker (לא מוחקים אחד כדי לטעון את השני). מודלי <strong>vision</strong> נשמרים בנפרד באותו worker. <strong>SD-Turbo</strong>{" "}
-                  רץ ב-worker אחר — כלומר כן אפשר &quot;במקביל&quot;, אבל סך הזיכרון וה-VRAM גדל. אין כרגע החלפה אוטומטית כדי לחסוך RAM;
-                  &quot;נקה מטמון&quot; משחרר הכל.
-                </p>
-              </div>
-            )}
-          </div>
-
+        <section className="hero-screen glass hero-minimal">
+          <h1 className="hero-brand">GROVEE</h1>
+          <p className="hero-tagline">צ&apos;אט פרטי בדפדפן · עברית ואנגלית · מודלים נטענים אצלך במחשב</p>
           <div className="hero-actions">
             <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-              {preloadAllLoading ? "Finishing setup…" : "התחל טעינה"}
+              {preloadAllLoading ? "מסיים…" : "התחל"}
             </button>
             <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
               נקה מטמון
             </button>
           </div>
+          <details className="hero-more">
+            <summary className="hero-more-summary">פרטים טכניים (אופציונלי)</summary>
+            <div className="hero-more-body" dir="rtl">
+              <p className="hero-more-line">
+                Gemma 4 מנהל את השיחה; Qwen Coder לקוד; כיתוב תמונה; תמונה מטקסט (ענן או SD-Turbo מקומי). אחרי הטעינה: ⚙ להגדרות.
+              </p>
+              <p className="hero-more-line">
+                <a href="https://huggingface.co/webml-community" target="_blank" rel="noreferrer">
+                  webml-community
+                </a>
+                {" · "}
+                <a
+                  href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Transformers.js V4 demos
+                </a>
+              </p>
+              <details className="hero-device-details">
+                <summary className="hero-device-summary">בדיקת מכשיר</summary>
+                <div className="device-check-wrap device-check-wrap--nested">
+                  {deviceCheckLoading && <p className="device-check-loading">בודקים…</p>}
+                  {!deviceCheckLoading && deviceCheck && (
+                    <div className={`device-check device-check--${deviceCheck.tier}`}>
+                      <p className="device-check-summary">{deviceCheck.summaryHe}</p>
+                      <ul className="device-check-list">
+                        {deviceCheck.items.map((it) => (
+                          <li
+                            key={it.id}
+                            className={
+                              it.ok ? "device-check-item device-check-item--ok" : "device-check-item device-check-item--bad"
+                            }
+                          >
+                            <span className="device-check-mark" aria-hidden>
+                              {it.ok ? "✓" : "✕"}
+                            </span>
+                            <div>
+                              <strong>{it.label}</strong>
+                              <span className="device-check-hint"> — {it.hint}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </details>
+            </div>
+          </details>
         </section>
       )}
 
