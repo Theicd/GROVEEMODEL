@@ -51,6 +51,9 @@ const VISION_MODEL_OPTIONS = [
   { id: "onnx-community/moondream2", label: "Moondream2 (Better detail)" },
 ] as const;
 
+/** Chat + warmup only use the fast caption model; Moondream is omitted to avoid multi‑GB RAM / OOM on refresh. */
+const DEFAULT_CAPTION_MODEL_ID = VISION_MODEL_OPTIONS[0].id;
+
 const IMAGE_MODEL_OPTIONS = [
   { id: "flux", label: "FLUX (balanced)" },
   { id: "turbo", label: "Turbo (faster)" },
@@ -514,7 +517,6 @@ function App() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const lastGeneratedUrlRef = useRef<string | null>(null);
-  const [visionReadyMap, setVisionReadyMap] = useState<Record<string, boolean>>({});
   const [preloadAllLoading, setPreloadAllLoading] = useState(false);
   const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
     try {
@@ -632,39 +634,28 @@ function App() {
         setProgressFile("");
         if (workerRef.current && !preloadAllLoadingRef.current && shouldWarmupOnStartRef.current) {
           setPreloadAllLoading(true);
-          setStatus("Gemma is ready. Downloading additional models in background…");
+          setStatus("Gemma is ready. Warming vision model (weights stay in browser cache)…");
           workerRef.current.postMessage({
             type: "warmup_all",
-            textModelIds: [CODE_MODEL],
-            captionModelIds: VISION_MODEL_OPTIONS.map((option) => option.id),
+            textModelIds: [],
+            captionModelIds: [DEFAULT_CAPTION_MODEL_ID],
             dtype: "q4",
           });
         } else {
           setStatus(`Gemma controller ready on ${msg.device}`);
-          setProgressDetail("Using local browser cache");
+          setProgressDetail("Using Hugging Face cache in this browser");
           setProgressFile("");
+          workerRef.current?.postMessage({ type: "preload_caption", modelId: DEFAULT_CAPTION_MODEL_ID });
         }
       } else if (msg.type === "caption_model_loaded") {
-        setVisionReadyMap((prev) => ({ ...prev, [msg.modelId]: true }));
         setStatus(`Vision model ready on ${msg.device}`);
       } else if (msg.type === "preload_all_done") {
         setPreloadAllLoading(false);
-        const visionOk = Object.fromEntries(
-          VISION_MODEL_OPTIONS.map((option) => [option.id, !msg.failedCaptionModelIds?.includes(option.id)]),
-        );
-        setVisionReadyMap(visionOk);
         setIsLoading(false);
         setIsLoaded(true);
         setShouldWarmupOnStart(false);
-        const warmupIncomplete = Boolean(
-          msg.failedTextModelIds?.length || msg.failedCaptionModelIds?.length,
-        );
         try {
-          if (warmupIncomplete) {
-            localStorage.removeItem(MODEL_CACHE_FLAG);
-          } else {
-            localStorage.setItem(MODEL_CACHE_FLAG, "1");
-          }
+          localStorage.setItem(MODEL_CACHE_FLAG, "1");
         } catch {
           // ignore
         }
@@ -673,18 +664,18 @@ function App() {
           ? ` · נכשלו מודלי טקסט: ${msg.failedTextModelIds.join(", ")}`
           : "";
         const failedC = msg.failedCaptionModelIds?.length
-          ? ` · נכשלו vision: ${msg.failedCaptionModelIds.join(", ")}`
+          ? ` · נכשל vision: ${msg.failedCaptionModelIds.join(", ")}`
           : "";
         setProgressDetail(
           failedT || failedC
             ? "חלק מהמודלים לא נטענו — בדקו רשת/חסימות Hugging Face"
-            : "כל המודלים המקומיים מוכנים",
+            : "מודל הכיתוב מוכן; Qwen ייטען בפעם הראשונה שתבקשו קוד",
         );
         setProgressFile("");
         setStatus(
           failedT || failedC
             ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
-            : `כל המודלים מוכנים: ${msg.textModels} טקסט + ${msg.captionModels} vision`,
+            : `מוכנים: Gemma + כיתוב תמונה (${msg.captionModels}) — קוד בטעינה עצלה`,
         );
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
@@ -932,7 +923,6 @@ function App() {
       workerRef.current?.postMessage({ type: "clear_runtime_cache" });
       localStorage.removeItem(MODEL_CACHE_FLAG);
       setShouldWarmupOnStart(true);
-      setVisionReadyMap({});
       orchRef.current = null;
 
       if ("caches" in window) {
@@ -986,11 +976,7 @@ function App() {
     if (!trimmed && !imageDataUrl) return;
 
     if (imageDataUrl) {
-      const captionModelId = VISION_MODEL_OPTIONS[0].id;
-      if (!visionReadyMap[captionModelId]) {
-        setStatus("Vision model still loading…");
-        return;
-      }
+      const captionModelId = DEFAULT_CAPTION_MODEL_ID;
       const userLine = trimmed || "תאר את התמונה";
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: userLine }]);
       setPrompt("");

@@ -109,9 +109,11 @@ const clampProgress = (value: number) => {
 const normalizeProgressStatus = (status?: string, percent?: number) => {
   const raw = (status ?? "").trim().toLowerCase();
   if (!raw || raw === "progress") {
-    return (percent ?? 0) >= 100 ? "Finalizing model runtime..." : "Downloading model files...";
+    return (percent ?? 0) >= 100
+      ? "Finalizing model runtime..."
+      : "Loading model files (from browser cache when available)…";
   }
-  return status ?? "Downloading model files...";
+  return status ?? "Loading model files…";
 };
 
 const loadWithDevice = async (
