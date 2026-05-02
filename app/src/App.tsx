@@ -74,7 +74,7 @@ const defaultGemmaSettings: TunableModelSettings = {
   repetitionPenalty: 1.12,
   topP: 0.9,
   systemPrompt:
-    "You are a helpful assistant. Always respond in clear, well-formed sentences in the same language as the user (Hebrew stays RTL-friendly: full sentences, correct punctuation at end of sentence). Do not repeat role labels.",
+    "You are a helpful assistant. Always respond in clear, well-formed sentences in the same language as the user (Hebrew stays RTL-friendly: full sentences, correct punctuation at end of sentence). Do not repeat role labels. When the user asks for HTML/CSS/JS (including a single-file page), output exactly one fenced block: ```html ... ``` containing a complete, valid document: <!DOCTYPE html>, <html lang=\"he\" dir=\"rtl\">, <head> with <meta charset=\"UTF-8\">, embedded <style> and <script> as needed, and <body>. No duplicate stray tags; no broken CSS.",
 };
 
 const defaultCoderSettings: TunableModelSettings = {
@@ -186,7 +186,23 @@ const fetchWebContext = async (query: string): Promise<string> => {
     .join("\n");
 };
 
-type MsgPart = { type: "text" | "html" | "image"; value: string };
+type MsgPart = { type: "text" | "html" | "image" | "code"; value: string; lang?: string };
+
+/** Build srcDoc for sandboxed iframe: full documents pass through; fragments get a minimal shell. */
+const normalizeHtmlForIframe = (fragmentOrDoc: string): string => {
+  const t = fragmentOrDoc.trim();
+  const headSample = t.slice(0, 600).toLowerCase();
+  if (headSample.includes("<!doctype") || headSample.startsWith("<html")) {
+    if (!headSample.includes("charset")) {
+      if (/<head\b/i.test(t)) {
+        return t.replace(/<head\b[^>]*>/i, (h) => `${h}<meta charset="utf-8">`);
+      }
+      return `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${t}</body></html>`;
+    }
+    return t;
+  }
+  return `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{min-height:100%;margin:0;}</style></head><body>${t}</body></html>`;
+};
 
 const extractRichParts = (content: string): MsgPart[] => {
   const parts: MsgPart[] = [];
@@ -194,37 +210,110 @@ const extractRichParts = (content: string): MsgPart[] => {
   const pushText = (t: string) => {
     if (t) parts.push({ type: "text", value: t });
   };
+
   while (remaining.length) {
-    const htmlMatch = remaining.match(/```html\s*([\s\S]*?)```/i);
+    type Cand = { idx: number; len: number; part: MsgPart };
+    const candidates: Cand[] = [];
+
+    const htmlFence = remaining.match(/```html\s*([\s\S]*?)(?:```|$)/i);
+    if (htmlFence && htmlFence.index !== undefined && (htmlFence[1].trim().length > 0 || htmlFence[0].includes("```"))) {
+      candidates.push({
+        idx: htmlFence.index,
+        len: htmlFence[0].length,
+        part: { type: "html", value: htmlFence[1].trim() },
+      });
+    }
+
+    const codeFence = remaining.match(/```(?!html)(\w*)\s*([\s\S]*?)```/i);
+    if (codeFence && codeFence.index !== undefined) {
+      candidates.push({
+        idx: codeFence.index,
+        len: codeFence[0].length,
+        part: { type: "code", value: codeFence[2], lang: codeFence[1] || "text" },
+      });
+    }
+
     const imgMatch = remaining.match(/!\[([^\]]*)\]\(([^)]+)\)/);
-    let nextIdx = Infinity;
-    let kind: "html" | "image" | null = null;
-    let htmlIdx = htmlMatch && htmlMatch.index !== undefined ? htmlMatch.index : Infinity;
-    let imgIdx = imgMatch && imgMatch.index !== undefined ? imgMatch.index : Infinity;
-    if (htmlIdx < nextIdx) {
-      nextIdx = htmlIdx;
-      kind = "html";
+    if (imgMatch && imgMatch.index !== undefined) {
+      candidates.push({
+        idx: imgMatch.index,
+        len: imgMatch[0].length,
+        part: { type: "image", value: imgMatch[2].trim() },
+      });
     }
-    if (imgIdx < nextIdx) {
-      nextIdx = imgIdx;
-      kind = "image";
+
+    const fullDoc = remaining.match(/(?:<!DOCTYPE\s+html[^>]*>|<html\b[^>]*>)[\s\S]*?<\/html>/i);
+    if (fullDoc && fullDoc.index !== undefined) {
+      candidates.push({
+        idx: fullDoc.index,
+        len: fullDoc[0].length,
+        part: { type: "html", value: fullDoc[0].trim() },
+      });
     }
-    if (!kind || nextIdx === Infinity) {
+
+    let best: Cand | null = null;
+    for (const c of candidates) {
+      if (!best || c.idx < best.idx) best = c;
+    }
+
+    if (!best) {
       pushText(remaining);
       break;
     }
-    pushText(remaining.slice(0, nextIdx));
-    if (kind === "html" && htmlMatch) {
-      parts.push({ type: "html", value: htmlMatch[1].trim() });
-      remaining = remaining.slice(nextIdx + htmlMatch[0].length);
-    } else if (kind === "image" && imgMatch) {
-      parts.push({ type: "image", value: imgMatch[2].trim() });
-      remaining = remaining.slice(nextIdx + imgMatch[0].length);
-    } else break;
+
+    pushText(remaining.slice(0, best.idx));
+    parts.push(best.part);
+    remaining = remaining.slice(best.idx + best.len);
   }
+
   if (!parts.length) parts.push({ type: "text", value: content });
   return parts;
 };
+
+function HtmlSandboxBlock({ html }: { html: string }) {
+  const [tab, setTab] = useState<"preview" | "source">("preview");
+  const srcDoc = useMemo(() => normalizeHtmlForIframe(html), [html]);
+
+  return (
+    <div className="html-preview-wrap">
+      <div className="html-preview-toolbar">
+        <span className="html-preview-label">HTML</span>
+        <div className="html-preview-tabs" role="tablist" aria-label="HTML view">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "preview"}
+            className={`html-preview-tab ${tab === "preview" ? "active" : ""}`}
+            onClick={() => setTab("preview")}
+          >
+            תצוגה חיה
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "source"}
+            className={`html-preview-tab ${tab === "source" ? "active" : ""}`}
+            onClick={() => setTab("source")}
+          >
+            מקור
+          </button>
+        </div>
+      </div>
+      {tab === "preview" ? (
+        <iframe
+          className="html-preview-frame"
+          title="HTML preview"
+          sandbox="allow-scripts allow-forms"
+          srcDoc={srcDoc}
+        />
+      ) : (
+        <pre className="html-source-block">
+          <code>{html}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
 
 function MessageBody({ content }: { content: string }) {
   const parts = useMemo(() => extractRichParts(content), [content]);
@@ -234,12 +323,13 @@ function MessageBody({ content }: { content: string }) {
     <div className="msg-body" dir={dir}>
       {parts.map((part, i) => {
         if (part.type === "html" && part.value.length > 0) {
-          const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:system-ui,sans-serif;background:#0f141f;color:#e7eeff;padding:8px;}</style></head><body>${part.value}</body></html>`;
+          return <HtmlSandboxBlock key={i} html={part.value} />;
+        }
+        if (part.type === "code") {
           return (
-            <div key={i} className="html-preview-wrap">
-              <span className="html-preview-label">Preview</span>
-              <iframe className="html-preview-frame" title="HTML preview" sandbox="allow-scripts" srcDoc={srcDoc} />
-            </div>
+            <pre key={i} className="msg-code-block">
+              <code className={part.lang ? `lang-${part.lang}` : undefined}>{part.value}</code>
+            </pre>
           );
         }
         if (part.type === "image") {
@@ -1168,9 +1258,7 @@ function App() {
               {assistantBuffer && (
                 <article className="bubble assistant">
                   <strong>Gemma 4</strong>
-                  <div className="msg-body" dir="auto">
-                    <p className="msg-text">{assistantBuffer}</p>
-                  </div>
+                  <MessageBody content={assistantBuffer} />
                 </article>
               )}
             </div>
@@ -1210,36 +1298,17 @@ function App() {
                 }}
               />
 
-              <div className="composer-main ds-input-shell">
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={placeholder}
-                  rows={1}
-                  disabled={!isLoaded || isGenerating}
-                />
-                <div className="ds-actions-row">
-                  <div className="ds-left-actions">
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={thinkingMode}
-                        onChange={(e) => setThinkingMode(e.target.checked)}
-                        disabled={isGenerating}
-                      />
-                      <span>Think</span>
-                    </label>
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={webSearchMode}
-                        onChange={(e) => setWebSearchMode(e.target.checked)}
-                        disabled={isGenerating}
-                      />
-                      <span>Search</span>
-                    </label>
-                  </div>
-                  <div className="ds-right-actions">
+              <div className="composer-stack">
+                <div className="composer-input-row">
+                  <textarea
+                    className="composer-textarea-grow"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder={placeholder}
+                    rows={1}
+                    disabled={!isLoaded || isGenerating}
+                  />
+                  <div className="composer-trailing-actions">
                     <button
                       type="button"
                       className="icon-btn subtle-btn"
@@ -1253,6 +1322,26 @@ function App() {
                       {isGenerating ? "…" : "↑"}
                     </button>
                   </div>
+                </div>
+                <div className="composer-chips-row">
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={thinkingMode}
+                      onChange={(e) => setThinkingMode(e.target.checked)}
+                      disabled={isGenerating}
+                    />
+                    <span>Think</span>
+                  </label>
+                  <label className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={webSearchMode}
+                      onChange={(e) => setWebSearchMode(e.target.checked)}
+                      disabled={isGenerating}
+                    />
+                    <span>Search</span>
+                  </label>
                 </div>
               </div>
             </form>
