@@ -54,6 +54,8 @@ Alternatively set **Source: GitHub Actions** and use `Deploy to GitHub Pages` wo
 
 Console warnings like `Permissions-Policy ... browsing-topics` come from **github.io** response headers, not from this app; they can be ignored.
 
+The repo has a **root `.nojekyll`** file so GitHub Pages does not run Jekyll (which can hide or mishandle static folders like `docs/`).
+
 ## Model IDs you can try
 
 - `onnx-community/gemma-4-E2B-it-ONNX`
