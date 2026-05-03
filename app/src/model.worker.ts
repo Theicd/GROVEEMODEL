@@ -139,7 +139,7 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
       webGpuAdapterProbe = false;
       return false;
     }
-    const adapter = await g.requestAdapter({ powerPreference: "low-power" });
+    const adapter = await g.requestAdapter();
     webGpuAdapterProbe = adapter != null;
     return webGpuAdapterProbe;
   } catch {

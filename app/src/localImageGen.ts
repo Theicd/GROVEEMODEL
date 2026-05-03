@@ -3,6 +3,18 @@ import { Txt2ImgWorkerClient } from "web-txt2img";
 let client: Txt2ImgWorkerClient | null = null;
 let loadPromise: Promise<boolean> | null = null;
 
+/**
+ * Options passed to `Txt2ImgWorkerClient.load` must be structured-cloneable — the library
+ * posts `{ model, options }` to a Worker. Never put callbacks here (use the 3rd `onProgress` arg).
+ */
+export function sdTurboWorkerLoadOptions(useWebGpuFirst: boolean): {
+  backendPreference: Array<"webgpu" | "wasm">;
+} {
+  return {
+    backendPreference: useWebGpuFirst ? ["webgpu", "wasm"] : ["wasm"],
+  };
+}
+
 export function getSdTurboSizeNote(): string {
   return "~2.3 GB download · 512×512 · WebGPU recommended (WASM fallback may be slow)";
 }
@@ -16,7 +28,8 @@ function getClient(): Txt2ImgWorkerClient {
 async function hasWebGpuAdapter(): Promise<boolean> {
   try {
     if (typeof navigator === "undefined" || !navigator.gpu?.requestAdapter) return false;
-    const a = await navigator.gpu.requestAdapter({ powerPreference: "low-power" });
+    // Omit powerPreference: on Windows Chromium ignores it and logs noise (crbug.com/369219127).
+    const a = await navigator.gpu.requestAdapter();
     return a != null;
   } catch {
     return false;
@@ -41,22 +54,17 @@ export async function ensureSdTurboLoaded(onStatus: (s: string) => void): Promis
     onStatus(
       useWebGpuFirst ? "Local image: loading SD-Turbo (WebGPU)…" : "Local image: loading SD-Turbo (WASM/CPU)…",
     );
-    const res = await c.load(
-      "sd-turbo",
-      {
-        backendPreference: useWebGpuFirst ? ["webgpu", "wasm"] : ["wasm"],
-        onProgress: (p) => {
-          const pct = typeof p.pct === "number" ? Math.round(p.pct) : undefined;
-          const msg = p.message ?? p.asset ?? "";
-          onStatus(pct !== undefined ? `Local image: ${pct}% ${msg}`.trim() : `Local image: ${msg}`.trim());
-        },
-      },
-      (e) => {
-        const phase = (e as { phase?: string }).phase ?? "";
-        const pct = (e as { pct?: number }).pct;
-        if (typeof pct === "number") onStatus(`Local image: ${phase} ${Math.round(pct)}%`);
-      },
-    );
+    const res = await c.load("sd-turbo", sdTurboWorkerLoadOptions(useWebGpuFirst), (p) => {
+      const raw = p as { phase?: string; pct?: number; message?: string; asset?: string };
+      const phase = raw.phase ?? "";
+      const pct = typeof raw.pct === "number" ? Math.round(raw.pct) : undefined;
+      const msg = raw.message ?? raw.asset ?? "";
+      const bits: string[] = [];
+      if (phase) bits.push(phase);
+      if (pct !== undefined) bits.push(`${pct}%`);
+      if (msg) bits.push(msg);
+      onStatus(`Local image: ${bits.length ? bits.join(" · ") : "…"}`);
+    });
     if (res && typeof res === "object" && "ok" in res && res.ok === true) {
       onStatus("Local image: SD-Turbo ready");
       return true;
