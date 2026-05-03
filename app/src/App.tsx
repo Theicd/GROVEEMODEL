@@ -1529,6 +1529,20 @@ function App() {
     startupPhaseRef.current = "idle";
     setPreloadUiStage(0);
     setWorkerBootError(null);
+
+    /** Close model worker before touching IndexedDB — an open connection blocks `deleteDatabase`. */
+    try {
+      workerRef.current?.postMessage({ type: "clear_runtime_cache" });
+    } catch {
+      /* ignore */
+    }
+    try {
+      workerRef.current?.terminate();
+    } catch {
+      /* ignore */
+    }
+    workerRef.current = null;
+
     terminateLocalImageWorker();
     revokeImageUrl(generatedImageUrl);
     setGeneratedImageUrl(null);
@@ -1537,7 +1551,6 @@ function App() {
     orchRef.current = null;
     setAssistantBuffer("");
     assistantBufferRef.current = "";
-    setWorkerGeneration((g) => g + 1);
 
     try {
       if ("caches" in window) {
@@ -1582,10 +1595,15 @@ function App() {
         }
       }
 
+      /** Let the browser finish dropping IDB handles before spinning a new worker. */
+      await new Promise((r) => setTimeout(r, 350));
+
       setStatus("המטמון נוקה. לחץ «התחל» כדי לטעון מחדש.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`ניקוי מטמון נכשל: ${message}`);
+    } finally {
+      setWorkerGeneration((g) => g + 1);
     }
   };
 
@@ -1757,10 +1775,22 @@ function App() {
           <h1 className="hero-brand">GROVEE</h1>
           <p className="hero-tagline">צ&apos;אט פרטי בדפדפן · עברית ואנגלית · מודלים נטענים אצלך במחשב</p>
           <div className="hero-actions">
-            <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
+            <button
+              type="button"
+              className="pill-button"
+              data-testid="grovee-start"
+              onClick={loadModel}
+              disabled={isLoading || isGenerating}
+            >
               התחל
             </button>
-            <button className="pill-button subtle-btn" onClick={() => void clearModelCache()} disabled={isGenerating}>
+            <button
+              type="button"
+              className="pill-button subtle-btn"
+              data-testid="grovee-clear-cache"
+              onClick={() => void clearModelCache()}
+              disabled={isGenerating}
+            >
               נקה מטמון
             </button>
           </div>
@@ -1830,6 +1860,7 @@ function App() {
             <button
               type="button"
               className="pill-button subtle-btn"
+              data-testid="grovee-clear-cache"
               onClick={() => void clearModelCache()}
               disabled={isGenerating}
             >
@@ -1958,6 +1989,7 @@ function App() {
                 <textarea
                   ref={textareaRef}
                   className="composer-body-input"
+                  data-testid="grovee-prompt"
                   dir="auto"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -2020,6 +2052,7 @@ function App() {
                     <button
                       type="submit"
                       className="composer-send-inner"
+                      data-testid="grovee-send"
                       disabled={!isLoaded || isGenerating}
                       aria-label="Send"
                       title="Send"
@@ -2045,6 +2078,7 @@ function App() {
               <button
                 type="button"
                 className="text-btn"
+                data-testid="grovee-clear-cache"
                 onClick={() => void clearModelCache()}
                 disabled={isGenerating}
               >

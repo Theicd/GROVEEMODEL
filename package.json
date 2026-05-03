@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "qa:pages": "node scripts/qa-github-pages.mjs --smoke",
-    "qa:pages:full": "node scripts/qa-github-pages.mjs"
+    "qa:pages:full": "node scripts/qa-github-pages.mjs",
+    "qa:e2e": "node scripts/qa-e2e-suite.mjs",
+    "qa:e2e:full": "node scripts/qa-e2e-suite.mjs --full"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
