@@ -219,23 +219,32 @@ body {
   transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* One stable row: status truncates with ellipsis; % never wraps to its own line (no layout jump). */
 .loading-headline {
   margin: 0.35rem 0 0.65rem;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: center;
-  gap: 0.45rem 0.75rem;
+  column-gap: 0.65rem;
+  width: min(540px, 92%);
   max-width: min(540px, 92%);
-  text-align: center;
+  min-height: 1.65em;
+  box-sizing: border-box;
+  padding: 0 4px;
+  text-align: start;
+  /* Worker status is usually English; keep [text][%] order stable even if the shell is RTL. */
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .loading-headline-status {
   font-size: 0.95rem;
   color: #c8d7fc;
-  line-height: 1.4;
-  flex: 1 1 11rem;
+  line-height: 1.45;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loading-headline-pct {
@@ -243,8 +252,10 @@ body {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: #e8eeff;
-  flex: 0 0 auto;
   line-height: 1.2;
+  min-width: 3.25ch;
+  text-align: end;
+  justify-self: end;
 }
 
 .loading-subline {

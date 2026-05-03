@@ -71,6 +71,7 @@ const normalizeTextChatModelId = (id: string | undefined): string =>
 
 /** Public ONNX repo for Transformers.js (the *-Instruct-ONNX* repo returns 401 for anonymous fetch). */
 const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
+/** Set after Gemma finishes loading; used so cache-clear can reset UX hints. Vision/caption loads lazily on first image use so chat stays responsive. */
 const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
@@ -920,21 +921,11 @@ function App() {
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const lastGeneratedUrlRef = useRef<string | null>(null);
   const [composerDragOver, setComposerDragOver] = useState(false);
-  const [preloadAllLoading, setPreloadAllLoading] = useState(false);
-  const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
-    try {
-      return localStorage.getItem(MODEL_CACHE_FLAG) !== "1";
-    } catch {
-      return true;
-    }
-  });
   /** Bumping recreates the model worker so cache clear + stuck loads actually reset runtime state. */
   const [workerGeneration, setWorkerGeneration] = useState(0);
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
-  const preloadAllLoadingRef = useRef(preloadAllLoading);
-  const shouldWarmupOnStartRef = useRef(shouldWarmupOnStart);
   const isLoadingRef = useRef(isLoading);
 
   useEffect(() => {
@@ -946,12 +937,6 @@ function App() {
   useEffect(() => {
     webSearchRef.current = webSearchMode;
   }, [webSearchMode]);
-  useEffect(() => {
-    preloadAllLoadingRef.current = preloadAllLoading;
-  }, [preloadAllLoading]);
-  useEffect(() => {
-    shouldWarmupOnStartRef.current = shouldWarmupOnStart;
-  }, [shouldWarmupOnStart]);
   useEffect(() => {
     isLoadingRef.current = isLoading;
   }, [isLoading]);
@@ -1143,7 +1128,7 @@ function App() {
       if (msg.type === "status") {
         setStatus(msg.text);
       } else if (msg.type === "progress") {
-        const trackProgressUi = isLoadingRef.current || preloadAllLoadingRef.current;
+        const trackProgressUi = isLoadingRef.current;
         if (trackProgressUi) {
           setStatus(msg.text);
           setLoadingDetail(msg.detail ?? "");
@@ -1156,28 +1141,18 @@ function App() {
         setIsLoading(false);
         setProgress(100);
         setLoadingDetail("");
-        setStatus(`Loaded on ${formatInferenceDevice(msg.device)}`);
-        if (workerRef.current && !preloadAllLoadingRef.current && shouldWarmupOnStartRef.current) {
-          setPreloadAllLoading(true);
-          setStatus("Gemma is ready. Warming vision model (weights stay in browser cache)…");
-          workerRef.current.postMessage({
-            type: "warmup_all",
-            textModelIds: [],
-            captionModelIds: [DEFAULT_CAPTION_MODEL_ID],
-            dtype: "q4",
-          });
-        } else {
-          setStatus(`Gemma controller ready on ${formatInferenceDevice(msg.device)}`);
-          workerRef.current?.postMessage({ type: "preload_caption", modelId: DEFAULT_CAPTION_MODEL_ID });
+        setStatus(`מוכן לצ'אט — ${formatInferenceDevice(msg.device)} · מודל תמונה/כיתוב ייטען ברקע רק כשצריך`);
+        try {
+          localStorage.setItem(MODEL_CACHE_FLAG, "1");
+        } catch {
+          // ignore
         }
       } else if (msg.type === "caption_model_loaded") {
         setStatus(`Vision model ready on ${formatInferenceDevice(msg.device)}`);
       } else if (msg.type === "preload_all_done") {
         setWorkerBootError(null);
-        setPreloadAllLoading(false);
         setIsLoading(false);
         setIsLoaded(true);
-        setShouldWarmupOnStart(false);
         try {
           localStorage.setItem(MODEL_CACHE_FLAG, "1");
         } catch {
@@ -1379,7 +1354,6 @@ function App() {
         orchRef.current = null;
         setIsGenerating(false);
         setIsLoading(false);
-        setPreloadAllLoading(false);
         setProgress(0);
         setLoadingDetail("");
         setStatus(`Error: ${msg.error}`);
@@ -1423,7 +1397,6 @@ function App() {
     setWorkerBootError(null);
     setLoadingSlowHint("");
     setIsLoading(true);
-    setPreloadAllLoading(false);
     setStatus(`Loading ${mid.split("/").pop() ?? mid}…`);
     setProgress(0);
     setLoadingDetail("");
@@ -1449,7 +1422,6 @@ function App() {
     }
     setStatus("מנקה מטמון מודלים…");
     setIsLoading(false);
-    setPreloadAllLoading(false);
     setProgress(0);
     setLoadingDetail("");
     setIsLoaded(false);
@@ -1459,7 +1431,6 @@ function App() {
     setGeneratedImageUrl(null);
     lastGeneratedUrlRef.current = null;
     localStorage.removeItem(MODEL_CACHE_FLAG);
-    setShouldWarmupOnStart(true);
     orchRef.current = null;
     setAssistantBuffer("");
     assistantBufferRef.current = "";
@@ -1679,7 +1650,7 @@ function App() {
           <p className="hero-tagline">צ&apos;אט פרטי בדפדפן · עברית ואנגלית · מודלים נטענים אצלך במחשב</p>
           <div className="hero-actions">
             <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-              {preloadAllLoading ? "מסיים…" : "התחל"}
+              התחל
             </button>
             <button className="pill-button subtle-btn" onClick={() => void clearModelCache()} disabled={isGenerating}>
               נקה מטמון
@@ -1696,7 +1667,9 @@ function App() {
           <h2>GROVEE</h2>
           <div className="loading-model">{modelLabel}</div>
           <p className="loading-headline">
-            <span className="loading-headline-status">{status}</span>
+            <span className="loading-headline-status" title={status}>
+              {status}
+            </span>
             <span className="loading-headline-pct" aria-hidden="true">
               {Math.min(100, Math.round(progress))}%
             </span>
