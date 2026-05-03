@@ -9,8 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: path.join(__dirname, "app"),
   publicDir: path.join(__dirname, "public"),
-  // Relative so it works at /GROVEEMODEL/docs/ (files live under docs/assets/) and if Pages uses /docs as site root.
-  base: "./",
+  // Default ./ for local & docs/ — set VITE_BASE=/GROVEEMODEL/ when building for github.io/GROVEEMODEL/
+  base: process.env.VITE_BASE ?? "./",
   plugins: [react()],
   build: {
     outDir: path.join(__dirname, "dist"),

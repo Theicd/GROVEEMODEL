@@ -2,6 +2,8 @@
 
 import { TextStreamer, env, pipeline } from "@huggingface/transformers";
 
+type InferenceBackend = "auto" | "webgpu" | "wasm";
+
 type LoadMessage = {
   type: "load";
   modelId: string;
@@ -52,7 +54,22 @@ type ClearRuntimeCacheMessage = {
   type: "clear_runtime_cache";
 };
 
+/** Point Transformers.js at a Hugging Face mirror when huggingface.co is unreachable (e.g. regional block). */
+type ConfigureHubMessage = {
+  type: "configure_hub";
+  /** Empty string restores default https://huggingface.co/ */
+  remoteHost: string;
+};
+
+/** How to run ONNX: auto tries WebGPU then WASM; wasm works on all machines; webgpu may fail on some drivers. */
+type ConfigureInferenceMessage = {
+  type: "configure_inference";
+  backend: InferenceBackend;
+};
+
 type WorkerInput =
+  | ConfigureHubMessage
+  | ConfigureInferenceMessage
   | LoadMessage
   | GenerateMessage
   | CaptionMessage
@@ -66,21 +83,148 @@ type TextGenerator = ((
   options: Record<string, unknown>,
 ) => Promise<unknown>) & { tokenizer: unknown };
 
-let generator: TextGenerator | null = null;
+/** Must match App.tsx `CODE_MODEL` — used to pick a separate in-memory slot so code LLM never evicts chat Gemma. */
+const CODE_MODEL_ID = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
+
+type TextGenSlot = {
+  generator: TextGenerator | null;
+  modelId: string;
+  device: string;
+};
+
+const chatSlot: TextGenSlot = { generator: null, modelId: "", device: "unknown" };
+const codeSlot: TextGenSlot = { generator: null, modelId: "", device: "unknown" };
+
+const textGenSlotForModelId = (modelId: string): TextGenSlot =>
+  modelId === CODE_MODEL_ID ? codeSlot : chatSlot;
+
+const clearTextGenSlots = () => {
+  chatSlot.generator = null;
+  chatSlot.modelId = "";
+  chatSlot.device = "unknown";
+  codeSlot.generator = null;
+  codeSlot.modelId = "";
+  codeSlot.device = "unknown";
+};
+
 const textGeneratorCache = new Map<string, { generator: TextGenerator; device: "webgpu" | "wasm" }>();
 const captionerCache = new Map<
   string,
   (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>
 >();
-let activeModel = "";
-let activeDevice = "unknown";
 let busy = false;
+
+/** Last preference from the UI — affects text + vision pipelines across GPUs. */
+let inferenceBackend: InferenceBackend = "auto";
+
+/**
+ * `navigator.gpu` can exist while `requestAdapter()` returns null (Linux Mint without Vulkan, bad drivers, etc.).
+ * Skipping WebGPU avoids ORT "No available adapters" and hard failures so chat can load on WASM/CPU.
+ */
+let webGpuAdapterProbe: boolean | null = null;
+
+const resetWebGpuProbe = () => {
+  webGpuAdapterProbe = null;
+};
+
+const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
+  if (webGpuAdapterProbe !== null) return webGpuAdapterProbe;
+  try {
+    const g = (
+      self as unknown as {
+        navigator?: { gpu?: { requestAdapter?: (opts?: object) => Promise<unknown | null> } };
+      }
+    ).navigator?.gpu;
+    if (!g?.requestAdapter) {
+      webGpuAdapterProbe = false;
+      return false;
+    }
+    const adapter = await g.requestAdapter({ powerPreference: "low-power" });
+    webGpuAdapterProbe = adapter != null;
+    return webGpuAdapterProbe;
+  } catch {
+    webGpuAdapterProbe = false;
+    return false;
+  }
+};
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
+const DEFAULT_REMOTE_HOST = "https://huggingface.co/";
+/** When the official hub is blocked, retry once with a public mirror (session-only until user saves Settings). */
+const PUBLIC_FALLBACK_MIRROR = "https://hf-mirror.com";
+
+const normalizedRemoteHost = (): string => {
+  const t = (env.remoteHost ?? "").trim();
+  if (t === "") return DEFAULT_REMOTE_HOST;
+  return t.endsWith("/") ? t : `${t}/`;
+};
+
+const isUsingOfficialHubOnly = () => normalizedRemoteHost() === DEFAULT_REMOTE_HOST;
+
+const isLikelyHubNetworkFailure = (err: unknown): boolean => {
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+  return (
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("load failed") ||
+    lower.includes("network request failed")
+  );
+};
+
+const formatHubLoadError = (err: unknown): string => {
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("load failed") ||
+    lower.includes("network request failed")
+  ) {
+    const mirrorHint = isUsingOfficialHubOnly()
+      ? " Try Settings → HF mirror (e.g. https://hf-mirror.com), Clear cache, Start again."
+      : " Official hub and/or your mirror may be blocked — try VPN, another network, or a different mirror.";
+    return `${raw} — Cannot reach the model host (firewall, ISP, block, or offline).${mirrorHint}`;
+  }
+  return raw;
+};
+
+/** Apply mirror host; clears in-memory model handles when the host changes. */
+const applyHubRemoteHost = (remoteHost: string) => {
+  const trimmed = remoteHost.trim();
+  const next = trimmed === "" ? DEFAULT_REMOTE_HOST : trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+  if (env.remoteHost === next) return;
+  env.remoteHost = next;
+  textGeneratorCache.clear();
+  captionerCache.clear();
+  clearTextGenSlots();
+};
+
 const post = (msg: unknown) => {
   self.postMessage(msg);
+};
+
+/** Same failure sometimes surfaces both as await throw and as an extra unhandled rejection inside Transformers.js. */
+let lastWorkerErrorPostedAt = 0;
+const postLoadFailureOnce = (err: unknown) => {
+  const now = Date.now();
+  if (now - lastWorkerErrorPostedAt < 900) return;
+  lastWorkerErrorPostedAt = now;
+  post({ type: "error", error: formatHubLoadError(err) });
+};
+
+/** Transformers.js sometimes rejects parallel fetches without tying them to pipeline()'s await — surface that to the UI. */
+self.onunhandledrejection = (ev: PromiseRejectionEvent) => {
+  console.error("[GROVEE worker] unhandledrejection:", ev.reason);
+  try {
+    ev.preventDefault();
+  } catch {
+    /* ignore */
+  }
+  busy = false;
+  postLoadFailureOnce(ev.reason);
 };
 
 const fmtBytes = (bytes: number) => {
@@ -106,25 +250,35 @@ const clampProgress = (value: number) => {
   return Math.max(0, Math.min(100, Math.round(value)));
 };
 
-const normalizeProgressStatus = (status?: string, displayPercent?: number) => {
+/** Room left on the bar until pipeline() resolves (ONNX/WebGPU init after bytes finish). */
+const PROGRESS_CAP_UNTIL_PIPELINE_DONE = 96;
+
+/** One model (or one segment of a multi-model batch) maps onto this slice of the 0–100% bar. */
+type ProgressSlice = { basePct: number; spanPct: number };
+
+const FULL_PROGRESS_SLICE: ProgressSlice = { basePct: 0, spanPct: 100 };
+
+/** Likely Cache API / disk read — avoid showing “download” and huge speed noise. */
+const MEMORY_SPEED_THRESHOLD = 9 * 1024 * 1024;
+
+const fileBaseName = (path: string) => {
+  const s = path.trim();
+  if (!s) return "";
+  const parts = s.split(/[/\\]/);
+  return parts[parts.length - 1] ?? s;
+};
+
+const capDetailLen = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+
+const normalizeProgressStatus = (status?: string) => {
   const raw = (status ?? "").trim().toLowerCase();
-  const pct = displayPercent ?? 0;
-  /**
-   * Transformers often reports status "done" while `pipeline()` is still compiling the ONNX graph
-   * (WebGPU/WASM). Users see 99% + "done" and think the tab froze — explain explicitly.
-   */
   if (raw === "done" || raw === "complete" || raw === "completed") {
-    if (pct < 100) {
-      return "קבצים מוכנים — מאתחל ONNX בדפדפן (WebGPU/WASM). לעיתים 30 שנ׳ עד כ־2 דק׳ — זה תקין, לא תקיעה.";
-    }
-    return "מסיים הפעלת המודל…";
+    return "Loading…";
   }
   if (!raw || raw === "progress") {
-    return pct >= 100
-      ? "מסיים הפעלת המודל…"
-      : "Loading model files (from browser cache when available)…";
+    return "Loading model (weights + runtime)…";
   }
-  return status ?? "Loading model files…";
+  return status ?? "Loading…";
 };
 
 type HfProgress = {
@@ -138,23 +292,30 @@ type HfProgress = {
 
 /**
  * Transformers.js reports progress per shard/file; each new file resets % and byte counters.
- * Keep a monotonic bar (never jumps backward) and label bytes as "this file only".
+ * Keep a monotonic bar (never jumps backward). Map inner 0…cap into `slice` so multi-model loads
+ * don’t sit at ~96% while the next model is still fetching.
  */
-const createMonotonicProgressBridge = (startedAt: number) => {
+const createMonotonicProgressBridge = (startedAt: number, slice: ProgressSlice) => {
   let highWaterPct = 0;
   /** If % drops by more than this vs the peak, treat as a new file starting. */
   const NEW_FILE_DROP = 15;
   let lastLoaded = 0;
   let lastTs = startedAt;
+  let emaSpeed = 0;
 
   return (progressData: HfProgress) => {
     const rawPct = clampPercent(progressData.progress);
     if (rawPct + NEW_FILE_DROP < highWaterPct) {
-      // New ONNX shard — hold the bar steady
+      // New ONNX shard — hold the bar steady (library resets % per file)
     } else {
       highWaterPct = Math.max(highWaterPct, rawPct);
     }
-    const displayPct = Math.min(99, highWaterPct);
+    /**
+     * Cap during fetch phase so the bar never sits at 100% while ONNX/WebGPU still initializes.
+     * Segment end is posted explicitly when pipeline() resolves.
+     */
+    const innerCapped = Math.min(PROGRESS_CAP_UNTIL_PIPELINE_DONE, highWaterPct);
+    const globalPct = slice.basePct + (innerCapped / 100) * slice.spanPct;
 
     const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
     const total = typeof progressData.total === "number" ? progressData.total : 0;
@@ -164,26 +325,36 @@ const createMonotonicProgressBridge = (startedAt: number) => {
     lastLoaded = loaded;
     lastTs = now;
     const elapsed = Math.max(1, (now - startedAt) / 1000);
-    const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "calculating…";
-    const fname = (progressData.file ?? progressData.name ?? "").trim();
-    let detailText =
-      loaded > 0 && total > 0
-        ? `This file: ${fmtBytes(loaded)} / ${fmtBytes(total)} · ~${speedText}${fname ? ` · ${fname}` : ""}`
-        : `Elapsed ${elapsed.toFixed(1)}s${fname ? ` · ${fname}` : ""}`;
-
-    const rawStatus = (progressData.status ?? "").trim().toLowerCase();
-    if ((rawStatus === "done" || rawStatus === "complete") && displayPct < 100) {
-      detailText = `${detailText} · Still compiling graph — please wait`;
+    if (speed > 0) {
+      emaSpeed = emaSpeed <= 0 ? speed : emaSpeed * 0.82 + speed * 0.18;
     }
+    const burstFromCache = total > 0 && loaded > 0 && loaded >= total * 0.98 && elapsed < 1.2;
+    const loadMode: "network" | "memory" =
+      burstFromCache || emaSpeed >= MEMORY_SPEED_THRESHOLD || speed >= MEMORY_SPEED_THRESHOLD
+        ? "memory"
+        : "network";
 
-    const statusText = normalizeProgressStatus(progressData.status, displayPct);
+    const fname = (progressData.file ?? progressData.name ?? "").trim();
+    const bn = fileBaseName(fname);
+    let detailText: string;
+    if (loadMode === "memory") {
+      detailText = bn ? `טוען ממטמון · ${bn}` : "טוען ממטמון הדפדפן";
+    } else if (loaded > 0 && total > 0) {
+      detailText = `הורדה · ${fmtBytes(loaded)}/${fmtBytes(total)}${bn ? ` · ${bn}` : ""}`;
+    } else {
+      detailText = bn ? `מכין · ${bn}` : "מכין משקלים והרצה…";
+    }
+    detailText = capDetailLen(detailText, 90);
+
+    const statusText = normalizeProgressStatus(progressData.status);
 
     post({
       type: "progress",
       text: statusText,
-      progress: clampProgress(displayPct),
+      progress: clampProgress(globalPct),
       detail: detailText,
       file: fname,
+      loadMode,
     });
   };
 };
@@ -192,62 +363,194 @@ const loadWithDevice = async (
   modelId: string,
   dtype: LoadMessage["dtype"],
   device: "webgpu" | "wasm",
+  slice: ProgressSlice = FULL_PROGRESS_SLICE,
 ) => {
-  post({ type: "status", text: `Loading ${modelId} on ${device}...` });
-  const startedAt = Date.now();
-  const onProgress = createMonotonicProgressBridge(startedAt);
-  const pipe = (await pipeline("text-generation", modelId, {
-    device,
-    dtype,
-    progress_callback: onProgress,
-  })) as TextGenerator;
+  const runPipeline = async () => {
+    post({ type: "status", text: `Loading ${modelId} on ${device}...` });
+    const startedAt = Date.now();
+    const onProgress = createMonotonicProgressBridge(startedAt, slice);
+    const pipe = (await pipeline("text-generation", modelId, {
+      device,
+      dtype,
+      progress_callback: onProgress,
+    })) as TextGenerator;
 
-  post({
-    type: "progress",
-    text: "כמעט סיימנו — פותחים את מסך השיחה…",
-    progress: 100,
-    detail: "Tokenizer + graph ready in this tab",
-    file: "",
-  });
+    post({
+      type: "progress",
+      text: "Loading…",
+      progress: clampProgress(slice.basePct + slice.spanPct),
+      detail: "",
+      file: "",
+    });
 
-  return pipe;
-};
+    return pipe;
+  };
 
-const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
-  const visionModel = modelId;
-  post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
-  const startedAt = Date.now();
-  const onProgress = createMonotonicProgressBridge(startedAt);
-  const pipe = (await pipeline("image-to-text", visionModel, {
-    device,
-    dtype: "q8",
-    progress_callback: onProgress,
-  })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
-  post({
-    type: "progress",
-    text: "מודל תמונה מוכן — ממשיכים…",
-    progress: 100,
-    detail: "Vision runtime ready",
-    file: "",
-  });
-  return pipe;
-};
-
-const loadTextGenerator = async (modelId: string, dtype: LoadMessage["dtype"]) => {
-  const cached = textGeneratorCache.get(modelId);
-  if (cached) return cached;
   try {
-    const loaded = await loadWithDevice(modelId, dtype, "webgpu");
-    const entry = { generator: loaded, device: "webgpu" as const };
-    textGeneratorCache.set(modelId, entry);
-    return entry;
-  } catch {
-    post({ type: "status", text: `WebGPU unavailable for ${modelId}. Falling back to WASM...` });
-    const loaded = await loadWithDevice(modelId, dtype, "wasm");
+    return await runPipeline();
+  } catch (e) {
+    if (isLikelyHubNetworkFailure(e) && isUsingOfficialHubOnly()) {
+      post({
+        type: "status",
+        text: `Cannot reach huggingface.co — retrying once via ${PUBLIC_FALLBACK_MIRROR} …`,
+      });
+      applyHubRemoteHost(PUBLIC_FALLBACK_MIRROR);
+      return await runPipeline();
+    }
+    throw e;
+  }
+};
+
+const loadCaptioner = async (
+  modelId: string,
+  device: "webgpu" | "wasm",
+  slice: ProgressSlice = FULL_PROGRESS_SLICE,
+) => {
+  const visionModel = modelId;
+  const runPipeline = async () => {
+    post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
+    const startedAt = Date.now();
+    const onProgress = createMonotonicProgressBridge(startedAt, slice);
+    const pipe = (await pipeline("image-to-text", visionModel, {
+      device,
+      dtype: "q8",
+      progress_callback: onProgress,
+    })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+    post({
+      type: "progress",
+      text: "Loading…",
+      progress: clampProgress(slice.basePct + slice.spanPct),
+      detail: "",
+      file: "",
+    });
+    return pipe;
+  };
+
+  try {
+    return await runPipeline();
+  } catch (e) {
+    if (isLikelyHubNetworkFailure(e) && isUsingOfficialHubOnly()) {
+      post({
+        type: "status",
+        text: `Cannot reach huggingface.co — retrying vision download via ${PUBLIC_FALLBACK_MIRROR} …`,
+      });
+      applyHubRemoteHost(PUBLIC_FALLBACK_MIRROR);
+      return await runPipeline();
+    }
+    throw e;
+  }
+};
+
+const loadTextGenerator = async (
+  modelId: string,
+  dtype: LoadMessage["dtype"],
+  progressSlice: ProgressSlice = FULL_PROGRESS_SLICE,
+) => {
+  const pref = inferenceBackend;
+
+  const tryWasm = async () => {
+    const loaded = await loadWithDevice(modelId, dtype, "wasm", progressSlice);
     const entry = { generator: loaded, device: "wasm" as const };
     textGeneratorCache.set(modelId, entry);
     return entry;
+  };
+
+  const tryWebGpu = async () => {
+    const loaded = await loadWithDevice(modelId, dtype, "webgpu", progressSlice);
+    const entry = { generator: loaded, device: "webgpu" as const };
+    textGeneratorCache.set(modelId, entry);
+    return entry;
+  };
+
+  const cached = textGeneratorCache.get(modelId);
+  if (cached) {
+    if (pref === "auto") return cached;
+    if (pref === "webgpu" && cached.device === "webgpu") return cached;
+    if (pref === "wasm" && cached.device === "wasm") return cached;
+    textGeneratorCache.delete(modelId);
   }
+
+  if (pref === "wasm") {
+    post({
+      type: "status",
+      text: `Loading ${modelId} on WASM (CPU — works on all systems; slower than WebGPU)…`,
+    });
+    return await tryWasm();
+  }
+
+  if (pref === "webgpu") {
+    if (await hasRunnableWebGpuAdapter()) {
+      post({ type: "status", text: `Loading ${modelId} on WebGPU…` });
+      try {
+        return await tryWebGpu();
+      } catch {
+        post({ type: "status", text: `WebGPU error — using WASM (CPU) for ${modelId}.` });
+        return await tryWasm();
+      }
+    }
+    post({
+      type: "status",
+      text: `No WebGPU adapter — loading ${modelId} on WASM (CPU).`,
+    });
+    return await tryWasm();
+  }
+
+  // auto: WebGPU only when adapter exists; else WASM (Linux-friendly)
+  if (await hasRunnableWebGpuAdapter()) {
+    try {
+      return await tryWebGpu();
+    } catch {
+      post({
+        type: "status",
+        text: `WebGPU failed for ${modelId}. Using WASM (CPU) — slower but compatible.`,
+      });
+      return await tryWasm();
+    }
+  }
+  post({
+    type: "status",
+    text: `No WebGPU adapter — using WASM (CPU) for ${modelId} (try Chromium + GPU drivers on Linux).`,
+  });
+  return await tryWasm();
+};
+
+type CaptionFn = (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+
+/** Vision pipeline: same backend rules as text (consistent across Intel / AMD / NVIDIA / no GPU). */
+const loadCaptionerPreferred = async (
+  modelId: string,
+  progressSlice: ProgressSlice = FULL_PROGRESS_SLICE,
+): Promise<{ captioner: CaptionFn; device: "webgpu" | "wasm" }> => {
+  const pref = inferenceBackend;
+
+  if (pref === "wasm") {
+    const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+    return { captioner, device: "wasm" };
+  }
+  if (pref === "webgpu") {
+    if (await hasRunnableWebGpuAdapter()) {
+      try {
+        const captioner = await loadCaptioner(modelId, "webgpu", progressSlice);
+        return { captioner, device: "webgpu" };
+      } catch {
+        const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+        return { captioner, device: "wasm" };
+      }
+    }
+    const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+    return { captioner, device: "wasm" };
+  }
+  if (await hasRunnableWebGpuAdapter()) {
+    try {
+      const captioner = await loadCaptioner(modelId, "webgpu", progressSlice);
+      return { captioner, device: "webgpu" };
+    } catch {
+      const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+      return { captioner, device: "wasm" };
+    }
+  }
+  const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+  return { captioner, device: "wasm" };
 };
 
 const normalizePrompt = (message: GenerateMessage) => {
@@ -291,21 +594,38 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
   const message = event.data;
 
   try {
+    if (message.type === "configure_hub") {
+      applyHubRemoteHost(message.remoteHost);
+      return;
+    }
+
+    if (message.type === "configure_inference") {
+      const next = message.backend;
+      if (next !== inferenceBackend) {
+        inferenceBackend = next;
+        resetWebGpuProbe();
+        textGeneratorCache.clear();
+        captionerCache.clear();
+        clearTextGenSlots();
+      }
+      return;
+    }
+
     if (message.type === "load") {
       if (busy) {
         post({ type: "error", error: "Generation in progress. Please wait." });
         return;
       }
 
-      if (generator && message.modelId === activeModel) {
-        post({ type: "loaded", modelId: activeModel, device: activeDevice });
+      if (chatSlot.generator && message.modelId === chatSlot.modelId) {
+        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
       }
       const loaded = await loadTextGenerator(message.modelId, message.dtype);
-      generator = loaded.generator;
-      activeDevice = loaded.device;
-      activeModel = message.modelId;
-      post({ type: "loaded", modelId: activeModel, device: activeDevice });
+      chatSlot.generator = loaded.generator;
+      chatSlot.device = loaded.device;
+      chatSlot.modelId = message.modelId;
+      post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
       return;
     }
 
@@ -318,18 +638,20 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       let completed = 0;
       post({
         type: "progress",
-        text: "Starting full local model download...",
+        text: "טוען מודלים מקומית…",
         progress: 0,
-        detail: `0 / ${total} models ready`,
+        detail: capDetailLen(`0 מתוך ${total} מודלים`, 90),
         file: "",
       });
       const failedTextModelIds: string[] = [];
       const failedCaptionModelIds: string[] = [];
       for (const textModelId of message.textModelIds) {
+        const basePct = (completed / total) * 100;
+        const spanPct = 100 / total;
         post({ type: "status", text: `Preparing text model ${completed + 1}/${total}: ${textModelId}` });
         try {
           if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGenerator(textModelId, message.dtype);
+            await loadTextGenerator(textModelId, message.dtype, { basePct, spanPct });
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -339,22 +661,19 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "Downloaded local models",
+          text: "טוען מודלים…",
           progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} models ready`,
+          detail: capDetailLen(`${completed}/${total} מודלים · ${fileBaseName(textModelId)}`, 90),
           file: textModelId,
         });
       }
       for (const captionModelId of message.captionModelIds) {
+        const basePct = (completed / total) * 100;
+        const spanPct = 100 / total;
         post({ type: "status", text: `Preparing vision model ${completed + 1}/${total}: ${captionModelId}` });
         if (!captionerCache.has(captionModelId)) {
           try {
-            let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
-            try {
-              captioner = await loadCaptioner(captionModelId, "webgpu");
-            } catch {
-              captioner = await loadCaptioner(captionModelId, "wasm");
-            }
+            const { captioner } = await loadCaptionerPreferred(captionModelId, { basePct, spanPct });
             captionerCache.set(captionModelId, captioner);
           } catch (e) {
             const err = e instanceof Error ? e.message : String(e);
@@ -365,9 +684,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "Downloaded local models",
+          text: "טוען מודלים…",
           progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} models ready`,
+          detail: capDetailLen(`${completed}/${total} מודלים · ${fileBaseName(captionModelId)}`, 90),
           file: captionModelId,
         });
       }
@@ -395,9 +714,11 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const failedTextModelIds: string[] = [];
       const failedCaptionModelIds: string[] = [];
       for (const textModelId of message.textModelIds) {
+        const basePct = (completed / total) * 100;
+        const spanPct = 100 / total;
         try {
           if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGenerator(textModelId, message.dtype);
+            await loadTextGenerator(textModelId, message.dtype, { basePct, spanPct });
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -407,21 +728,18 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "Background model warmup",
+          text: "טעינת רקע…",
           progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} background models ready`,
+          detail: capDetailLen(`${completed}/${total} · ${fileBaseName(textModelId)}`, 90),
           file: textModelId,
         });
       }
       for (const captionModelId of message.captionModelIds) {
+        const basePct = (completed / total) * 100;
+        const spanPct = 100 / total;
         if (!captionerCache.has(captionModelId)) {
           try {
-            let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
-            try {
-              captioner = await loadCaptioner(captionModelId, "webgpu");
-            } catch {
-              captioner = await loadCaptioner(captionModelId, "wasm");
-            }
+            const { captioner } = await loadCaptionerPreferred(captionModelId, { basePct, spanPct });
             captionerCache.set(captionModelId, captioner);
           } catch (e) {
             const err = e instanceof Error ? e.message : String(e);
@@ -432,9 +750,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "Background model warmup",
+          text: "טעינת רקע…",
           progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} background models ready`,
+          detail: capDetailLen(`${completed}/${total} · ${fileBaseName(captionModelId)}`, 90),
           file: captionModelId,
         });
       }
@@ -449,36 +767,37 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
     }
 
     if (message.type === "clear_runtime_cache") {
-      generator = null;
+      clearTextGenSlots();
       textGeneratorCache.clear();
       captionerCache.clear();
-      activeModel = "";
-      activeDevice = "unknown";
       busy = false;
       post({ type: "status", text: "Runtime model cache cleared." });
       return;
     }
 
     if (message.type === "generate") {
-      if (!generator) {
-        post({ type: "error", error: "Model is not loaded yet." });
-        return;
-      }
       if (busy) {
         post({ type: "error", error: "Generation already in progress." });
         return;
       }
 
-      if (message.modelId !== activeModel) {
+      const slot = textGenSlotForModelId(message.modelId);
+      if (!slot.generator || slot.modelId !== message.modelId) {
         const switched = await loadTextGenerator(message.modelId, "q4");
-        generator = switched.generator;
-        activeModel = message.modelId;
-        activeDevice = switched.device;
+        slot.generator = switched.generator;
+        slot.modelId = message.modelId;
+        slot.device = switched.device;
+      }
+
+      const gen = slot.generator;
+      if (!gen) {
+        post({ type: "error", error: "Model is not loaded yet." });
+        return;
       }
 
       busy = true;
-      const finalPrompt = buildPrompt(generator, message);
-      const streamer = new TextStreamer(generator.tokenizer as never, {
+      const finalPrompt = buildPrompt(gen, message);
+      const streamer = new TextStreamer(gen.tokenizer as never, {
         skip_prompt: true,
         callback_function: (text: string) => {
           post({ type: "token", text });
@@ -486,7 +805,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       });
 
       const temperature = message.temperature;
-      await generator(finalPrompt, {
+      await gen(finalPrompt, {
         max_new_tokens: message.maxNewTokens,
         temperature,
         do_sample: temperature > 0.01,
@@ -511,11 +830,8 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       busy = true;
       let captioner = captionerCache.get(message.modelId) ?? null;
       if (!captioner) {
-        try {
-          captioner = await loadCaptioner(message.modelId, "webgpu");
-        } catch {
-          captioner = await loadCaptioner(message.modelId, "wasm");
-        }
+        const loadedCap = await loadCaptionerPreferred(message.modelId);
+        captioner = loadedCap.captioner;
         captionerCache.set(message.modelId, captioner);
       }
 
@@ -541,21 +857,12 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
 
-      let device: "webgpu" | "wasm" = "webgpu";
-      let captioner: (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
-      try {
-        captioner = await loadCaptioner(message.modelId, "webgpu");
-        device = "webgpu";
-      } catch {
-        captioner = await loadCaptioner(message.modelId, "wasm");
-        device = "wasm";
-      }
+      const { captioner, device } = await loadCaptionerPreferred(message.modelId);
       captionerCache.set(message.modelId, captioner);
       post({ type: "caption_model_loaded", modelId: message.modelId, device });
     }
   } catch (error) {
     busy = false;
-    const text = error instanceof Error ? error.message : "Unknown error";
-    post({ type: "error", error: text });
+    postLoadFailureOnce(error);
   }
 };

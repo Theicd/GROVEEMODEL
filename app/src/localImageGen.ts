@@ -12,6 +12,17 @@ function getClient(): Txt2ImgWorkerClient {
   return client;
 }
 
+/** web-txt2img reports webgpu=true when the API exists, not when an adapter is available. */
+async function hasWebGpuAdapter(): Promise<boolean> {
+  try {
+    if (typeof navigator === "undefined" || !navigator.gpu?.requestAdapter) return false;
+    const a = await navigator.gpu.requestAdapter({ powerPreference: "low-power" });
+    return a != null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Ensures SD-Turbo weights are cached locally. Safe to call multiple times.
  */
@@ -21,15 +32,19 @@ export async function ensureSdTurboLoaded(onStatus: (s: string) => void): Promis
   loadPromise = (async () => {
     const c = getClient();
     const cap = await c.detect();
-    if (!cap.webgpu && !cap.wasm) {
-      onStatus("Local image: no WebGPU/WASM backend");
+    if (!cap.wasm) {
+      onStatus("Local image: no WASM backend");
       return false;
     }
-    onStatus(cap.webgpu ? "Local image: loading SD-Turbo (WebGPU)…" : "Local image: loading SD-Turbo (WASM)…");
+    const adapterOk = await hasWebGpuAdapter();
+    const useWebGpuFirst = !!cap.webgpu && adapterOk;
+    onStatus(
+      useWebGpuFirst ? "Local image: loading SD-Turbo (WebGPU)…" : "Local image: loading SD-Turbo (WASM/CPU)…",
+    );
     const res = await c.load(
       "sd-turbo",
       {
-        backendPreference: cap.webgpu ? ["webgpu", "wasm"] : ["wasm"],
+        backendPreference: useWebGpuFirst ? ["webgpu", "wasm"] : ["wasm"],
         onProgress: (p) => {
           const pct = typeof p.pct === "number" ? Math.round(p.pct) : undefined;
           const msg = p.message ?? p.asset ?? "";

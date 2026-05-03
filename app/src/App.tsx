@@ -23,11 +23,22 @@ type ChatMessage = {
   modelLabel?: string;
   /** Inline preview for user messages sent with an image */
   imageDataUrl?: string;
+  /**
+   * Local SD-Turbo preview only (`blob:` / `data:`). Never use http(s) here — avoids broken offline links and markdown leaks.
+   */
+  localImageUrl?: string;
 };
 
 type WorkerOutMessage =
   | { type: "status"; text: string }
-  | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
+  | {
+      type: "progress";
+      text: string;
+      progress: number;
+      detail?: string;
+      file?: string;
+      loadMode?: "network" | "memory";
+    }
   | { type: "loaded"; modelId: string; device: string }
   | { type: "caption_model_loaded"; modelId: string; device: string }
   | {
@@ -43,10 +54,146 @@ type WorkerOutMessage =
   | { type: "error"; error: string };
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
+/** Main chat models (Transformers.js ONNX). See https://huggingface.co/collections/webml-community/transformersjs-v4-demos */
+const TEXT_CHAT_MODEL_OPTIONS = [
+  { id: DEFAULT_MODEL, label: "Gemma 4 E2B — עברית/אנגלית (ברירת מחדל)" },
+  {
+    id: "LiquidAI/LFM2.5-1.2B-Thinking-ONNX",
+    label: "LFM2.5 1.2B Thinking — מודל חשיבה (כבד, ~GB+)",
+  },
+  { id: "onnx-community/LFM2.5-350M-ONNX", label: "LFM2.5 350M — קל יחסית" },
+] as const;
+
+const KNOWN_TEXT_CHAT_MODEL_IDS = new Set<string>(TEXT_CHAT_MODEL_OPTIONS.map((o) => o.id));
+
+const normalizeTextChatModelId = (id: string | undefined): string =>
+  id && KNOWN_TEXT_CHAT_MODEL_IDS.has(id) ? id : DEFAULT_MODEL;
+
 /** Public ONNX repo for Transformers.js (the *-Instruct-ONNX* repo returns 401 for anonymous fetch). */
 const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
 const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
+const CHATS_STORAGE_KEY = "grovee_chats_v1";
+
+/** Cache Storage bucket names used by deps; must stay in sync with web-txt2img / transformers.js defaults. */
+const WEB_TXT2IMG_CACHE = "web-txt2img-v1";
+const TRANSFORMERS_CACHE = "transformers-cache";
+
+const shouldDeleteBrowserCache = (name: string): boolean => {
+  const l = name.toLowerCase();
+  return (
+    l.includes("transformers") ||
+    l.includes("huggingface") ||
+    l.startsWith("hf-") ||
+    l.includes("onnx") ||
+    l.includes("ort-wasm") ||
+    l.includes("ort.") ||
+    l.includes("web-txt2img") ||
+    l.includes("txt2img")
+  );
+};
+
+/** When indexedDB.databases() is missing (some browsers), still drop known DB names. */
+const INDEXEDDB_FALLBACK_NAMES = [TRANSFORMERS_CACHE, "hf-transformers-cache", "onnxruntime"];
+
+type ChatSession = {
+  id: string;
+  title: string;
+  updatedAt: number;
+  messages: ChatMessage[];
+};
+
+type ChatSessionsState = { activeId: string; sessions: ChatSession[] };
+
+const sessionTitleFromMessages = (sessionMessages: ChatMessage[]): string => {
+  const firstUser = sessionMessages.find((m) => m.role === "user")?.content?.trim();
+  if (!firstUser) return "שיחה חדשה";
+  return firstUser.slice(0, 28) + (firstUser.length > 28 ? "…" : "");
+};
+
+const stripImageDataForStorage = (sessionMessages: ChatMessage[]): ChatMessage[] =>
+  sessionMessages.map((m) => {
+    const trimmed: ChatMessage = { id: m.id, role: m.role, content: m.content };
+    if (m.modelLabel !== undefined) trimmed.modelLabel = m.modelLabel;
+    return trimmed;
+  });
+
+const newChatSessionId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+const defaultChatSessionsState = (): ChatSessionsState => {
+  const id = newChatSessionId();
+  return {
+    activeId: id,
+    sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }],
+  };
+};
+
+const loadChatSessionsState = (): ChatSessionsState => {
+  try {
+    const raw = localStorage.getItem(CHATS_STORAGE_KEY);
+    if (!raw) return defaultChatSessionsState();
+    const parsed = JSON.parse(raw) as { activeId?: string; sessions?: ChatSession[] };
+    if (!parsed.sessions || !Array.isArray(parsed.sessions) || parsed.sessions.length === 0) {
+      return defaultChatSessionsState();
+    }
+    const sessions = parsed.sessions.map((s) => ({
+      id: typeof s.id === "string" ? s.id : newChatSessionId(),
+      title: typeof s.title === "string" ? s.title : "שיחה",
+      updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
+      messages: Array.isArray(s.messages) ? s.messages : [],
+    }));
+    const activeId =
+      parsed.activeId && sessions.some((x) => x.id === parsed.activeId) ? parsed.activeId : sessions[0].id;
+    return { activeId, sessions };
+  } catch {
+    return defaultChatSessionsState();
+  }
+};
+
+const saveChatSessionsState = (state: ChatSessionsState) => {
+  const serializable = {
+    activeId: state.activeId,
+    sessions: state.sessions.map((s) => ({
+      ...s,
+      messages: stripImageDataForStorage(s.messages),
+    })),
+  };
+  try {
+    localStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(serializable));
+  } catch {
+    try {
+      const trimmed = {
+        activeId: state.activeId,
+        sessions: state.sessions.map((s) => ({
+          ...s,
+          messages: stripImageDataForStorage(s.messages).map((m) => ({
+            ...m,
+            content: m.content.length > 12_000 ? `${m.content.slice(0, 12_000)}…` : m.content,
+          })),
+        })),
+      };
+      localStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // quota — skip
+    }
+  }
+};
+
+const formatInferenceDevice = (device: string): string => {
+  const d = device.toLowerCase();
+  if (d === "webgpu") return "WebGPU (GPU)";
+  if (d === "wasm") return "WASM (CPU)";
+  if (d === "cache") return "cache";
+  return device;
+};
+
+const shortLabelForTextModel = (id: string): string => {
+  if (id.includes("LFM2.5") && id.toLowerCase().includes("thinking")) return "LFM2.5 Thinking";
+  if (id.includes("LFM2.5")) return "LFM2.5";
+  if (id.toLowerCase().includes("gemma")) return "Gemma 4";
+  return "Assistant";
+};
 
 const VISION_MODEL_OPTIONS = [
   { id: "Xenova/vit-gpt2-image-captioning", label: "ViT-GPT2 Captioning (Fast)" },
@@ -55,12 +202,6 @@ const VISION_MODEL_OPTIONS = [
 
 /** Chat + warmup only use the fast caption model; Moondream is omitted to avoid multi‑GB RAM / OOM on refresh. */
 const DEFAULT_CAPTION_MODEL_ID = VISION_MODEL_OPTIONS[0].id;
-
-const IMAGE_MODEL_OPTIONS = [
-  { id: "flux", label: "FLUX (balanced)" },
-  { id: "turbo", label: "Turbo (faster)" },
-  { id: "sdxl", label: "SDXL style" },
-] as const;
 
 type TunableModelSettings = {
   temperature: number;
@@ -88,22 +229,31 @@ const defaultCoderSettings: TunableModelSettings = {
     "You are an expert programmer. Output working code with brief comments. Prefer markdown code fences with language tags.",
 };
 
-type ImageProviderId = "pollinations" | "local_sd_turbo";
+/** ONNX Runtime backend: auto = WebGPU then WASM; wasm = CPU everywhere; webgpu = GPU only (fails on bad drivers). */
+type InferenceBackendPreference = "auto" | "webgpu" | "wasm";
 
 type AppSettings = {
+  /** Primary ONNX text model loaded on Start (see TEXT_CHAT_MODEL_OPTIONS). */
+  textChatModelId: string;
+  /**
+   * Optional Hugging Face Hub mirror (Transformers.js `env.remoteHost`), e.g. https://hf-mirror.com
+   * when https://huggingface.co is blocked. Empty = official hub.
+   */
+  hfRemoteHost: string;
+  /** Where Transformers.js runs models (important for different GPUs / drivers). */
+  inferenceBackend: InferenceBackendPreference;
   gemma: TunableModelSettings;
   coder: TunableModelSettings;
   visionMaxTokens: number;
-  imageBackendModel: string;
-  imageProvider: ImageProviderId;
 };
 
 const defaultAppSettings = (): AppSettings => ({
+  textChatModelId: DEFAULT_MODEL,
+  hfRemoteHost: "",
+  inferenceBackend: "auto",
   gemma: { ...defaultGemmaSettings },
   coder: { ...defaultCoderSettings },
   visionMaxTokens: 96,
-  imageBackendModel: IMAGE_MODEL_OPTIONS[0].id,
-  imageProvider: "pollinations",
 });
 
 const loadSettings = (): AppSettings => {
@@ -113,13 +263,20 @@ const loadSettings = (): AppSettings => {
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     return {
       ...defaultAppSettings(),
-      ...parsed,
+      textChatModelId: normalizeTextChatModelId(
+        typeof parsed.textChatModelId === "string" ? parsed.textChatModelId : undefined,
+      ),
+      hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
+      inferenceBackend:
+        parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
+          ? parsed.inferenceBackend
+          : "auto",
       gemma: { ...defaultGemmaSettings, ...parsed.gemma },
       coder: { ...defaultCoderSettings, ...parsed.coder },
-      imageProvider:
-        parsed.imageProvider === "local_sd_turbo" || parsed.imageProvider === "pollinations"
-          ? parsed.imageProvider
-          : defaultAppSettings().imageProvider,
+      visionMaxTokens:
+        typeof parsed.visionMaxTokens === "number" && Number.isFinite(parsed.visionMaxTokens)
+          ? Math.min(256, Math.max(32, Math.round(parsed.visionMaxTokens)))
+          : defaultAppSettings().visionMaxTokens,
     };
   } catch {
     return defaultAppSettings();
@@ -134,9 +291,7 @@ const saveSettings = (s: AppSettings) => {
   }
 };
 
-type ImageOrch =
-  | { step: "translate"; userText: string }
-  | { step: "summarize"; userText: string; englishPrompt: string; imageUrl: string };
+type ImageOrch = { step: "translate"; userText: string };
 
 type CodeOrch =
   | { step: "route"; userText: string }
@@ -173,19 +328,119 @@ const cleanModelOutput = (input: string): string => {
   return raw.length ? raw.slice(0, 2000) : "No response generated.";
 };
 
-const fetchWebContext = async (query: string): Promise<string> => {
+/** GitHub requires a User-Agent on API requests. */
+const WEB_LOOKUP_USER_AGENT = "GROVEEMODEL/1.0 (browser chat; no backend)";
+
+/**
+ * When the user writes in Hebrew (no Latin tokens), map common tech phrases to English
+ * so GitHub repository search can still return repos.
+ */
+const expandHebrewTechSearchTerms = (query: string): string => {
+  const parts: string[] = [];
+  if (/מצלמ[ות]? אבטחה|מצלמת אבטחה|אבטחה ומעקב/i.test(query)) {
+    parts.push("security", "camera", "surveillance");
+  }
+  if (/ממשק|דשבורד|ניהול/i.test(query)) {
+    parts.push("dashboard", "interface", "ui");
+  }
+  if (/ניטור|הקלטה|הקלטות/i.test(query)) {
+    parts.push("monitoring", "recording");
+  }
+  if (/קוד\s*פתוח/i.test(query)) {
+    parts.push("open", "source");
+  }
+  return [...new Set(parts)].join(" ").trim();
+};
+
+const buildGitHubSearchQuery = (query: string): string => {
+  const raw = query.trim();
+  if (!raw) return "";
+  const latinTokens = raw.match(/[a-zA-Z][a-zA-Z0-9_.-]{1,}/g);
+  const latin = latinTokens ? latinTokens.join(" ") : "";
+  if (latin.length >= 3) return latin.slice(0, 256);
+  const wantsGithub = /github|גיטהב/i.test(raw);
+  const hebrewHints = expandHebrewTechSearchTerms(raw);
+  if (wantsGithub && hebrewHints) return hebrewHints.slice(0, 256);
+  if (wantsGithub && latin.length > 0) return latin.slice(0, 256);
+  if (hebrewHints.length >= 8) return hebrewHints.slice(0, 256);
+  return "";
+};
+
+const fetchWikipediaSnippets = async (query: string, lang: "en" | "he"): Promise<string> => {
   const encoded = encodeURIComponent(query);
-  const endpoint = `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encoded}&limit=3&namespace=0&format=json&origin=*`;
-  const response = await fetch(endpoint);
-  if (!response.ok) throw new Error("Web lookup failed");
-  const data = (await response.json()) as [string, string[], string[], string[]];
-  const titles = data[1] ?? [];
-  const snippets = data[2] ?? [];
-  const urls = data[3] ?? [];
-  if (!titles.length) return "";
-  return titles
-    .map((title, i) => `- ${title}: ${snippets[i] ?? ""} (${urls[i] ?? ""})`)
-    .join("\n");
+  const endpoint = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encoded}&limit=4&namespace=0&format=json&origin=*`;
+  try {
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      console.warn("[GROVEE] Wikipedia HTTP", response.status, lang, endpoint.slice(0, 96));
+      return "";
+    }
+    const data = (await response.json()) as [string, string[], string[], string[]];
+    const titles = data[1] ?? [];
+    const snippets = data[2] ?? [];
+    const urls = data[3] ?? [];
+    if (!titles.length) return "";
+    return titles
+      .map((title, i) => `- ${title}: ${snippets[i] ?? ""} (${urls[i] ?? ""})`)
+      .join("\n");
+  } catch (e) {
+    console.warn("[GROVEE] Wikipedia fetch failed", lang, e);
+    return "";
+  }
+};
+
+const fetchGitHubRepoHits = async (searchQuery: string): Promise<string> => {
+  const q = searchQuery.trim();
+  if (!q) return "";
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=6`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": WEB_LOOKUP_USER_AGENT,
+      },
+    });
+    if (!response.ok) {
+      console.warn("[GROVEE] GitHub API HTTP", response.status, url.slice(0, 120));
+      return "";
+    }
+    const data = (await response.json()) as {
+      items?: Array<{ full_name: string; description: string | null; html_url: string; stargazers_count: number }>;
+    };
+    const items = data.items ?? [];
+    if (!items.length) return "";
+    return items
+      .map(
+        (item) =>
+          `- ${item.full_name}${item.description ? `: ${item.description}` : ""} (${item.html_url}) ★${item.stargazers_count}`,
+      )
+      .join("\n");
+  } catch (e) {
+    console.warn("[GROVEE] GitHub fetch failed", e);
+    return "";
+  }
+};
+
+/** Wikipedia (en + optional he) + GitHub repo search — not a full web search engine. */
+const fetchWebContext = async (query: string): Promise<string> => {
+  const q = query.trim();
+  if (!q) return "";
+  const hasHebrew = /[\u0590-\u05FF]/.test(q);
+  const ghq = buildGitHubSearchQuery(q);
+
+  const [wikiEn, wikiHe, github] = await Promise.all([
+    fetchWikipediaSnippets(q, "en"),
+    hasHebrew ? fetchWikipediaSnippets(q, "he") : Promise.resolve(""),
+    ghq ? fetchGitHubRepoHits(ghq) : Promise.resolve(""),
+  ]);
+
+  const blocks: string[] = [];
+  if (wikiEn) blocks.push(`Wikipedia (en):\n${wikiEn}`);
+  if (wikiHe) blocks.push(`Wikipedia (he):\n${wikiHe}`);
+  if (github) blocks.push(`GitHub repositories:\n${github}`);
+
+  return blocks.join("\n\n");
 };
 
 type MsgPart = { type: "text" | "html" | "image" | "code"; value: string; lang?: string };
@@ -317,9 +572,16 @@ function HtmlSandboxBlock({ html }: { html: string }) {
   );
 }
 
-function MessageBody({ content }: { content: string }) {
+function isLocalImageSrc(src: string): boolean {
+  const s = src.trim();
+  return s.startsWith("blob:") || s.startsWith("data:image");
+}
+
+function MessageBody({ content, localImageUrl }: { content: string; localImageUrl?: string }) {
   const parts = useMemo(() => extractRichParts(content), [content]);
   const dir = isRtlText(content) ? "rtl" : "ltr";
+  const showLocal =
+    typeof localImageUrl === "string" && localImageUrl.length > 0 && isLocalImageSrc(localImageUrl);
 
   return (
     <div className="msg-body" dir={dir}>
@@ -335,9 +597,18 @@ function MessageBody({ content }: { content: string }) {
           );
         }
         if (part.type === "image") {
+          const raw = part.value.trim();
+          if (!isLocalImageSrc(raw)) {
+            return (
+              <p key={i} className="msg-text msg-offsite-img-blocked">
+                קישור תמונה מהרשת לא מוצג (רק תמונה מקומית מהדפדפן). אם עדיין מופיע קישור ישן — רענון קשיח או נקה מטמון
+                האתר.
+              </p>
+            );
+          }
           return (
             <div key={i} className="msg-image-wrap">
-              <img className="msg-image" src={part.value} alt="Generated" loading="lazy" />
+              <img className="msg-image" src={raw} alt="Generated locally" loading="lazy" />
             </div>
           );
         }
@@ -347,6 +618,11 @@ function MessageBody({ content }: { content: string }) {
           </p>
         );
       })}
+      {showLocal ? (
+        <div className="msg-image-wrap">
+          <img className="msg-image" src={localImageUrl} alt="Generated locally" loading="lazy" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -383,12 +659,79 @@ function SettingsModal({
           </button>
         </div>
         <p className="settings-hint">
-          Gemma 4 מנהל את השיחה והעברית; לקוד הוא מפיק משימה טכנית באנגלית ואז <strong>Qwen Coder</strong> כותב את הקוד (Gemma
-          יכולה לנחש קוד קצר, אבל לא זה התפקיד שלה). תמונות: פרומפט באנגלית אוטומטית, מנוע ענן או SD-Turbo מקומי.
+          מודל הצ&apos;אט הראשי (למשל Gemma או LFM Thinking) מטפל בשיחה; לבקשות קוד האפליקציה מפיקה משימה טכנית באנגלית ואז{" "}
+          <strong>Qwen Coder</strong> כותב קוד. תמונות: פרומפט באנגלית אוטומטית, ענן או SD-Turbo מקומי.
         </p>
 
         <section className="settings-section">
-          <h3>Gemma 4 (controller / chat)</h3>
+          <h3>מודל צ&apos;אט ראשי (ONNX / Transformers.js)</h3>
+          <p className="settings-micro">
+            אוסף דמוים:{" "}
+            <a
+              href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Transformers.js V4 demos
+            </a>
+            . אחרי שינוי מודל יש ללחוץ שוב <strong>התחל</strong> כדי לטעון משקולות.
+          </p>
+          <label className="settings-row block">
+            <span>בחירת מודל</span>
+            <select
+              value={draft.textChatModelId}
+              onChange={(e) => setDraft((d) => ({ ...d, textChatModelId: e.target.value }))}
+            >
+              {TEXT_CHAT_MODEL_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-row block">
+            <span>HF mirror (אם Failed to fetch)</span>
+            <input
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="ריק = huggingface.co · לדוגמה: https://hf-mirror.com"
+              value={draft.hfRemoteHost}
+              onChange={(e) => setDraft((d) => ({ ...d, hfRemoteHost: e.target.value }))}
+            />
+          </label>
+          <p className="settings-micro">
+            אם יש <code>Failed to fetch</code> ל־huggingface.co, האפליקציה מנסה פעם אחת אוטומטית דרך hf-mirror.com. אם גם זה נכשל: הגדר מראה ידנית, שמור → נקה מטמון מודל → התחל (או רשת/VPN אחרים).
+          </p>
+          <label className="settings-row block">
+            <span>מנוע חישוב (כל כרטיסי המסך)</span>
+            <select
+              value={draft.inferenceBackend}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  inferenceBackend: e.target.value as InferenceBackendPreference,
+                }))
+              }
+            >
+              <option value="auto">Auto — WebGPU אם אפשר, אחרת WASM על המעבד</option>
+              <option value="wasm">WASM — רק מעבד (יציב בכל מחשב, איטי יותר)</option>
+              <option value="webgpu">WebGPU — רק כרטיס מתאים (כשלים אפשריים אם אין תמיכה)</option>
+            </select>
+          </label>
+          <p className="settings-micro">
+            כרטיסים ודרייברים שונים מתנהגים אחרת; Auto מומלץ. אחרי שינוי: שמור → לחץ שוב <strong>התחל</strong>.
+          </p>
+          <p className="settings-micro">
+            Linux (מינט וכו&apos;): אם אין מתאם WebGPU, האפליקציה עוברת אוטומטית ל־WASM על המעבד — השיחה אמורה לעלות. ל־GPU:
+            דפדפן מעודכן (Chromium מומלץ), דרייברים ל־NVIDIA / AMD / Intel, ובלינוקס לעיתים חבילות Vulkan (למשל{" "}
+            <code>mesa-vulkan-drivers</code>).
+          </p>
+        </section>
+
+        <section className="settings-section">
+          <h3>פרמטרי צ&apos;אט (טמפרטורה, פרומפט מערכת)</h3>
           {row(
             "Temperature",
             <input
@@ -512,52 +855,17 @@ function SettingsModal({
 
         <section className="settings-section">
           <h3>Image generation</h3>
-          <label className="settings-row block">
-            <span>Engine</span>
-            <select
-              value={draft.imageProvider}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  imageProvider: e.target.value as ImageProviderId,
-                }))
-              }
-            >
-              <option value="pollinations">Cloud — Pollinations (fast, needs network)</option>
-              <option value="local_sd_turbo">Local — SD-Turbo in browser ({getSdTurboSizeNote()})</option>
-            </select>
-          </label>
           <p className="settings-micro">
-            Smaller experimental ONNX demos (under ~400MB) exist in the community, but this app ships with SD-Turbo as the
-            practical single-step local option. See{" "}
+            תמונות נוצרות רק מקומית בדפדפן (SD-Turbo דרך web-txt2img) — בלי לינקי HTTP וללא שרת תמונה חיצוני. פעם ראשונה
+            דורשת רשת כדי למשוך משקולות (~2.3GB); אחרי מכן נשמרות במטמון הדפדפן וניתן לעבוד offline. {getSdTurboSizeNote()}
+          </p>
+          <p className="settings-micro">
+            See{" "}
             <a href="https://github.com/lacerbi/web-txt2img" target="_blank" rel="noreferrer">
               web-txt2img
-            </a>{" "}
-            and{" "}
-            <a
-              href="https://huggingface.co/IlyasMoutawwakil/tiny-stable-diffusion-onnx"
-              target="_blank"
-              rel="noreferrer"
-            >
-              tiny-stable-diffusion-onnx
-            </a>{" "}
-            for research builds.
+            </a>
+            .
           </p>
-          {draft.imageProvider === "pollinations" && (
-            <label className="settings-row block">
-              <span>Pollinations model id</span>
-              <select
-                value={draft.imageBackendModel}
-                onChange={(e) => setDraft((d) => ({ ...d, imageBackendModel: e.target.value }))}
-              >
-                {IMAGE_MODEL_OPTIONS.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
         </section>
 
         <div className="settings-actions">
@@ -588,7 +896,7 @@ function App() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const orchRef = useRef<Orchestration | null>(null);
 
-  const [modelId, setModelId] = useState(DEFAULT_MODEL);
+  const [modelId, setModelId] = useState(() => normalizeTextChatModelId(loadSettings().textChatModelId));
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModalKey, setSettingsModalKey] = useState(0);
@@ -597,10 +905,14 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("Not loaded");
   const [progress, setProgress] = useState(0);
-  const [progressDetail, setProgressDetail] = useState("");
-  const [progressFile, setProgressFile] = useState("");
+  /** Technical line from worker (bytes / file); cleared when load completes. */
+  const [loadingDetail, setLoadingDetail] = useState("");
+  /** Worker/script/load failures — visible banner + Console already logged. */
+  const [workerBootError, setWorkerBootError] = useState<string | null>(null);
+  /** Long-running load hints (weak hardware / network). */
+  const [loadingSlowHint, setLoadingSlowHint] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatSessionsState, setChatSessionsState] = useState<ChatSessionsState>(() => loadChatSessionsState());
   const [assistantBuffer, setAssistantBuffer] = useState("");
   const [thinkingMode, setThinkingMode] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
@@ -616,6 +928,8 @@ function App() {
       return true;
     }
   });
+  /** Bumping recreates the model worker so cache clear + stuck loads actually reset runtime state. */
+  const [workerGeneration, setWorkerGeneration] = useState(0);
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
@@ -643,6 +957,40 @@ function App() {
   }, [isLoading]);
 
   useEffect(() => {
+    saveChatSessionsState(chatSessionsState);
+  }, [chatSessionsState]);
+
+  const activeSession = useMemo(
+    () =>
+      chatSessionsState.sessions.find((s) => s.id === chatSessionsState.activeId) ?? chatSessionsState.sessions[0],
+    [chatSessionsState],
+  );
+  const messages = activeSession.messages;
+  const conversationTitle = activeSession.title;
+
+  const sortedSessions = useMemo(
+    () => [...chatSessionsState.sessions].sort((a, b) => b.updatedAt - a.updatedAt),
+    [chatSessionsState.sessions],
+  );
+
+  const setMessages = useCallback((updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+    setChatSessionsState((st) => {
+      const sessions = st.sessions.map((s) => {
+        if (s.id !== st.activeId) return s;
+        const next =
+          typeof updater === "function" ? (updater as (p: ChatMessage[]) => ChatMessage[])(s.messages) : updater;
+        return {
+          ...s,
+          messages: next,
+          updatedAt: Date.now(),
+          title: sessionTitleFromMessages(next),
+        };
+      });
+      return { ...st, sessions };
+    });
+  }, []);
+
+  useEffect(() => {
     const prev = lastGeneratedUrlRef.current;
     if (prev && prev !== generatedImageUrl && prev.startsWith("blob:")) {
       revokeImageUrl(prev);
@@ -654,20 +1002,34 @@ function App() {
   const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
 
   useEffect(() => {
-    activeModelShortLabelRef.current = "Gemma 4";
-  }, []);
+    if (phase !== "loading" || !isLoading) {
+      queueMicrotask(() => setLoadingSlowHint(""));
+      return;
+    }
+    const t2m = window.setTimeout(() => {
+      setLoadingSlowHint(
+        "עדיין טוען… על חומרה חלשה או רשת איטית זה נורמלי. נסה בהגדרות: מנוע WASM או HF mirror.",
+      );
+    }, 120_000);
+    const t10m = window.setTimeout(() => {
+      setLoadingSlowHint(
+        "מעל 10 דקות: פתח F12 → Network/Console. נסה נקה מטמון מודל, רשת אחרת, או WASM.",
+      );
+    }, 600_000);
+    return () => {
+      clearTimeout(t2m);
+      clearTimeout(t10m);
+    };
+  }, [phase, isLoading]);
+
+  useEffect(() => {
+    activeModelShortLabelRef.current = shortLabelForTextModel(modelId);
+  }, [modelId]);
 
   const placeholder = useMemo(() => {
     if (!isLoaded) return "Start the app first…";
     return "Ask anything…";
   }, [isLoaded]);
-  const composerHint =
-    "Hebrew or English · + or drag an image · code or image requests — עברית או אנגלית · צרף תמונה בגרירה";
-  const conversationTitle = useMemo(() => {
-    const firstUser = messages.find((m) => m.role === "user")?.content?.trim();
-    if (!firstUser) return "New chat";
-    return firstUser.slice(0, 28) + (firstUser.length > 28 ? "…" : "");
-  }, [messages]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -725,7 +1087,7 @@ function App() {
   ) => {
     workerRef.current?.postMessage({
       type: "generate",
-      modelId: DEFAULT_MODEL,
+      modelId: normalizeTextChatModelId(appSettingsRef.current.textChatModelId),
       prompt: promptText,
       systemPrompt,
       maxNewTokens,
@@ -754,27 +1116,47 @@ function App() {
   };
 
   useEffect(() => {
-    const worker = new Worker(new URL("./model.worker.ts", import.meta.url), {
-      type: "module",
-    });
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./model.worker.ts", import.meta.url), {
+        type: "module",
+      });
+    } catch (e) {
+      console.error("[GROVEE] Worker constructor failed:", e);
+      queueMicrotask(() => {
+        setWorkerBootError(e instanceof Error ? e.message : String(e));
+      });
+      return () => {};
+    }
+
+    worker.onerror = (ev: ErrorEvent) => {
+      console.error("[GROVEE] worker script error:", ev.message, ev.filename, ev.lineno);
+      setWorkerBootError(
+        ev.message ||
+          `Worker script failed (404/CORS?). File: ${ev.filename ?? "model.worker"}`,
+      );
+      setIsLoading(false);
+    };
 
     worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
       const msg = event.data;
       if (msg.type === "status") {
         setStatus(msg.text);
       } else if (msg.type === "progress") {
-        setStatus(msg.text);
-        const loadingPhase = isLoadingRef.current || preloadAllLoadingRef.current;
-        setProgress((prev) => (loadingPhase ? Math.max(prev, msg.progress) : msg.progress));
-        setProgressDetail(msg.detail ?? "");
-        setProgressFile(msg.file ?? "");
+        const trackProgressUi = isLoadingRef.current || preloadAllLoadingRef.current;
+        if (trackProgressUi) {
+          setStatus(msg.text);
+          setLoadingDetail(msg.detail ?? "");
+          const next = Math.min(100, Math.max(0, Math.round(Number(msg.progress) || 0)));
+          setProgress(next);
+        }
       } else if (msg.type === "loaded") {
+        setWorkerBootError(null);
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
-        setStatus(`Loaded on ${msg.device}`);
-        setProgressDetail("Model ready");
-        setProgressFile("");
+        setLoadingDetail("");
+        setStatus(`Loaded on ${formatInferenceDevice(msg.device)}`);
         if (workerRef.current && !preloadAllLoadingRef.current && shouldWarmupOnStartRef.current) {
           setPreloadAllLoading(true);
           setStatus("Gemma is ready. Warming vision model (weights stay in browser cache)…");
@@ -785,14 +1167,13 @@ function App() {
             dtype: "q4",
           });
         } else {
-          setStatus(`Gemma controller ready on ${msg.device}`);
-          setProgressDetail("Using Hugging Face cache in this browser");
-          setProgressFile("");
+          setStatus(`Gemma controller ready on ${formatInferenceDevice(msg.device)}`);
           workerRef.current?.postMessage({ type: "preload_caption", modelId: DEFAULT_CAPTION_MODEL_ID });
         }
       } else if (msg.type === "caption_model_loaded") {
-        setStatus(`Vision model ready on ${msg.device}`);
+        setStatus(`Vision model ready on ${formatInferenceDevice(msg.device)}`);
       } else if (msg.type === "preload_all_done") {
+        setWorkerBootError(null);
         setPreloadAllLoading(false);
         setIsLoading(false);
         setIsLoaded(true);
@@ -803,18 +1184,13 @@ function App() {
           // ignore
         }
         setProgress(100);
+        setLoadingDetail("");
         const failedT = msg.failedTextModelIds?.length
           ? ` · נכשלו מודלי טקסט: ${msg.failedTextModelIds.join(", ")}`
           : "";
         const failedC = msg.failedCaptionModelIds?.length
           ? ` · נכשל vision: ${msg.failedCaptionModelIds.join(", ")}`
           : "";
-        setProgressDetail(
-          failedT || failedC
-            ? "חלק מהמודלים לא נטענו — בדקו רשת/חסימות Hugging Face"
-            : "מודל הכיתוב מוכן; Qwen ייטען בפעם הראשונה שתבקשו קוד",
-        );
-        setProgressFile("");
         setStatus(
           failedT || failedC
             ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
@@ -863,7 +1239,7 @@ function App() {
               id: crypto.randomUUID(),
               role: "assistant",
               content: polished,
-              modelLabel: "Gemma 4",
+              modelLabel: activeModelShortLabelRef.current,
             },
           ]);
           setAssistantBuffer("");
@@ -877,65 +1253,44 @@ function App() {
           assistantBufferRef.current = "";
           setAssistantBuffer("");
 
-          const cloudUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(english)}?width=1024&height=1024&model=${encodeURIComponent(appSettingsRef.current.imageBackendModel)}&nologo=true`;
-
-          const runSummarize = (imageUrl: string) => {
-            setGeneratedImageUrl(imageUrl);
-            orchRef.current = {
-              kind: "image",
-              data: {
-                step: "summarize",
-                userText,
-                englishPrompt: english,
-                imageUrl,
+          void (async () => {
+            const local = await generateSdTurboPng(english, (s) => setStatus(s));
+            if (local.ok) {
+              const imageUrl = local.objectUrl;
+              setGeneratedImageUrl(imageUrl);
+              orchRef.current = null;
+              setIsGenerating(false);
+              const caption = isRtlText(userText)
+                ? `התמונה נוצרה מקומית בדפדפן בלבד (SD-Turbo). בלי שרת ענן ובלי קישורי HTTP — רק Blob מקומי.\nפרומפט באנגלית: ${english}`
+                : `Image generated locally in your browser only (SD-Turbo). No cloud and no HTTP URLs — local blob only.\nEnglish prompt: ${english}`;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: caption,
+                  localImageUrl: imageUrl,
+                  modelLabel: activeModelShortLabelRef.current,
+                },
+              ]);
+              setStatus(isRtlText(userText) ? "מוכן" : "Ready");
+              return;
+            }
+            orchRef.current = null;
+            setIsGenerating(false);
+            setAssistantBuffer("");
+            assistantBufferRef.current = "";
+            setStatus("Local image failed");
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `יצירת התמונה המקומית נכשלה: ${local.message}. עם רשת — טען את האפליקציה פעם אחת כדי שמשקולות SD-Turbo יישמרו במטמון הדפדפן, ואז אפשר לעבוד offline.`,
+                modelLabel: activeModelShortLabelRef.current,
               },
-            };
-            setStatus("Gemma: replying in your language…");
-            const g = appSettingsRef.current.gemma;
-            const userLang = isRtlText(userText) ? "Hebrew" : "the same language as the user";
-            runGemmaGenerate(
-              `User request:\n${userText}\n\nWe generated an image using this English prompt for the image model:\n${english}\n\nReply in ${userLang}: 2–4 sentences explaining what was created; mention that the prompt was translated for the image engine. Then add a line with the image URL:\n${imageUrl}`,
-              g.systemPrompt,
-              Math.min(320, g.maxNewTokens),
-              g.temperature,
-              g.repetitionPenalty,
-              g.topP,
-              "",
-            );
-          };
-
-          if (appSettingsRef.current.imageProvider === "local_sd_turbo") {
-            void (async () => {
-              const local = await generateSdTurboPng(english, (s) => setStatus(s));
-              if (local.ok) {
-                runSummarize(local.objectUrl);
-              } else {
-                setStatus(`Local image failed (${local.message}). Using cloud…`);
-                runSummarize(cloudUrl);
-              }
-            })();
-          } else {
-            runSummarize(cloudUrl);
-          }
-          return;
-        }
-
-        if (orch?.kind === "image" && orch.data.step === "summarize") {
-          const summary = buf || "Image ready.";
-          const imageUrl = orch.data.imageUrl;
-          orchRef.current = null;
-          setIsGenerating(false);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: `${summary}\n\n![Generated](${imageUrl})`,
-              modelLabel: "Gemma 4",
-            },
-          ]);
-          setAssistantBuffer("");
-          assistantBufferRef.current = "";
+            ]);
+          })();
           return;
         }
 
@@ -998,7 +1353,7 @@ function App() {
               id: crypto.randomUUID(),
               role: "assistant",
               content: finalText,
-              modelLabel: "Gemma 4",
+              modelLabel: activeModelShortLabelRef.current,
             },
           ]);
           setAssistantBuffer("");
@@ -1026,90 +1381,165 @@ function App() {
         setIsLoading(false);
         setPreloadAllLoading(false);
         setProgress(0);
-        setProgressDetail("");
-        setProgressFile("");
+        setLoadingDetail("");
         setStatus(`Error: ${msg.error}`);
+        setWorkerBootError(msg.error);
       }
     };
 
     workerRef.current = worker;
+    worker.postMessage({
+      type: "configure_hub",
+      remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
+    });
+    worker.postMessage({
+      type: "configure_inference",
+      backend: appSettingsRef.current.inferenceBackend,
+    });
     return () => {
       worker.terminate();
       workerRef.current = null;
     };
-  }, []);
+  }, [setMessages, workerGeneration]);
+
+  useEffect(() => {
+    workerRef.current?.postMessage({
+      type: "configure_hub",
+      remoteHost: appSettings.hfRemoteHost ?? "",
+    });
+  }, [appSettings.hfRemoteHost]);
+
+  useEffect(() => {
+    workerRef.current?.postMessage({
+      type: "configure_inference",
+      backend: appSettings.inferenceBackend,
+    });
+  }, [appSettings.inferenceBackend]);
 
   const loadModel = () => {
     if (!workerRef.current) return;
-    setModelId(DEFAULT_MODEL);
+    const mid = normalizeTextChatModelId(appSettingsRef.current.textChatModelId);
+    setModelId(mid);
+    setWorkerBootError(null);
+    setLoadingSlowHint("");
     setIsLoading(true);
     setPreloadAllLoading(false);
-    setStatus("Loading Gemma controller…");
+    setStatus(`Loading ${mid.split("/").pop() ?? mid}…`);
     setProgress(0);
-    setProgressDetail("Preparing local runtime…");
-    setProgressFile("");
+    setLoadingDetail("");
+    workerRef.current.postMessage({
+      type: "configure_hub",
+      remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
+    });
+    workerRef.current.postMessage({
+      type: "configure_inference",
+      backend: appSettingsRef.current.inferenceBackend,
+    });
     workerRef.current.postMessage({
       type: "load",
-      modelId: DEFAULT_MODEL,
+      modelId: mid,
       dtype: "q4",
     });
   };
 
   const clearModelCache = async () => {
-    if (isGenerating) return;
-    setStatus("Clearing local model cache…");
-    try {
-      terminateLocalImageWorker();
-      revokeImageUrl(generatedImageUrl);
-      setGeneratedImageUrl(null);
-      lastGeneratedUrlRef.current = null;
-      workerRef.current?.postMessage({ type: "clear_runtime_cache" });
-      localStorage.removeItem(MODEL_CACHE_FLAG);
-      setShouldWarmupOnStart(true);
-      orchRef.current = null;
+    if (isGenerating) {
+      setStatus("המתן לסיום התשובה — לא ניתן לנקות מטמון בזמן יצירה.");
+      return;
+    }
+    setStatus("מנקה מטמון מודלים…");
+    setIsLoading(false);
+    setPreloadAllLoading(false);
+    setProgress(0);
+    setLoadingDetail("");
+    setIsLoaded(false);
+    setWorkerBootError(null);
+    terminateLocalImageWorker();
+    revokeImageUrl(generatedImageUrl);
+    setGeneratedImageUrl(null);
+    lastGeneratedUrlRef.current = null;
+    localStorage.removeItem(MODEL_CACHE_FLAG);
+    setShouldWarmupOnStart(true);
+    orchRef.current = null;
+    setAssistantBuffer("");
+    assistantBufferRef.current = "";
+    setWorkerGeneration((g) => g + 1);
 
+    try {
       if ("caches" in window) {
         const cacheKeys = await caches.keys();
-        await Promise.all(
-          cacheKeys
-            .filter((key) => key.toLowerCase().includes("transformers") || key.toLowerCase().includes("huggingface"))
-            .map((key) => caches.delete(key)),
-        );
+        const toDelete = new Set<string>();
+        for (const key of cacheKeys) {
+          if (shouldDeleteBrowserCache(key)) toDelete.add(key);
+        }
+        toDelete.add(WEB_TXT2IMG_CACHE);
+        toDelete.add(TRANSFORMERS_CACHE);
+        await Promise.all([...toDelete].map((key) => caches.delete(key)));
       }
 
       const indexedDbGlobal = indexedDB as IDBFactory & {
         databases?: () => Promise<Array<{ name?: string }>>;
       };
+      const deleteIdb = (name: string) => {
+        try {
+          indexedDB.deleteDatabase(name);
+        } catch {
+          /* ignore */
+        }
+      };
+      for (const name of INDEXEDDB_FALLBACK_NAMES) {
+        deleteIdb(name);
+      }
       if (indexedDbGlobal.databases) {
         const dbs = await indexedDbGlobal.databases();
         for (const db of dbs) {
           const name = db.name ?? "";
           if (!name) continue;
           const lower = name.toLowerCase();
-          if (lower.includes("transformers") || lower.includes("huggingface") || lower.includes("onnx")) {
-            indexedDB.deleteDatabase(name);
+          if (
+            lower.includes("transformers") ||
+            lower.includes("huggingface") ||
+            lower.includes("onnx") ||
+            lower.includes("web-txt2img") ||
+            lower.includes("txt2img")
+          ) {
+            deleteIdb(name);
           }
         }
       }
-      setStatus("Cache cleared. Press Start again.");
-      setProgress(0);
-      setProgressDetail("");
-      setProgressFile("");
-      setIsLoaded(false);
-      setIsLoading(false);
-      setPreloadAllLoading(false);
-      setMessages([]);
-      setAssistantBuffer("");
-      assistantBufferRef.current = "";
+
+      setStatus("המטמון נוקה. לחץ «התחל» כדי לטעון מחדש.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setStatus(`Cache clear failed: ${message}`);
+      setStatus(`ניקוי מטמון נכשל: ${message}`);
     }
   };
 
   const persistSettings = (s: AppSettings) => {
-    setAppSettings(s);
-    saveSettings(s);
+    const normalized: AppSettings = {
+      ...s,
+      textChatModelId: normalizeTextChatModelId(s.textChatModelId),
+    };
+    setAppSettings((prev) => {
+      const modelChanged = normalized.textChatModelId !== prev.textChatModelId;
+      const backendChanged = normalized.inferenceBackend !== prev.inferenceBackend;
+      if (modelChanged || backendChanged) {
+        queueMicrotask(() => {
+          if (modelChanged) setModelId(normalized.textChatModelId);
+          setIsLoaded(false);
+          setIsLoading(false);
+          setStatus(
+            modelChanged && backendChanged
+              ? "מודל או מנוע חישוב השתנו — לחץ «התחל» כדי לטעון מחדש"
+              : backendChanged
+                ? "מנוע חישוב השתנה — לחץ «התחל» כדי לטעון מחדש"
+                : "מודל צ'אט השתנה — לחץ «התחל» כדי לטעון מחדש",
+          );
+        });
+      }
+      return normalized;
+    });
+    saveSettings(normalized);
   };
 
   const sendPrompt = async (e: FormEvent) => {
@@ -1192,15 +1622,19 @@ function App() {
     const g = appSettings.gemma;
     const greeting = isSimpleGreeting(trimmed);
     let webContext = "";
+    let searchHint = "";
     if (webSearchMode) {
       setStatus("Searching…");
       try {
         webContext = await fetchWebContext(trimmed);
-      } catch {
+        if (!webContext.trim()) searchHint = " · אין תוצאות חיפוש — מענה בלי הקשר רשת";
+      } catch (e) {
+        console.warn("[GROVEE] fetchWebContext failed:", e);
         webContext = "";
+        searchHint = " · חיפוש נכשל — מענה בלי הקשר רשת";
       }
     }
-    setStatus("Generating…");
+    setStatus(`Generating…${searchHint}`);
 
     runGemmaGenerate(
       trimmed,
@@ -1218,6 +1652,19 @@ function App() {
   return (
     <main className="app theme-space">
       <div className="bg-overlay" />
+      {workerBootError ? (
+        <div className="worker-boot-banner" role="alert">
+          <strong>שגיאה:</strong> {workerBootError}
+          <button
+            type="button"
+            className="subtle-btn"
+            style={{ marginInlineStart: 12 }}
+            onClick={() => setWorkerBootError(null)}
+          >
+            סגור
+          </button>
+        </div>
+      ) : null}
       <SettingsModal
         key={settingsModalKey}
         open={settingsOpen}
@@ -1234,37 +1681,46 @@ function App() {
             <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
               {preloadAllLoading ? "מסיים…" : "התחל"}
             </button>
-            <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
+            <button className="pill-button subtle-btn" onClick={() => void clearModelCache()} disabled={isGenerating}>
               נקה מטמון
             </button>
           </div>
+          <p className="hero-status" aria-live="polite">
+            {status}
+          </p>
         </section>
       )}
 
-      {phase === "loading" && (
-        <section className="loading-screen glass">
+      {phase === "loading" && isLoading && (
+        <section className="loading-screen glass" aria-busy="true" aria-live="polite">
           <h2>GROVEE</h2>
           <div className="loading-model">{modelLabel}</div>
-          <div className="meter">
-            <div
-              className={`meter-fill${progress >= 94 && progress < 100 ? " meter-fill-await" : ""}`}
-              style={{ width: `${progress}%` }}
-            />
+          <p className="loading-headline">
+            <span className="loading-headline-status">{status}</span>
+            <span className="loading-headline-pct" aria-hidden="true">
+              {Math.min(100, Math.round(progress))}%
+            </span>
+          </p>
+          <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+            <div className="meter-fill" style={{ width: `${Math.min(100, progress)}%` }} />
           </div>
-          <div className="percent">{progress}%</div>
-          <div className="status-line">{status || "Loading…"}</div>
-          {progress >= 90 && progress < 100 && (
-            <div className="loading-final-phase" role="status">
-              <p className="loading-final-phase-title">לא תקוע — שלב אחרון</p>
-              <p className="loading-final-phase-body">
-                כשההורדה מהרשת נגמרת, האחוז עלול להישאר סביב <strong>99%</strong> בזמן שהדפדפן מרכיב את גרף ONNX
-                (WebGPU או WASM) וטוען את המודל לזיכרון. זה יכול לקחת מ־כמה שניות ועד כ־שתי דקות במחשבים איטיים.
-                <span className="loading-final-phase-nowrap"> אין צורך לרענן את הדף.</span>
-              </p>
-            </div>
-          )}
-          {progressDetail && <div className="status-line secondary">{progressDetail}</div>}
-          {progressFile && <div className="status-line secondary">File: {progressFile}</div>}
+          <p className="loading-subline" title={loadingDetail || undefined}>
+            {loadingDetail || "\u00a0"}
+          </p>
+          {loadingSlowHint ? <p className="loading-slow-hint">{loadingSlowHint}</p> : null}
+          <p className="loading-meter-note">
+            מד התקדמות אחד: הורדה מהרשת או קריאה ממטמון הדפדפן — עד 100% כשהמודל באמת מוכן.
+          </p>
+          <div className="hero-actions" style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              className="pill-button subtle-btn"
+              onClick={() => void clearModelCache()}
+              disabled={isGenerating}
+            >
+              נקה מטמון ואיפוס טעינה
+            </button>
+          </div>
         </section>
       )}
 
@@ -1276,8 +1732,13 @@ function App() {
               type="button"
               className="new-chat-btn"
               onClick={() => {
-                setMessages([]);
+                const id = newChatSessionId();
+                setChatSessionsState((s) => ({
+                  activeId: id,
+                  sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }, ...s.sessions],
+                }));
                 setAssistantBuffer("");
+                assistantBufferRef.current = "";
                 setPrompt("");
                 setImageDataUrl(null);
                 setComposerDragOver(false);
@@ -1291,9 +1752,23 @@ function App() {
               + New chat
             </button>
             <div className="chat-list">
-              <button type="button" className="chat-item active">
-                {conversationTitle}
-              </button>
+              {sortedSessions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`chat-item ${s.id === chatSessionsState.activeId ? "active" : ""}`}
+                  onClick={() => {
+                    if (s.id === chatSessionsState.activeId || isGenerating) return;
+                    setChatSessionsState((st) => ({ ...st, activeId: s.id }));
+                    setAssistantBuffer("");
+                    assistantBufferRef.current = "";
+                    orchRef.current = null;
+                  }}
+                  disabled={isGenerating}
+                >
+                  {s.title}
+                </button>
+              ))}
             </div>
           </aside>
 
@@ -1338,12 +1813,12 @@ function App() {
                       <img src={msg.imageDataUrl} alt="" />
                     </div>
                   ) : null}
-                  <MessageBody content={msg.content} />
+                  <MessageBody content={msg.content} localImageUrl={msg.localImageUrl} />
                 </article>
               ))}
               {assistantBuffer && (
                 <article className="bubble assistant">
-                  <strong>Gemma 4</strong>
+                  <strong>{shortLabelForTextModel(modelId)}</strong>
                   <MessageBody content={assistantBuffer} />
                 </article>
               )}
@@ -1364,47 +1839,37 @@ function App() {
                 </div>
               ) : null}
 
-              <div className="composer-shell">
-                <div className={`composer-card ${composerDragOver ? "composer-card--dropping" : ""}`}>
-                  <div className="composer-input-line">
+              <div className={`composer-card ${composerDragOver ? "composer-card--dropping" : ""}`}>
+                <textarea
+                  ref={textareaRef}
+                  className="composer-body-input"
+                  dir="auto"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={placeholder}
+                  rows={2}
+                  disabled={!isLoaded || isGenerating}
+                />
+                {imageDataUrl ? (
+                  <div className="composer-attached-strip">
+                    <img src={imageDataUrl} alt="" />
                     <button
                       type="button"
-                      className="composer-lead-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      aria-label="Attach image"
-                      title="Attach image"
-                      disabled={!isLoaded || isGenerating}
+                      className="composer-attached-strip-remove"
+                      onClick={() => setImageDataUrl(null)}
+                      disabled={isGenerating}
+                      aria-label="Remove image"
                     >
-                      +
+                      ×
                     </button>
-                    {imageDataUrl ? (
-                      <div className="composer-inline-thumb">
-                        <img src={imageDataUrl} alt="" />
-                        <button
-                          type="button"
-                          className="composer-inline-thumb-remove"
-                          onClick={() => setImageDataUrl(null)}
-                          disabled={isGenerating}
-                          aria-label="Remove image"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ) : null}
-                    <textarea
-                      ref={textareaRef}
-                      className="composer-field"
-                      dir="auto"
-                      value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
-                      placeholder={placeholder}
-                      title={composerHint}
-                      rows={1}
-                      disabled={!isLoaded || isGenerating}
-                    />
                   </div>
-                  <div className="composer-card-toolbar" aria-label="Options">
-                    <label className="composer-mode-pill">
+                ) : null}
+                <div className="composer-card-footer">
+                  <div className="composer-footer-left">
+                    <label
+                      className="composer-mode-pill"
+                      title='מוסיף הנחיה למודל לחשוב לפני התשובה. אין תצוגת "מחשבות" — רק הטקסט הסופי.'
+                    >
                       <input
                         type="checkbox"
                         checked={thinkingMode}
@@ -1413,7 +1878,10 @@ function App() {
                       />
                       <span>Think</span>
                     </label>
-                    <label className="composer-mode-pill">
+                    <label
+                      className="composer-mode-pill"
+                      title="מושך קטעים מוויקיפדיה (עברית/אנגלית) ומחיפוש מאגרים ב-GitHub. לא מנוע חיפוש מלא ולא גישה לכל האינטרנט."
+                    >
                       <input
                         type="checkbox"
                         checked={webSearchMode}
@@ -1423,16 +1891,28 @@ function App() {
                       <span>Search</span>
                     </label>
                   </div>
+                  <div className="composer-footer-right">
+                    <button
+                      type="button"
+                      className="composer-clip-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      aria-label="Attach image"
+                      title="Attach image"
+                      disabled={!isLoaded || isGenerating}
+                    >
+                      📎
+                    </button>
+                    <button
+                      type="submit"
+                      className="composer-send-inner"
+                      disabled={!isLoaded || isGenerating}
+                      aria-label="Send"
+                      title="Send"
+                    >
+                      {isGenerating ? "…" : "↑"}
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="submit"
-                  className="composer-send-fab"
-                  disabled={!isLoaded || isGenerating}
-                  aria-label="Send"
-                  title="Send"
-                >
-                  {isGenerating ? "…" : "↑"}
-                </button>
               </div>
 
               <input
@@ -1450,8 +1930,8 @@ function App() {
               <button
                 type="button"
                 className="text-btn"
-                onClick={clearModelCache}
-                disabled={isGenerating || isLoading}
+                onClick={() => void clearModelCache()}
+                disabled={isGenerating}
               >
                 Clear model cache
               </button>
