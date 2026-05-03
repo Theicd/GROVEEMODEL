@@ -514,6 +514,30 @@ const loadTextGenerator = async (
   return await tryWasm();
 };
 
+/**
+ * Some ORT builds/drivers cannot run q4 GatherBlockQuantized kernels for specific models.
+ * Retry once with q8 so the app stays usable instead of hard-failing at startup.
+ */
+const loadTextGeneratorWithCompatFallback = async (
+  modelId: string,
+  dtype: LoadMessage["dtype"],
+  progressSlice: ProgressSlice = FULL_PROGRESS_SLICE,
+) => {
+  try {
+    return await loadTextGenerator(modelId, dtype, progressSlice);
+  } catch (error) {
+    if (dtype === "q4") {
+      const message = error instanceof Error ? error.message : String(error);
+      post({
+        type: "status",
+        text: `q4 is not supported on this runtime (${message.slice(0, 96)}). Retrying ${modelId} with q8…`,
+      });
+      return await loadTextGenerator(modelId, "q8", progressSlice);
+    }
+    throw error;
+  }
+};
+
 type CaptionFn = (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
 
 /** Vision pipeline: same backend rules as text (consistent across Intel / AMD / NVIDIA / no GPU). */
@@ -621,7 +645,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
       }
-      const loaded = await loadTextGenerator(message.modelId, message.dtype);
+      const loaded = await loadTextGeneratorWithCompatFallback(message.modelId, message.dtype);
       chatSlot.generator = loaded.generator;
       chatSlot.device = loaded.device;
       chatSlot.modelId = message.modelId;
@@ -651,7 +675,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "status", text: `Preparing text model ${completed + 1}/${total}: ${textModelId}` });
         try {
           if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGenerator(textModelId, message.dtype, { basePct, spanPct });
+            await loadTextGeneratorWithCompatFallback(textModelId, message.dtype, { basePct, spanPct });
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -718,7 +742,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         const spanPct = 100 / total;
         try {
           if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGenerator(textModelId, message.dtype, { basePct, spanPct });
+            await loadTextGeneratorWithCompatFallback(textModelId, message.dtype, { basePct, spanPct });
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -783,7 +807,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
 
       const slot = textGenSlotForModelId(message.modelId);
       if (!slot.generator || slot.modelId !== message.modelId) {
-        const switched = await loadTextGenerator(message.modelId, "q4");
+        const switched = await loadTextGeneratorWithCompatFallback(message.modelId, "q4");
         slot.generator = switched.generator;
         slot.modelId = message.modelId;
         slot.device = switched.device;
