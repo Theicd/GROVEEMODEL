@@ -8,8 +8,10 @@ import {
   isSimpleGreeting,
 } from "./chatIntents";
 import {
-  generateSdTurboPng,
-  getSdTurboSizeNote,
+  generateLocalImagePng,
+  getImageGenModelSizeNote,
+  ensureLocalImageModelLoaded,
+  type ImageGenModelId,
   revokeImageUrl,
   terminateLocalImageWorker,
 } from "./localImageGen";
@@ -54,15 +56,13 @@ type WorkerOutMessage =
   | { type: "error"; error: string };
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
-/** Main chat models (Transformers.js ONNX). See https://huggingface.co/collections/webml-community/transformersjs-v4-demos */
-const TEXT_CHAT_MODEL_OPTIONS = [
-  { id: DEFAULT_MODEL, label: "Gemma 4 E2B — עברית/אנגלית (ברירת מחדל)" },
-  {
-    id: "LiquidAI/LFM2.5-1.2B-Thinking-ONNX",
-    label: "LFM2.5 1.2B Thinking — מודל חשיבה (כבד, ~GB+)",
-  },
-  { id: "onnx-community/LFM2.5-350M-ONNX", label: "LFM2.5 350M — קל יחסית" },
-] as const;
+/** Chat is Gemma-only; other ONNX demos were removed from the UI to reduce confusion. */
+const TEXT_CHAT_MODEL_OPTIONS = [{ id: DEFAULT_MODEL, label: "Gemma 4 E2B — עברית/אנגלית" }] as const;
+
+type StartupPhase = "idle" | "gemma" | "code" | "image" | "caption";
+
+const labelForImageGenModel = (id: ImageGenModelId): string =>
+  id === "janus-pro-1b" ? "Janus-Pro-1B" : "SD-Turbo";
 
 const KNOWN_TEXT_CHAT_MODEL_IDS = new Set<string>(TEXT_CHAT_MODEL_OPTIONS.map((o) => o.id));
 
@@ -71,7 +71,7 @@ const normalizeTextChatModelId = (id: string | undefined): string =>
 
 /** Public ONNX repo for Transformers.js (the *-Instruct-ONNX* repo returns 401 for anonymous fetch). */
 const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
-/** Set after Gemma finishes loading; used so cache-clear can reset UX hints. Vision/caption loads lazily on first image use so chat stays responsive. */
+/** Set after full startup preload (Gemma + code + image-gen + caption) completes. */
 const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
@@ -190,8 +190,6 @@ const formatInferenceDevice = (device: string): string => {
 };
 
 const shortLabelForTextModel = (id: string): string => {
-  if (id.includes("LFM2.5") && id.toLowerCase().includes("thinking")) return "LFM2.5 Thinking";
-  if (id.includes("LFM2.5")) return "LFM2.5";
   if (id.toLowerCase().includes("gemma")) return "Gemma 4";
   return "Assistant";
 };
@@ -201,8 +199,22 @@ const VISION_MODEL_OPTIONS = [
   { id: "onnx-community/moondream2", label: "Moondream2 (Better detail)" },
 ] as const;
 
-/** Chat + warmup only use the fast caption model; Moondream is omitted to avoid multi‑GB RAM / OOM on refresh. */
 const DEFAULT_CAPTION_MODEL_ID = VISION_MODEL_OPTIONS[0].id;
+
+const IMAGE_GEN_MODEL_OPTIONS = [
+  { id: "sd-turbo" as const, label: "SD-Turbo — מהיר יחסית (WebGPU / WASM)" },
+  { id: "janus-pro-1b" as const, label: "Janus-Pro-1B — WebGPU בלבד" },
+] as const;
+
+const KNOWN_IMAGE_GEN_IDS = new Set<string>(IMAGE_GEN_MODEL_OPTIONS.map((o) => o.id));
+
+const normalizeImageGenModelId = (id: string | undefined): ImageGenModelId =>
+  id && KNOWN_IMAGE_GEN_IDS.has(id) ? (id as ImageGenModelId) : "sd-turbo";
+
+const KNOWN_CAPTION_MODEL_IDS = new Set<string>(VISION_MODEL_OPTIONS.map((o) => o.id));
+
+const normalizeCaptionModelId = (id: string | undefined): string =>
+  id && KNOWN_CAPTION_MODEL_IDS.has(id) ? id : DEFAULT_CAPTION_MODEL_ID;
 
 type TunableModelSettings = {
   temperature: number;
@@ -236,6 +248,10 @@ type InferenceBackendPreference = "auto" | "webgpu" | "wasm";
 type AppSettings = {
   /** Primary ONNX text model loaded on Start (see TEXT_CHAT_MODEL_OPTIONS). */
   textChatModelId: string;
+  /** web-txt2img model for local text-to-image. */
+  imageGenModelId: ImageGenModelId;
+  /** Transformers.js image-to-text model id for attached images. */
+  captionModelId: string;
   /**
    * Optional Hugging Face Hub mirror (Transformers.js `env.remoteHost`), e.g. https://hf-mirror.com
    * when https://huggingface.co is blocked. Empty = official hub.
@@ -250,6 +266,8 @@ type AppSettings = {
 
 const defaultAppSettings = (): AppSettings => ({
   textChatModelId: DEFAULT_MODEL,
+  imageGenModelId: "sd-turbo",
+  captionModelId: DEFAULT_CAPTION_MODEL_ID,
   hfRemoteHost: "",
   inferenceBackend: "auto",
   gemma: { ...defaultGemmaSettings },
@@ -266,6 +284,12 @@ const loadSettings = (): AppSettings => {
       ...defaultAppSettings(),
       textChatModelId: normalizeTextChatModelId(
         typeof parsed.textChatModelId === "string" ? parsed.textChatModelId : undefined,
+      ),
+      imageGenModelId: normalizeImageGenModelId(
+        typeof parsed.imageGenModelId === "string" ? parsed.imageGenModelId : undefined,
+      ),
+      captionModelId: normalizeCaptionModelId(
+        typeof parsed.captionModelId === "string" ? parsed.captionModelId : undefined,
       ),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
       inferenceBackend:
@@ -660,29 +684,20 @@ function SettingsModal({
           </button>
         </div>
         <p className="settings-hint">
-          מודל הצ&apos;אט הראשי (למשל Gemma או LFM Thinking) מטפל בשיחה; לבקשות קוד האפליקציה מפיקה משימה טכנית באנגלית ואז{" "}
-          <strong>Qwen Coder</strong> כותב קוד. תמונות: פרומפט באנגלית אוטומטית, ענן או SD-Turbo מקומי.
+          <strong>Gemma</strong> מטפל בשיחה; לבקשות קוד האפליקציה מפיקה משימה טכנית באנגלית ואז <strong>Qwen Coder</strong> כותב
+          קוד. תמונות: פרומפט באנגלית אוטומטית, יצירה מקומית דרך web-txt2img (המודל שנבחר בהגדרות). כיתוב תמונה: המודל
+          שנבחר ב-Vision caption.
         </p>
 
         <section className="settings-section">
           <h3>מודל צ&apos;אט ראשי (ONNX / Transformers.js)</h3>
           <p className="settings-micro">
-            אוסף דמוים:{" "}
-            <a
-              href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Transformers.js V4 demos
-            </a>
-            . אחרי שינוי מודל יש ללחוץ שוב <strong>התחל</strong> כדי לטעון משקולות.
+            ממשק זה נשאר עם <strong>Gemma 4 E2B</strong> בלבד. אחרי שינוי HF mirror / מנוע חישוב יש ללחוץ שוב{" "}
+            <strong>התחל</strong>.
           </p>
           <label className="settings-row block">
-            <span>בחירת מודל</span>
-            <select
-              value={draft.textChatModelId}
-              onChange={(e) => setDraft((d) => ({ ...d, textChatModelId: e.target.value }))}
-            >
+            <span>מודל צ&apos;אט</span>
+            <select value={draft.textChatModelId} disabled aria-readonly="true">
               {TEXT_CHAT_MODEL_OPTIONS.map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.label}
@@ -842,6 +857,20 @@ function SettingsModal({
 
         <section className="settings-section">
           <h3>Vision caption</h3>
+          <label className="settings-row block">
+            <span>מודל כיתוב תמונה</span>
+            <select
+              value={draft.captionModelId}
+              onChange={(e) => setDraft((d) => ({ ...d, captionModelId: e.target.value }))}
+            >
+              {VISION_MODEL_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="settings-micro">אחרי שינוי — שמור ואז <strong>התחל</strong> כדי לטעון מחדש את כל שלבי האתחול.</p>
           {row(
             "Max caption tokens",
             <input
@@ -856,9 +885,27 @@ function SettingsModal({
 
         <section className="settings-section">
           <h3>Image generation</h3>
+          <label className="settings-row block">
+            <span>מודל יצירת תמונה (מקומי)</span>
+            <select
+              value={draft.imageGenModelId}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  imageGenModelId: normalizeImageGenModelId(e.target.value),
+                }))
+              }
+            >
+              {IMAGE_GEN_MODEL_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <p className="settings-micro">
-            תמונות נוצרות רק מקומית בדפדפן (SD-Turbo דרך web-txt2img) — בלי לינקי HTTP וללא שרת תמונה חיצוני. פעם ראשונה
-            דורשת רשת כדי למשוך משקולות (~2.3GB); אחרי מכן נשמרות במטמון הדפדפן וניתן לעבוד offline. {getSdTurboSizeNote()}
+            תמונות נוצרות רק מקומית בדפדפן (web-txt2img) — בלי לינקי HTTP וללא שרת תמונה חיצוני. פעם ראשונה דורשת רשת
+            כדי למשוך משקולות; אחרי מכן נשמרות במטמון הדפדפן. {getImageGenModelSizeNote(draft.imageGenModelId)}
           </p>
           <p className="settings-micro">
             See{" "}
@@ -927,6 +974,10 @@ function App() {
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
   const isLoadingRef = useRef(isLoading);
+  /** Ordered startup: Gemma → Qwen → web-txt2img → caption (see loadModel). */
+  const startupPhaseRef = useRef<StartupPhase>("idle");
+  /** 1–4 for loading UI / QA hooks; 0 = not in staged load. */
+  const [preloadUiStage, setPreloadUiStage] = useState(0);
 
   useEffect(() => {
     appSettingsRef.current = appSettings;
@@ -1132,45 +1183,88 @@ function App() {
         if (trackProgressUi) {
           setStatus(msg.text);
           setLoadingDetail(msg.detail ?? "");
-          const next = Math.min(100, Math.max(0, Math.round(Number(msg.progress) || 0)));
-          setProgress(next);
+          const inner = Math.min(100, Math.max(0, Math.round(Number(msg.progress) || 0)));
+          const phase = startupPhaseRef.current;
+          let p = inner;
+          if (phase === "gemma") p = Math.round((inner / 100) * 25);
+          else if (phase === "code") p = 25 + Math.round((inner / 100) * 25);
+          else if (phase === "image") p = 50 + Math.round((inner / 100) * 35);
+          else if (phase === "caption") p = 85 + Math.round((inner / 100) * 15);
+          setProgress(p);
         }
       } else if (msg.type === "loaded") {
         setWorkerBootError(null);
-        setIsLoaded(true);
-        setIsLoading(false);
-        setProgress(100);
+        if (startupPhaseRef.current !== "gemma") return;
+        setProgress(25);
         setLoadingDetail("");
-        setStatus(`מוכן לצ'אט — ${formatInferenceDevice(msg.device)} · מודל תמונה/כיתוב ייטען ברקע רק כשצריך`);
-        try {
-          localStorage.setItem(MODEL_CACHE_FLAG, "1");
-        } catch {
-          // ignore
-        }
+        setStatus("Gemma ready — loading Qwen Coder…");
+        startupPhaseRef.current = "code";
+        setPreloadUiStage(2);
+        workerRef.current?.postMessage({
+          type: "preload_all",
+          dtype: "q4",
+          textModelIds: [CODE_MODEL],
+          captionModelIds: [],
+        });
       } else if (msg.type === "caption_model_loaded") {
         setStatus(`Vision model ready on ${formatInferenceDevice(msg.device)}`);
-      } else if (msg.type === "preload_all_done") {
+        if (startupPhaseRef.current !== "caption") return;
+        startupPhaseRef.current = "idle";
+        setPreloadUiStage(0);
         setWorkerBootError(null);
-        setIsLoading(false);
         setIsLoaded(true);
+        setIsLoading(false);
+        setProgress(100);
+        setLoadingDetail("");
+        setStatus(`מוכן לצ'אט — Gemma + Qwen + ${labelForImageGenModel(normalizeImageGenModelId(appSettingsRef.current.imageGenModelId))} + כיתוב תמונה`);
         try {
           localStorage.setItem(MODEL_CACHE_FLAG, "1");
         } catch {
           // ignore
         }
-        setProgress(100);
+      } else if (msg.type === "preload_all_done") {
+        if (startupPhaseRef.current !== "code") return;
+        if (msg.failedTextModelIds?.length) {
+          startupPhaseRef.current = "idle";
+          setPreloadUiStage(0);
+          setIsLoading(false);
+          setProgress(0);
+          setLoadingDetail("");
+          setWorkerBootError(`Code model failed: ${msg.failedTextModelIds.join(", ")}`);
+          setStatus("טעינת Qwen Coder נכשלה — בדוק רשת / HF mirror ונסה שוב.");
+          return;
+        }
+        startupPhaseRef.current = "image";
+        setPreloadUiStage(3);
+        setProgress(50);
         setLoadingDetail("");
-        const failedT = msg.failedTextModelIds?.length
-          ? ` · נכשלו מודלי טקסט: ${msg.failedTextModelIds.join(", ")}`
-          : "";
-        const failedC = msg.failedCaptionModelIds?.length
-          ? ` · נכשל vision: ${msg.failedCaptionModelIds.join(", ")}`
-          : "";
-        setStatus(
-          failedT || failedC
-            ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
-            : `מוכנים: Gemma + כיתוב תמונה (${msg.captionModels}) — קוד בטעינה עצלה`,
-        );
+        const imgId = normalizeImageGenModelId(appSettingsRef.current.imageGenModelId);
+        setStatus(`Loading local image model (${labelForImageGenModel(imgId)})…`);
+        void (async () => {
+          const ok = await ensureLocalImageModelLoaded(
+            imgId,
+            (s) => setStatus(s),
+            (pct) => setProgress(50 + Math.round((pct / 100) * 35)),
+          );
+          if (!ok) {
+            startupPhaseRef.current = "idle";
+            setPreloadUiStage(0);
+            setIsLoading(false);
+            setProgress(0);
+            setWorkerBootError(
+              imgId === "janus-pro-1b"
+                ? "Janus-Pro-1B requires WebGPU with a working adapter."
+                : "Local image model failed to load — check network once for weights, then retry.",
+            );
+            return;
+          }
+          startupPhaseRef.current = "caption";
+          setPreloadUiStage(4);
+          setProgress(85);
+          setStatus("Loading vision caption model…");
+          const capId = normalizeCaptionModelId(appSettingsRef.current.captionModelId);
+          workerRef.current?.postMessage({ type: "preload_caption", modelId: capId });
+        })();
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -1229,15 +1323,17 @@ function App() {
           setAssistantBuffer("");
 
           void (async () => {
-            const local = await generateSdTurboPng(english, (s) => setStatus(s));
+            const imgModel = normalizeImageGenModelId(appSettingsRef.current.imageGenModelId);
+            const local = await generateLocalImagePng(imgModel, english, (s) => setStatus(s));
             if (local.ok) {
               const imageUrl = local.objectUrl;
               setGeneratedImageUrl(imageUrl);
               orchRef.current = null;
               setIsGenerating(false);
+              const modelTag = labelForImageGenModel(imgModel);
               const caption = isRtlText(userText)
-                ? `התמונה נוצרה מקומית בדפדפן בלבד (SD-Turbo). בלי שרת ענן ובלי קישורי HTTP — רק Blob מקומי.\nפרומפט באנגלית: ${english}`
-                : `Image generated locally in your browser only (SD-Turbo). No cloud and no HTTP URLs — local blob only.\nEnglish prompt: ${english}`;
+                ? `התמונה נוצרה מקומית בדפדפן בלבד (${modelTag}). בלי שרת ענן ובלי קישורי HTTP — רק Blob מקומי.\nפרומפט באנגלית: ${english}`
+                : `Image generated locally in your browser only (${modelTag}). No cloud and no HTTP URLs — local blob only.\nEnglish prompt: ${english}`;
               setMessages((prev) => [
                 ...prev,
                 {
@@ -1261,7 +1357,7 @@ function App() {
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: `יצירת התמונה המקומית נכשלה: ${local.message}. עם רשת — טען את האפליקציה פעם אחת כדי שמשקולות SD-Turbo יישמרו במטמון הדפדפן, ואז אפשר לעבוד offline.`,
+                content: `יצירת התמונה המקומית נכשלה: ${local.message}. עם רשת — טען את האפליקציה פעם אחת כדי שמשקולות ${labelForImageGenModel(imgModel)} יישמרו במטמון הדפדפן, ואז אפשר לעבוד offline.`,
                 modelLabel: activeModelShortLabelRef.current,
               },
             ]);
@@ -1354,6 +1450,8 @@ function App() {
         orchRef.current = null;
         setIsGenerating(false);
         setIsLoading(false);
+        startupPhaseRef.current = "idle";
+        setPreloadUiStage(0);
         setProgress(0);
         setLoadingDetail("");
         setStatus(`Error: ${msg.error}`);
@@ -1394,10 +1492,13 @@ function App() {
     if (!workerRef.current) return;
     const mid = normalizeTextChatModelId(appSettingsRef.current.textChatModelId);
     setModelId(mid);
+    startupPhaseRef.current = "gemma";
+    setPreloadUiStage(1);
     setWorkerBootError(null);
     setLoadingSlowHint("");
     setIsLoading(true);
-    setStatus(`Loading ${mid.split("/").pop() ?? mid}…`);
+    setIsLoaded(false);
+    setStatus(`Loading ${mid.split("/").pop() ?? mid} (Gemma)…`);
     setProgress(0);
     setLoadingDetail("");
     workerRef.current.postMessage({
@@ -1425,6 +1526,8 @@ function App() {
     setProgress(0);
     setLoadingDetail("");
     setIsLoaded(false);
+    startupPhaseRef.current = "idle";
+    setPreloadUiStage(0);
     setWorkerBootError(null);
     terminateLocalImageWorker();
     revokeImageUrl(generatedImageUrl);
@@ -1490,22 +1593,27 @@ function App() {
     const normalized: AppSettings = {
       ...s,
       textChatModelId: normalizeTextChatModelId(s.textChatModelId),
+      imageGenModelId: normalizeImageGenModelId(s.imageGenModelId),
+      captionModelId: normalizeCaptionModelId(s.captionModelId),
     };
     setAppSettings((prev) => {
       const modelChanged = normalized.textChatModelId !== prev.textChatModelId;
       const backendChanged = normalized.inferenceBackend !== prev.inferenceBackend;
-      if (modelChanged || backendChanged) {
+      const imageGenChanged = normalized.imageGenModelId !== prev.imageGenModelId;
+      const captionChanged = normalized.captionModelId !== prev.captionModelId;
+      if (modelChanged || backendChanged || imageGenChanged || captionChanged) {
         queueMicrotask(() => {
           if (modelChanged) setModelId(normalized.textChatModelId);
           setIsLoaded(false);
           setIsLoading(false);
-          setStatus(
-            modelChanged && backendChanged
-              ? "מודל או מנוע חישוב השתנו — לחץ «התחל» כדי לטעון מחדש"
-              : backendChanged
-                ? "מנוע חישוב השתנה — לחץ «התחל» כדי לטעון מחדש"
-                : "מודל צ'אט השתנה — לחץ «התחל» כדי לטעון מחדש",
-          );
+          startupPhaseRef.current = "idle";
+          setPreloadUiStage(0);
+          const bits: string[] = [];
+          if (modelChanged) bits.push("מודל צ'אט");
+          if (backendChanged) bits.push("מנוע חישוב");
+          if (imageGenChanged) bits.push("יצירת תמונה");
+          if (captionChanged) bits.push("כיתוב תמונה");
+          setStatus(`${bits.join(" · ")} השתנו — לחץ «התחל» כדי לטעון מחדש`);
         });
       }
       return normalized;
@@ -1520,7 +1628,7 @@ function App() {
     if (!trimmed && !imageDataUrl) return;
 
     if (imageDataUrl) {
-      const captionModelId = DEFAULT_CAPTION_MODEL_ID;
+      const captionModelId = normalizeCaptionModelId(appSettings.captionModelId);
       const userLine = trimmed || "תאר את התמונה";
       const attachment = imageDataUrl;
       setMessages((prev) => [
@@ -1663,9 +1771,33 @@ function App() {
       )}
 
       {phase === "loading" && isLoading && (
-        <section className="loading-screen glass" aria-busy="true" aria-live="polite">
+        <section
+          className="loading-screen glass"
+          aria-busy="true"
+          aria-live="polite"
+          data-preload-stage={preloadUiStage > 0 ? preloadUiStage : undefined}
+        >
           <h2>GROVEE</h2>
           <div className="loading-model">{modelLabel}</div>
+          <ol className="loading-stage-rail" aria-label="Startup stages">
+            {(
+              [
+                { stage: 1, label: "Gemma chat" },
+                { stage: 2, label: "Qwen code" },
+                { stage: 3, label: "Image-gen" },
+                { stage: 4, label: "Caption" },
+              ] as const
+            ).map(({ stage, label }) => (
+              <li
+                key={stage}
+                className={`loading-stage-pill${preloadUiStage > stage ? " done" : ""}${
+                  preloadUiStage === stage ? " active" : ""
+                }`}
+              >
+                {label}
+              </li>
+            ))}
+          </ol>
           <p className="loading-headline">
             <span className="loading-headline-status" title={status}>
               {status}
@@ -1674,15 +1806,25 @@ function App() {
               {Math.min(100, Math.round(progress))}%
             </span>
           </p>
-          <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-            <div className="meter-fill" style={{ width: `${Math.min(100, progress)}%` }} />
+          <div className="meter-wrap meter-wrap--stages4">
+            <div
+              className="meter meter--stages4"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+            >
+              <div className="meter-fill" style={{ width: `${Math.min(100, progress)}%` }} />
+            </div>
+            <div className="meter-phase-ticks" aria-hidden="true" />
           </div>
           <p className="loading-subline" title={loadingDetail || undefined}>
             {loadingDetail || "\u00a0"}
           </p>
           {loadingSlowHint ? <p className="loading-slow-hint">{loadingSlowHint}</p> : null}
           <p className="loading-meter-note">
-            מד התקדמות אחד: הורדה מהרשת או קריאה ממטמון הדפדפן — עד 100% כשהמודל באמת מוכן.
+            מד אחד עם ארבעה מקטעים (25% / 25% / 35% / 15%): Gemma → Qwen Coder → יצירת תמונה מקומית → כיתוב תמונה. הצ&apos;אט
+            נפתח רק בסיום כל השלבים.
           </p>
           <div className="hero-actions" style={{ marginTop: 16 }}>
             <button

@@ -659,6 +659,14 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
       const total = message.textModelIds.length + message.captionModelIds.length;
+      if (total === 0) {
+        post({
+          type: "preload_all_done",
+          textModels: 0,
+          captionModels: 0,
+        });
+        return;
+      }
       let completed = 0;
       post({
         type: "progress",
@@ -730,6 +738,14 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
       const total = message.textModelIds.length + message.captionModelIds.length;
+      if (total === 0) {
+        post({
+          type: "preload_all_done",
+          textModels: 0,
+          captionModels: 0,
+        });
+        return;
+      }
       let completed = 0;
       post({
         type: "status",

@@ -1,9 +1,17 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const TARGET_URL = "https://theicd.github.io/GROVEEMODEL/";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const TARGET_URL = process.env.GROVEE_QA_URL ?? "https://theicd.github.io/GROVEEMODEL/";
 const OUT_DIR = "qa-artifacts";
-const READY_TIMEOUT_MS = 120000;
+/** Full 4-stage preload can be very slow on cold cache / GitHub Pages; override with GROVEE_QA_READY_MS. */
+const READY_TIMEOUT_MS = Number(process.env.GROVEE_QA_READY_MS ?? 900000);
+/** Skip waiting for the chat composer (full 4-model load can take 15m+ on cold cache). `--smoke` or env `1`. */
+const SKIP_CHAT_WAIT =
+  process.env.GROVEE_QA_SKIP_CHAT_WAIT === "1" || process.argv.includes("--smoke");
 
 function expectedBundleFromLocalDocs() {
   try {
@@ -12,6 +20,18 @@ function expectedBundleFromLocalDocs() {
     return m?.[1] ?? null;
   } catch {
     return null;
+  }
+}
+
+/** True when the built bundle in docs/ contains the 4-stage startup UI (strict QA only then). */
+function localBundleHasFourStagePreload() {
+  try {
+    const name = expectedBundleFromLocalDocs();
+    if (!name) return false;
+    const js = fs.readFileSync(path.join(__dirname, "..", "docs", "assets", name), "utf8");
+    return js.includes("data-preload-stage") && js.includes("loading-stage-rail");
+  } catch {
+    return false;
   }
 }
 
@@ -37,7 +57,7 @@ async function run() {
     pageErrors.push(err?.message ?? String(err));
   });
 
-  await page.goto(TARGET_URL, { waitUntil: "networkidle", timeout: 120000 });
+  await page.goto(TARGET_URL, { waitUntil: "domcontentloaded", timeout: 120000 });
   await page.waitForTimeout(1500);
 
   await page.screenshot({ path: `${OUT_DIR}/01-landing.png`, fullPage: true });
@@ -54,13 +74,37 @@ async function run() {
     await startButton.click();
   }
 
-  const prompt = page.locator("textarea, input[placeholder*='Ask']").first();
+  const loading = page.locator(".loading-screen");
+  let sawStage4 = false;
+  let hadLoadingUi = false;
+  try {
+    await loading.first().waitFor({ state: "visible", timeout: 45_000 });
+    hadLoadingUi = true;
+  } catch {
+    // warm cache / instant — chat may already be ready
+  }
+
+  const prompt = page.getByPlaceholder(/ask anything|start the app first/i).first();
+  const stage4 = page.locator(".loading-screen[data-preload-stage='4']");
+  const probe = setInterval(() => {
+    void stage4
+      .count()
+      .then((n) => {
+        if (n > 0) sawStage4 = true;
+      })
+      .catch(() => {});
+  }, 400);
+
   let promptVisible = false;
   try {
-    await prompt.waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
-    promptVisible = true;
+    if (!SKIP_CHAT_WAIT) {
+      await prompt.waitFor({ state: "visible", timeout: READY_TIMEOUT_MS });
+      promptVisible = true;
+    }
   } catch {
     promptVisible = false;
+  } finally {
+    clearInterval(probe);
   }
 
   if (promptVisible) {
@@ -95,8 +139,12 @@ async function run() {
       loadingVisible: await page.locator(".loading-screen").count(),
       startVisible: await page.locator(".hero-screen").count(),
       statusText: await page.locator(".hero-status, .loading-headline-status").first().innerText().catch(() => ""),
+      hadLoadingUi,
+      sawPreloadStage4: sawStage4,
     },
   };
+
+  const strictFourStage = localBundleHasFourStagePreload();
 
   const checks = {
     latestBundleLoaded: hasExpectedIndex,
@@ -104,6 +152,9 @@ async function run() {
     noOldBundleRef: !result.errors.oldBundleRef,
     noHttpImageInDom: result.imageFlow.foundHttpImage === 0,
     noRuntimePageErrors: result.errors.pageErrors.length === 0,
+    /** When docs bundle includes 4-stage UI and live matches it, we should have hit caption stage before chat. */
+    fourStagePreload:
+      SKIP_CHAT_WAIT || !strictFourStage || !hasExpectedIndex || sawStage4,
   };
 
   result.imageFlow.testStatus = result.imageFlow.promptVisible ? "executed" : "skipped_waiting_for_model_load";
