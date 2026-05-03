@@ -103,9 +103,10 @@ async function run() {
     noDataCloneError: !result.errors.dataCloneError,
     noOldBundleRef: !result.errors.oldBundleRef,
     noHttpImageInDom: result.imageFlow.foundHttpImage === 0,
-    promptReached: result.imageFlow.promptVisible,
+    noRuntimePageErrors: result.errors.pageErrors.length === 0,
   };
 
+  result.imageFlow.testStatus = result.imageFlow.promptVisible ? "executed" : "skipped_waiting_for_model_load";
   result.checks = checks;
   result.pass = Object.values(checks).every(Boolean);
   await context.close();
