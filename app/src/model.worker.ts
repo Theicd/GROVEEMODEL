@@ -139,7 +139,7 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
       webGpuAdapterProbe = false;
       return false;
     }
-    const adapter = await g.requestAdapter();
+    const adapter = await g.requestAdapter({ powerPreference: "low-power" });
     webGpuAdapterProbe = adapter != null;
     return webGpuAdapterProbe;
   } catch {
@@ -253,23 +253,6 @@ const clampProgress = (value: number) => {
 /** Room left on the bar until pipeline() resolves (ONNX/WebGPU init after bytes finish). */
 const PROGRESS_CAP_UNTIL_PIPELINE_DONE = 96;
 
-/** One model (or one segment of a multi-model batch) maps onto this slice of the 0–100% bar. */
-type ProgressSlice = { basePct: number; spanPct: number };
-
-const FULL_PROGRESS_SLICE: ProgressSlice = { basePct: 0, spanPct: 100 };
-
-/** Likely Cache API / disk read — avoid showing “download” and huge speed noise. */
-const MEMORY_SPEED_THRESHOLD = 9 * 1024 * 1024;
-
-const fileBaseName = (path: string) => {
-  const s = path.trim();
-  if (!s) return "";
-  const parts = s.split(/[/\\]/);
-  return parts[parts.length - 1] ?? s;
-};
-
-const capDetailLen = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
-
 const normalizeProgressStatus = (status?: string) => {
   const raw = (status ?? "").trim().toLowerCase();
   if (raw === "done" || raw === "complete" || raw === "completed") {
@@ -292,16 +275,14 @@ type HfProgress = {
 
 /**
  * Transformers.js reports progress per shard/file; each new file resets % and byte counters.
- * Keep a monotonic bar (never jumps backward). Map inner 0…cap into `slice` so multi-model loads
- * don’t sit at ~96% while the next model is still fetching.
+ * Keep a monotonic bar (never jumps backward) and label bytes as "this file only".
  */
-const createMonotonicProgressBridge = (startedAt: number, slice: ProgressSlice) => {
+const createMonotonicProgressBridge = (startedAt: number) => {
   let highWaterPct = 0;
   /** If % drops by more than this vs the peak, treat as a new file starting. */
   const NEW_FILE_DROP = 15;
   let lastLoaded = 0;
   let lastTs = startedAt;
-  let emaSpeed = 0;
 
   return (progressData: HfProgress) => {
     const rawPct = clampPercent(progressData.progress);
@@ -312,10 +293,9 @@ const createMonotonicProgressBridge = (startedAt: number, slice: ProgressSlice) 
     }
     /**
      * Cap during fetch phase so the bar never sits at 100% while ONNX/WebGPU still initializes.
-     * Segment end is posted explicitly when pipeline() resolves.
+     * Jumps to 100 only when loadWithDevice posts progress after pipeline() resolves.
      */
-    const innerCapped = Math.min(PROGRESS_CAP_UNTIL_PIPELINE_DONE, highWaterPct);
-    const globalPct = slice.basePct + (innerCapped / 100) * slice.spanPct;
+    const barPct = Math.min(PROGRESS_CAP_UNTIL_PIPELINE_DONE, highWaterPct);
 
     const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
     const total = typeof progressData.total === "number" ? progressData.total : 0;
@@ -325,36 +305,24 @@ const createMonotonicProgressBridge = (startedAt: number, slice: ProgressSlice) 
     lastLoaded = loaded;
     lastTs = now;
     const elapsed = Math.max(1, (now - startedAt) / 1000);
-    if (speed > 0) {
-      emaSpeed = emaSpeed <= 0 ? speed : emaSpeed * 0.82 + speed * 0.18;
-    }
-    const burstFromCache = total > 0 && loaded > 0 && loaded >= total * 0.98 && elapsed < 1.2;
-    const loadMode: "network" | "memory" =
-      burstFromCache || emaSpeed >= MEMORY_SPEED_THRESHOLD || speed >= MEMORY_SPEED_THRESHOLD
-        ? "memory"
-        : "network";
-
+    const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "…";
     const fname = (progressData.file ?? progressData.name ?? "").trim();
-    const bn = fileBaseName(fname);
-    let detailText: string;
-    if (loadMode === "memory") {
-      detailText = bn ? `טוען ממטמון · ${bn}` : "טוען ממטמון הדפדפן";
-    } else if (loaded > 0 && total > 0) {
-      detailText = `הורדה · ${fmtBytes(loaded)}/${fmtBytes(total)}${bn ? ` · ${bn}` : ""}`;
-    } else {
-      detailText = bn ? `מכין · ${bn}` : "מכין משקלים והרצה…";
-    }
-    detailText = capDetailLen(detailText, 90);
+
+    const fileFraction =
+      loaded > 0 && total > 0 ? `${Math.min(100, Math.round((loaded / total) * 100))}% of this file` : null;
+    const detailText =
+      loaded > 0 && total > 0
+        ? `This shard: ${fmtBytes(loaded)} / ${fmtBytes(total)} (${fileFraction}) · ~${speedText}${fname ? ` · ${fname}` : ""}`
+        : `${elapsed.toFixed(0)}s · ${fname || "preparing…"}`;
 
     const statusText = normalizeProgressStatus(progressData.status);
 
     post({
       type: "progress",
       text: statusText,
-      progress: clampProgress(globalPct),
+      progress: clampProgress(barPct),
       detail: detailText,
       file: fname,
-      loadMode,
     });
   };
 };
@@ -363,12 +331,11 @@ const loadWithDevice = async (
   modelId: string,
   dtype: LoadMessage["dtype"],
   device: "webgpu" | "wasm",
-  slice: ProgressSlice = FULL_PROGRESS_SLICE,
 ) => {
   const runPipeline = async () => {
     post({ type: "status", text: `Loading ${modelId} on ${device}...` });
     const startedAt = Date.now();
-    const onProgress = createMonotonicProgressBridge(startedAt, slice);
+    const onProgress = createMonotonicProgressBridge(startedAt);
     const pipe = (await pipeline("text-generation", modelId, {
       device,
       dtype,
@@ -378,7 +345,7 @@ const loadWithDevice = async (
     post({
       type: "progress",
       text: "Loading…",
-      progress: clampProgress(slice.basePct + slice.spanPct),
+      progress: 100,
       detail: "",
       file: "",
     });
@@ -401,16 +368,12 @@ const loadWithDevice = async (
   }
 };
 
-const loadCaptioner = async (
-  modelId: string,
-  device: "webgpu" | "wasm",
-  slice: ProgressSlice = FULL_PROGRESS_SLICE,
-) => {
+const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
   const visionModel = modelId;
   const runPipeline = async () => {
     post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
     const startedAt = Date.now();
-    const onProgress = createMonotonicProgressBridge(startedAt, slice);
+    const onProgress = createMonotonicProgressBridge(startedAt);
     const pipe = (await pipeline("image-to-text", visionModel, {
       device,
       dtype: "q8",
@@ -419,7 +382,7 @@ const loadCaptioner = async (
     post({
       type: "progress",
       text: "Loading…",
-      progress: clampProgress(slice.basePct + slice.spanPct),
+      progress: 100,
       detail: "",
       file: "",
     });
@@ -441,22 +404,18 @@ const loadCaptioner = async (
   }
 };
 
-const loadTextGenerator = async (
-  modelId: string,
-  dtype: LoadMessage["dtype"],
-  progressSlice: ProgressSlice = FULL_PROGRESS_SLICE,
-) => {
+const loadTextGenerator = async (modelId: string, dtype: LoadMessage["dtype"]) => {
   const pref = inferenceBackend;
 
   const tryWasm = async () => {
-    const loaded = await loadWithDevice(modelId, dtype, "wasm", progressSlice);
+    const loaded = await loadWithDevice(modelId, dtype, "wasm");
     const entry = { generator: loaded, device: "wasm" as const };
     textGeneratorCache.set(modelId, entry);
     return entry;
   };
 
   const tryWebGpu = async () => {
-    const loaded = await loadWithDevice(modelId, dtype, "webgpu", progressSlice);
+    const loaded = await loadWithDevice(modelId, dtype, "webgpu");
     const entry = { generator: loaded, device: "webgpu" as const };
     textGeneratorCache.set(modelId, entry);
     return entry;
@@ -514,66 +473,41 @@ const loadTextGenerator = async (
   return await tryWasm();
 };
 
-/**
- * Some ORT builds/drivers cannot run q4 GatherBlockQuantized kernels for specific models.
- * Retry once with q8 so the app stays usable instead of hard-failing at startup.
- */
-const loadTextGeneratorWithCompatFallback = async (
-  modelId: string,
-  dtype: LoadMessage["dtype"],
-  progressSlice: ProgressSlice = FULL_PROGRESS_SLICE,
-) => {
-  try {
-    return await loadTextGenerator(modelId, dtype, progressSlice);
-  } catch (error) {
-    if (dtype === "q4") {
-      const message = error instanceof Error ? error.message : String(error);
-      post({
-        type: "status",
-        text: `q4 is not supported on this runtime (${message.slice(0, 96)}). Retrying ${modelId} with q8…`,
-      });
-      return await loadTextGenerator(modelId, "q8", progressSlice);
-    }
-    throw error;
-  }
-};
-
 type CaptionFn = (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
 
 /** Vision pipeline: same backend rules as text (consistent across Intel / AMD / NVIDIA / no GPU). */
 const loadCaptionerPreferred = async (
   modelId: string,
-  progressSlice: ProgressSlice = FULL_PROGRESS_SLICE,
 ): Promise<{ captioner: CaptionFn; device: "webgpu" | "wasm" }> => {
   const pref = inferenceBackend;
 
   if (pref === "wasm") {
-    const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+    const captioner = await loadCaptioner(modelId, "wasm");
     return { captioner, device: "wasm" };
   }
   if (pref === "webgpu") {
     if (await hasRunnableWebGpuAdapter()) {
       try {
-        const captioner = await loadCaptioner(modelId, "webgpu", progressSlice);
+        const captioner = await loadCaptioner(modelId, "webgpu");
         return { captioner, device: "webgpu" };
       } catch {
-        const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+        const captioner = await loadCaptioner(modelId, "wasm");
         return { captioner, device: "wasm" };
       }
     }
-    const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+    const captioner = await loadCaptioner(modelId, "wasm");
     return { captioner, device: "wasm" };
   }
   if (await hasRunnableWebGpuAdapter()) {
     try {
-      const captioner = await loadCaptioner(modelId, "webgpu", progressSlice);
+      const captioner = await loadCaptioner(modelId, "webgpu");
       return { captioner, device: "webgpu" };
     } catch {
-      const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+      const captioner = await loadCaptioner(modelId, "wasm");
       return { captioner, device: "wasm" };
     }
   }
-  const captioner = await loadCaptioner(modelId, "wasm", progressSlice);
+  const captioner = await loadCaptioner(modelId, "wasm");
   return { captioner, device: "wasm" };
 };
 
@@ -645,7 +579,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
       }
-      const loaded = await loadTextGeneratorWithCompatFallback(message.modelId, message.dtype);
+      const loaded = await loadTextGenerator(message.modelId, message.dtype);
       chatSlot.generator = loaded.generator;
       chatSlot.device = loaded.device;
       chatSlot.modelId = message.modelId;
@@ -659,31 +593,21 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
       const total = message.textModelIds.length + message.captionModelIds.length;
-      if (total === 0) {
-        post({
-          type: "preload_all_done",
-          textModels: 0,
-          captionModels: 0,
-        });
-        return;
-      }
       let completed = 0;
       post({
         type: "progress",
-        text: "טוען מודלים מקומית…",
+        text: "Starting full local model download...",
         progress: 0,
-        detail: capDetailLen(`0 מתוך ${total} מודלים`, 90),
+        detail: `0 / ${total} models ready`,
         file: "",
       });
       const failedTextModelIds: string[] = [];
       const failedCaptionModelIds: string[] = [];
       for (const textModelId of message.textModelIds) {
-        const basePct = (completed / total) * 100;
-        const spanPct = 100 / total;
         post({ type: "status", text: `Preparing text model ${completed + 1}/${total}: ${textModelId}` });
         try {
           if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGeneratorWithCompatFallback(textModelId, message.dtype, { basePct, spanPct });
+            await loadTextGenerator(textModelId, message.dtype);
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -693,19 +617,17 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "טוען מודלים…",
+          text: "Downloaded local models",
           progress: clampProgress((completed / total) * 100),
-          detail: capDetailLen(`${completed}/${total} מודלים · ${fileBaseName(textModelId)}`, 90),
+          detail: `${completed} / ${total} models ready`,
           file: textModelId,
         });
       }
       for (const captionModelId of message.captionModelIds) {
-        const basePct = (completed / total) * 100;
-        const spanPct = 100 / total;
         post({ type: "status", text: `Preparing vision model ${completed + 1}/${total}: ${captionModelId}` });
         if (!captionerCache.has(captionModelId)) {
           try {
-            const { captioner } = await loadCaptionerPreferred(captionModelId, { basePct, spanPct });
+            const { captioner } = await loadCaptionerPreferred(captionModelId);
             captionerCache.set(captionModelId, captioner);
           } catch (e) {
             const err = e instanceof Error ? e.message : String(e);
@@ -716,9 +638,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "טוען מודלים…",
+          text: "Downloaded local models",
           progress: clampProgress((completed / total) * 100),
-          detail: capDetailLen(`${completed}/${total} מודלים · ${fileBaseName(captionModelId)}`, 90),
+          detail: `${completed} / ${total} models ready`,
           file: captionModelId,
         });
       }
@@ -738,14 +660,6 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
       const total = message.textModelIds.length + message.captionModelIds.length;
-      if (total === 0) {
-        post({
-          type: "preload_all_done",
-          textModels: 0,
-          captionModels: 0,
-        });
-        return;
-      }
       let completed = 0;
       post({
         type: "status",
@@ -754,11 +668,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const failedTextModelIds: string[] = [];
       const failedCaptionModelIds: string[] = [];
       for (const textModelId of message.textModelIds) {
-        const basePct = (completed / total) * 100;
-        const spanPct = 100 / total;
         try {
           if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGeneratorWithCompatFallback(textModelId, message.dtype, { basePct, spanPct });
+            await loadTextGenerator(textModelId, message.dtype);
           }
         } catch (e) {
           const err = e instanceof Error ? e.message : String(e);
@@ -768,18 +680,16 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "טעינת רקע…",
+          text: "Background model warmup",
           progress: clampProgress((completed / total) * 100),
-          detail: capDetailLen(`${completed}/${total} · ${fileBaseName(textModelId)}`, 90),
+          detail: `${completed} / ${total} background models ready`,
           file: textModelId,
         });
       }
       for (const captionModelId of message.captionModelIds) {
-        const basePct = (completed / total) * 100;
-        const spanPct = 100 / total;
         if (!captionerCache.has(captionModelId)) {
           try {
-            const { captioner } = await loadCaptionerPreferred(captionModelId, { basePct, spanPct });
+            const { captioner } = await loadCaptionerPreferred(captionModelId);
             captionerCache.set(captionModelId, captioner);
           } catch (e) {
             const err = e instanceof Error ? e.message : String(e);
@@ -790,9 +700,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         completed += 1;
         post({
           type: "progress",
-          text: "טעינת רקע…",
+          text: "Background model warmup",
           progress: clampProgress((completed / total) * 100),
-          detail: capDetailLen(`${completed}/${total} · ${fileBaseName(captionModelId)}`, 90),
+          detail: `${completed} / ${total} background models ready`,
           file: captionModelId,
         });
       }
@@ -823,7 +733,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
 
       const slot = textGenSlotForModelId(message.modelId);
       if (!slot.generator || slot.modelId !== message.modelId) {
-        const switched = await loadTextGeneratorWithCompatFallback(message.modelId, "q4");
+        const switched = await loadTextGenerator(message.modelId, "q4");
         slot.generator = switched.generator;
         slot.modelId = message.modelId;
         slot.device = switched.device;

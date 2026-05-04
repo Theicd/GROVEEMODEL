@@ -8,10 +8,8 @@ import {
   isSimpleGreeting,
 } from "./chatIntents";
 import {
-  generateLocalImagePng,
-  getImageGenModelSizeNote,
-  ensureLocalImageModelLoaded,
-  type ImageGenModelId,
+  generateSdTurboPng,
+  getSdTurboSizeNote,
   revokeImageUrl,
   terminateLocalImageWorker,
 } from "./localImageGen";
@@ -25,22 +23,11 @@ type ChatMessage = {
   modelLabel?: string;
   /** Inline preview for user messages sent with an image */
   imageDataUrl?: string;
-  /**
-   * Local SD-Turbo preview only (`blob:` / `data:`). Never use http(s) here — avoids broken offline links and markdown leaks.
-   */
-  localImageUrl?: string;
 };
 
 type WorkerOutMessage =
   | { type: "status"; text: string }
-  | {
-      type: "progress";
-      text: string;
-      progress: number;
-      detail?: string;
-      file?: string;
-      loadMode?: "network" | "memory";
-    }
+  | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
   | { type: "loaded"; modelId: string; device: string }
   | { type: "caption_model_loaded"; modelId: string; device: string }
   | {
@@ -56,13 +43,15 @@ type WorkerOutMessage =
   | { type: "error"; error: string };
 
 const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
-/** Chat is Gemma-only; other ONNX demos were removed from the UI to reduce confusion. */
-const TEXT_CHAT_MODEL_OPTIONS = [{ id: DEFAULT_MODEL, label: "Gemma 4 E2B — עברית/אנגלית" }] as const;
-
-type StartupPhase = "idle" | "gemma" | "code" | "image" | "caption";
-
-const labelForImageGenModel = (id: ImageGenModelId): string =>
-  id === "janus-pro-1b" ? "Janus-Pro-1B" : "SD-Turbo";
+/** Main chat models (Transformers.js ONNX). See https://huggingface.co/collections/webml-community/transformersjs-v4-demos */
+const TEXT_CHAT_MODEL_OPTIONS = [
+  { id: DEFAULT_MODEL, label: "Gemma 4 E2B — עברית/אנגלית (ברירת מחדל)" },
+  {
+    id: "LiquidAI/LFM2.5-1.2B-Thinking-ONNX",
+    label: "LFM2.5 1.2B Thinking — מודל חשיבה (כבד, ~GB+)",
+  },
+  { id: "onnx-community/LFM2.5-350M-ONNX", label: "LFM2.5 350M — קל יחסית" },
+] as const;
 
 const KNOWN_TEXT_CHAT_MODEL_IDS = new Set<string>(TEXT_CHAT_MODEL_OPTIONS.map((o) => o.id));
 
@@ -71,31 +60,9 @@ const normalizeTextChatModelId = (id: string | undefined): string =>
 
 /** Public ONNX repo for Transformers.js (the *-Instruct-ONNX* repo returns 401 for anonymous fetch). */
 const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
-/** Set after full startup preload (Gemma + code + image-gen + caption) completes. */
 const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
-
-/** Cache Storage bucket names used by deps; must stay in sync with web-txt2img / transformers.js defaults. */
-const WEB_TXT2IMG_CACHE = "web-txt2img-v1";
-const TRANSFORMERS_CACHE = "transformers-cache";
-
-const shouldDeleteBrowserCache = (name: string): boolean => {
-  const l = name.toLowerCase();
-  return (
-    l.includes("transformers") ||
-    l.includes("huggingface") ||
-    l.startsWith("hf-") ||
-    l.includes("onnx") ||
-    l.includes("ort-wasm") ||
-    l.includes("ort.") ||
-    l.includes("web-txt2img") ||
-    l.includes("txt2img")
-  );
-};
-
-/** When indexedDB.databases() is missing (some browsers), still drop known DB names. */
-const INDEXEDDB_FALLBACK_NAMES = [TRANSFORMERS_CACHE, "hf-transformers-cache", "onnxruntime"];
 
 type ChatSession = {
   id: string;
@@ -114,8 +81,10 @@ const sessionTitleFromMessages = (sessionMessages: ChatMessage[]): string => {
 
 const stripImageDataForStorage = (sessionMessages: ChatMessage[]): ChatMessage[] =>
   sessionMessages.map((m) => {
-    const trimmed: ChatMessage = { id: m.id, role: m.role, content: m.content };
-    if (m.modelLabel !== undefined) trimmed.modelLabel = m.modelLabel;
+    if (!m.imageDataUrl) return m;
+    const { id, role, content, modelLabel } = m;
+    const trimmed: ChatMessage = { id, role, content };
+    if (modelLabel !== undefined) trimmed.modelLabel = modelLabel;
     return trimmed;
   });
 
@@ -190,6 +159,8 @@ const formatInferenceDevice = (device: string): string => {
 };
 
 const shortLabelForTextModel = (id: string): string => {
+  if (id.includes("LFM2.5") && id.toLowerCase().includes("thinking")) return "LFM2.5 Thinking";
+  if (id.includes("LFM2.5")) return "LFM2.5";
   if (id.toLowerCase().includes("gemma")) return "Gemma 4";
   return "Assistant";
 };
@@ -199,22 +170,8 @@ const VISION_MODEL_OPTIONS = [
   { id: "onnx-community/moondream2", label: "Moondream2 (Better detail)" },
 ] as const;
 
+/** Chat + warmup only use the fast caption model; Moondream is omitted to avoid multi‑GB RAM / OOM on refresh. */
 const DEFAULT_CAPTION_MODEL_ID = VISION_MODEL_OPTIONS[0].id;
-
-const IMAGE_GEN_MODEL_OPTIONS = [
-  { id: "sd-turbo" as const, label: "SD-Turbo — מהיר יחסית (WebGPU / WASM)" },
-  { id: "janus-pro-1b" as const, label: "Janus-Pro-1B — WebGPU בלבד" },
-] as const;
-
-const KNOWN_IMAGE_GEN_IDS = new Set<string>(IMAGE_GEN_MODEL_OPTIONS.map((o) => o.id));
-
-const normalizeImageGenModelId = (id: string | undefined): ImageGenModelId =>
-  id && KNOWN_IMAGE_GEN_IDS.has(id) ? (id as ImageGenModelId) : "sd-turbo";
-
-const KNOWN_CAPTION_MODEL_IDS = new Set<string>(VISION_MODEL_OPTIONS.map((o) => o.id));
-
-const normalizeCaptionModelId = (id: string | undefined): string =>
-  id && KNOWN_CAPTION_MODEL_IDS.has(id) ? id : DEFAULT_CAPTION_MODEL_ID;
 
 type TunableModelSettings = {
   temperature: number;
@@ -248,10 +205,6 @@ type InferenceBackendPreference = "auto" | "webgpu" | "wasm";
 type AppSettings = {
   /** Primary ONNX text model loaded on Start (see TEXT_CHAT_MODEL_OPTIONS). */
   textChatModelId: string;
-  /** web-txt2img model for local text-to-image. */
-  imageGenModelId: ImageGenModelId;
-  /** Transformers.js image-to-text model id for attached images. */
-  captionModelId: string;
   /**
    * Optional Hugging Face Hub mirror (Transformers.js `env.remoteHost`), e.g. https://hf-mirror.com
    * when https://huggingface.co is blocked. Empty = official hub.
@@ -266,8 +219,6 @@ type AppSettings = {
 
 const defaultAppSettings = (): AppSettings => ({
   textChatModelId: DEFAULT_MODEL,
-  imageGenModelId: "sd-turbo",
-  captionModelId: DEFAULT_CAPTION_MODEL_ID,
   hfRemoteHost: "",
   inferenceBackend: "auto",
   gemma: { ...defaultGemmaSettings },
@@ -284,12 +235,6 @@ const loadSettings = (): AppSettings => {
       ...defaultAppSettings(),
       textChatModelId: normalizeTextChatModelId(
         typeof parsed.textChatModelId === "string" ? parsed.textChatModelId : undefined,
-      ),
-      imageGenModelId: normalizeImageGenModelId(
-        typeof parsed.imageGenModelId === "string" ? parsed.imageGenModelId : undefined,
-      ),
-      captionModelId: normalizeCaptionModelId(
-        typeof parsed.captionModelId === "string" ? parsed.captionModelId : undefined,
       ),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
       inferenceBackend:
@@ -316,7 +261,9 @@ const saveSettings = (s: AppSettings) => {
   }
 };
 
-type ImageOrch = { step: "translate"; userText: string };
+type ImageOrch =
+  | { step: "translate"; userText: string }
+  | { step: "summarize"; userText: string; englishPrompt: string; imageUrl: string };
 
 type CodeOrch =
   | { step: "route"; userText: string }
@@ -351,6 +298,13 @@ const cleanModelOutput = (input: string): string => {
   if (normalized.length) return normalized;
   const raw = input.trim();
   return raw.length ? raw.slice(0, 2000) : "No response generated.";
+};
+
+/** Image replies must use only the in-app blob URL; strip any http(s) links the model echoed. */
+const sanitizeLocalImageCaption = (text: string): string => {
+  const noMdImg = text.replace(/!\[[^\]]*]\([^)]*\)/g, "");
+  const noUrls = noMdImg.replace(/https?:\/\/[^\s)\]]+/gi, "");
+  return noUrls.replace(/\n{3,}/g, "\n\n").trim();
 };
 
 /** GitHub requires a User-Agent on API requests. */
@@ -597,16 +551,9 @@ function HtmlSandboxBlock({ html }: { html: string }) {
   );
 }
 
-function isLocalImageSrc(src: string): boolean {
-  const s = src.trim();
-  return s.startsWith("blob:") || s.startsWith("data:image");
-}
-
-function MessageBody({ content, localImageUrl }: { content: string; localImageUrl?: string }) {
+function MessageBody({ content }: { content: string }) {
   const parts = useMemo(() => extractRichParts(content), [content]);
   const dir = isRtlText(content) ? "rtl" : "ltr";
-  const showLocal =
-    typeof localImageUrl === "string" && localImageUrl.length > 0 && isLocalImageSrc(localImageUrl);
 
   return (
     <div className="msg-body" dir={dir}>
@@ -622,18 +569,9 @@ function MessageBody({ content, localImageUrl }: { content: string; localImageUr
           );
         }
         if (part.type === "image") {
-          const raw = part.value.trim();
-          if (!isLocalImageSrc(raw)) {
-            return (
-              <p key={i} className="msg-text msg-offsite-img-blocked">
-                קישור תמונה מהרשת לא מוצג (רק תמונה מקומית מהדפדפן). אם עדיין מופיע קישור ישן — רענון קשיח או נקה מטמון
-                האתר.
-              </p>
-            );
-          }
           return (
             <div key={i} className="msg-image-wrap">
-              <img className="msg-image" src={raw} alt="Generated locally" loading="lazy" />
+              <img className="msg-image" src={part.value} alt="Generated" loading="lazy" />
             </div>
           );
         }
@@ -643,11 +581,6 @@ function MessageBody({ content, localImageUrl }: { content: string; localImageUr
           </p>
         );
       })}
-      {showLocal ? (
-        <div className="msg-image-wrap">
-          <img className="msg-image" src={localImageUrl} alt="Generated locally" loading="lazy" />
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -684,20 +617,29 @@ function SettingsModal({
           </button>
         </div>
         <p className="settings-hint">
-          <strong>Gemma</strong> מטפל בשיחה; לבקשות קוד האפליקציה מפיקה משימה טכנית באנגלית ואז <strong>Qwen Coder</strong> כותב
-          קוד. תמונות: פרומפט באנגלית אוטומטית, יצירה מקומית דרך web-txt2img (המודל שנבחר בהגדרות). כיתוב תמונה: המודל
-          שנבחר ב-Vision caption.
+          מודל הצ&apos;אט הראשי (למשל Gemma או LFM Thinking) מטפל בשיחה; לבקשות קוד האפליקציה מפיקה משימה טכנית באנגלית ואז{" "}
+          <strong>Qwen Coder</strong> כותב קוד. תמונות: פרומפט באנגלית אוטומטית, ענן או SD-Turbo מקומי.
         </p>
 
         <section className="settings-section">
           <h3>מודל צ&apos;אט ראשי (ONNX / Transformers.js)</h3>
           <p className="settings-micro">
-            ממשק זה נשאר עם <strong>Gemma 4 E2B</strong> בלבד. אחרי שינוי HF mirror / מנוע חישוב יש ללחוץ שוב{" "}
-            <strong>התחל</strong>.
+            אוסף דמוים:{" "}
+            <a
+              href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Transformers.js V4 demos
+            </a>
+            . אחרי שינוי מודל יש ללחוץ שוב <strong>התחל</strong> כדי לטעון משקולות.
           </p>
           <label className="settings-row block">
-            <span>מודל צ&apos;אט</span>
-            <select value={draft.textChatModelId} disabled aria-readonly="true">
+            <span>בחירת מודל</span>
+            <select
+              value={draft.textChatModelId}
+              onChange={(e) => setDraft((d) => ({ ...d, textChatModelId: e.target.value }))}
+            >
               {TEXT_CHAT_MODEL_OPTIONS.map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.label}
@@ -857,20 +799,6 @@ function SettingsModal({
 
         <section className="settings-section">
           <h3>Vision caption</h3>
-          <label className="settings-row block">
-            <span>מודל כיתוב תמונה</span>
-            <select
-              value={draft.captionModelId}
-              onChange={(e) => setDraft((d) => ({ ...d, captionModelId: e.target.value }))}
-            >
-              {VISION_MODEL_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="settings-micro">אחרי שינוי — שמור ואז <strong>התחל</strong> כדי לטעון מחדש את כל שלבי האתחול.</p>
           {row(
             "Max caption tokens",
             <input
@@ -885,27 +813,9 @@ function SettingsModal({
 
         <section className="settings-section">
           <h3>Image generation</h3>
-          <label className="settings-row block">
-            <span>מודל יצירת תמונה (מקומי)</span>
-            <select
-              value={draft.imageGenModelId}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  imageGenModelId: normalizeImageGenModelId(e.target.value),
-                }))
-              }
-            >
-              {IMAGE_GEN_MODEL_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <p className="settings-micro">
-            תמונות נוצרות רק מקומית בדפדפן (web-txt2img) — בלי לינקי HTTP וללא שרת תמונה חיצוני. פעם ראשונה דורשת רשת
-            כדי למשוך משקולות; אחרי מכן נשמרות במטמון הדפדפן. {getImageGenModelSizeNote(draft.imageGenModelId)}
+            תמונות נוצרות רק מקומית בדפדפן (SD-Turbo דרך web-txt2img) — בלי לינקי HTTP וללא שרת תמונה חיצוני. פעם ראשונה
+            דורשת רשת כדי למשוך משקולות (~2.3GB); אחרי מכן נשמרות במטמון הדפדפן וניתן לעבוד offline. {getSdTurboSizeNote()}
           </p>
           <p className="settings-micro">
             See{" "}
@@ -959,6 +869,8 @@ function App() {
   const [workerBootError, setWorkerBootError] = useState<string | null>(null);
   /** Long-running load hints (weak hardware / network). */
   const [loadingSlowHint, setLoadingSlowHint] = useState("");
+  /** Bumped after Clear cache: forces the worker effect to re-create a fresh worker. */
+  const [workerReloadKey, setWorkerReloadKey] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [chatSessionsState, setChatSessionsState] = useState<ChatSessionsState>(() => loadChatSessionsState());
   const [assistantBuffer, setAssistantBuffer] = useState("");
@@ -968,16 +880,20 @@ function App() {
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const lastGeneratedUrlRef = useRef<string | null>(null);
   const [composerDragOver, setComposerDragOver] = useState(false);
-  /** Bumping recreates the model worker so cache clear + stuck loads actually reset runtime state. */
-  const [workerGeneration, setWorkerGeneration] = useState(0);
+  const [preloadAllLoading, setPreloadAllLoading] = useState(false);
+  const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
+    try {
+      return localStorage.getItem(MODEL_CACHE_FLAG) !== "1";
+    } catch {
+      return true;
+    }
+  });
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
+  const preloadAllLoadingRef = useRef(preloadAllLoading);
+  const shouldWarmupOnStartRef = useRef(shouldWarmupOnStart);
   const isLoadingRef = useRef(isLoading);
-  /** Ordered startup: Gemma → Qwen → web-txt2img → caption (see loadModel). */
-  const startupPhaseRef = useRef<StartupPhase>("idle");
-  /** 1–4 for loading UI / QA hooks; 0 = not in staged load. */
-  const [preloadUiStage, setPreloadUiStage] = useState(0);
 
   useEffect(() => {
     appSettingsRef.current = appSettings;
@@ -988,6 +904,12 @@ function App() {
   useEffect(() => {
     webSearchRef.current = webSearchMode;
   }, [webSearchMode]);
+  useEffect(() => {
+    preloadAllLoadingRef.current = preloadAllLoading;
+  }, [preloadAllLoading]);
+  useEffect(() => {
+    shouldWarmupOnStartRef.current = shouldWarmupOnStart;
+  }, [shouldWarmupOnStart]);
   useEffect(() => {
     isLoadingRef.current = isLoading;
   }, [isLoading]);
@@ -1179,92 +1101,56 @@ function App() {
       if (msg.type === "status") {
         setStatus(msg.text);
       } else if (msg.type === "progress") {
-        const trackProgressUi = isLoadingRef.current;
-        if (trackProgressUi) {
-          setStatus(msg.text);
-          setLoadingDetail(msg.detail ?? "");
-          const inner = Math.min(100, Math.max(0, Math.round(Number(msg.progress) || 0)));
-          const phase = startupPhaseRef.current;
-          let p = inner;
-          if (phase === "gemma") p = Math.round((inner / 100) * 25);
-          else if (phase === "code") p = 25 + Math.round((inner / 100) * 25);
-          else if (phase === "image") p = 50 + Math.round((inner / 100) * 35);
-          else if (phase === "caption") p = 85 + Math.round((inner / 100) * 15);
-          setProgress(p);
-        }
+        setStatus(msg.text);
+        setLoadingDetail(msg.detail ?? "");
+        const loadingPhase = isLoadingRef.current || preloadAllLoadingRef.current;
+        setProgress((prev) => (loadingPhase ? Math.max(prev, msg.progress) : msg.progress));
       } else if (msg.type === "loaded") {
-        setWorkerBootError(null);
-        if (startupPhaseRef.current !== "gemma") return;
-        setProgress(25);
-        setLoadingDetail("");
-        setStatus("Gemma ready — loading Qwen Coder…");
-        startupPhaseRef.current = "code";
-        setPreloadUiStage(2);
-        workerRef.current?.postMessage({
-          type: "preload_all",
-          dtype: "q4",
-          textModelIds: [CODE_MODEL],
-          captionModelIds: [],
-        });
-      } else if (msg.type === "caption_model_loaded") {
-        setStatus(`Vision model ready on ${formatInferenceDevice(msg.device)}`);
-        if (startupPhaseRef.current !== "caption") return;
-        startupPhaseRef.current = "idle";
-        setPreloadUiStage(0);
         setWorkerBootError(null);
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
         setLoadingDetail("");
-        setStatus(`מוכן לצ'אט — Gemma + Qwen + ${labelForImageGenModel(normalizeImageGenModelId(appSettingsRef.current.imageGenModelId))} + כיתוב תמונה`);
+        setStatus(`Loaded on ${formatInferenceDevice(msg.device)}`);
+        if (workerRef.current && !preloadAllLoadingRef.current && shouldWarmupOnStartRef.current) {
+          setPreloadAllLoading(true);
+          setStatus("Gemma is ready. Warming vision model (weights stay in browser cache)…");
+          workerRef.current.postMessage({
+            type: "warmup_all",
+            textModelIds: [],
+            captionModelIds: [DEFAULT_CAPTION_MODEL_ID],
+            dtype: "q4",
+          });
+        } else {
+          setStatus(`Gemma controller ready on ${formatInferenceDevice(msg.device)}`);
+          workerRef.current?.postMessage({ type: "preload_caption", modelId: DEFAULT_CAPTION_MODEL_ID });
+        }
+      } else if (msg.type === "caption_model_loaded") {
+        setStatus(`Vision model ready on ${formatInferenceDevice(msg.device)}`);
+      } else if (msg.type === "preload_all_done") {
+        setWorkerBootError(null);
+        setPreloadAllLoading(false);
+        setIsLoading(false);
+        setIsLoaded(true);
+        setShouldWarmupOnStart(false);
         try {
           localStorage.setItem(MODEL_CACHE_FLAG, "1");
         } catch {
           // ignore
         }
-      } else if (msg.type === "preload_all_done") {
-        if (startupPhaseRef.current !== "code") return;
-        if (msg.failedTextModelIds?.length) {
-          startupPhaseRef.current = "idle";
-          setPreloadUiStage(0);
-          setIsLoading(false);
-          setProgress(0);
-          setLoadingDetail("");
-          setWorkerBootError(`Code model failed: ${msg.failedTextModelIds.join(", ")}`);
-          setStatus("טעינת Qwen Coder נכשלה — בדוק רשת / HF mirror ונסה שוב.");
-          return;
-        }
-        startupPhaseRef.current = "image";
-        setPreloadUiStage(3);
-        setProgress(50);
+        setProgress(100);
         setLoadingDetail("");
-        const imgId = normalizeImageGenModelId(appSettingsRef.current.imageGenModelId);
-        setStatus(`Loading local image model (${labelForImageGenModel(imgId)})…`);
-        void (async () => {
-          const ok = await ensureLocalImageModelLoaded(
-            imgId,
-            (s) => setStatus(s),
-            (pct) => setProgress(50 + Math.round((pct / 100) * 35)),
-          );
-          if (!ok) {
-            startupPhaseRef.current = "idle";
-            setPreloadUiStage(0);
-            setIsLoading(false);
-            setProgress(0);
-            setWorkerBootError(
-              imgId === "janus-pro-1b"
-                ? "Janus-Pro-1B requires WebGPU with a working adapter."
-                : "Local image model failed to load — check network once for weights, then retry.",
-            );
-            return;
-          }
-          startupPhaseRef.current = "caption";
-          setPreloadUiStage(4);
-          setProgress(85);
-          setStatus("Loading vision caption model…");
-          const capId = normalizeCaptionModelId(appSettingsRef.current.captionModelId);
-          workerRef.current?.postMessage({ type: "preload_caption", modelId: capId });
-        })();
+        const failedT = msg.failedTextModelIds?.length
+          ? ` · נכשלו מודלי טקסט: ${msg.failedTextModelIds.join(", ")}`
+          : "";
+        const failedC = msg.failedCaptionModelIds?.length
+          ? ` · נכשל vision: ${msg.failedCaptionModelIds.join(", ")}`
+          : "";
+        setStatus(
+          failedT || failedC
+            ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
+            : `מוכנים: Gemma + כיתוב תמונה (${msg.captionModels}) — קוד בטעינה עצלה`,
+        );
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -1322,29 +1208,35 @@ function App() {
           assistantBufferRef.current = "";
           setAssistantBuffer("");
 
+          const runSummarize = (imageUrl: string) => {
+            setGeneratedImageUrl(imageUrl);
+            orchRef.current = {
+              kind: "image",
+              data: {
+                step: "summarize",
+                userText,
+                englishPrompt: english,
+                imageUrl,
+              },
+            };
+            setStatus("Gemma: replying in your language…");
+            const g = appSettingsRef.current.gemma;
+            const userLang = isRtlText(userText) ? "Hebrew" : "the same language as the user";
+            runGemmaGenerate(
+              `User request:\n${userText}\n\nA local image was rendered from this English prompt (SD-Turbo in the browser):\n${english}\n\nReply in ${userLang} with 2–4 short sentences describing what was created. Say the image was generated locally in the browser. Do NOT include any URLs, links, or markdown images in your reply.`,
+              g.systemPrompt,
+              Math.min(320, g.maxNewTokens),
+              g.temperature,
+              g.repetitionPenalty,
+              g.topP,
+              "",
+            );
+          };
+
           void (async () => {
-            const imgModel = normalizeImageGenModelId(appSettingsRef.current.imageGenModelId);
-            const local = await generateLocalImagePng(imgModel, english, (s) => setStatus(s));
+            const local = await generateSdTurboPng(english, (s) => setStatus(s));
             if (local.ok) {
-              const imageUrl = local.objectUrl;
-              setGeneratedImageUrl(imageUrl);
-              orchRef.current = null;
-              setIsGenerating(false);
-              const modelTag = labelForImageGenModel(imgModel);
-              const caption = isRtlText(userText)
-                ? `התמונה נוצרה מקומית בדפדפן בלבד (${modelTag}). בלי שרת ענן ובלי קישורי HTTP — רק Blob מקומי.\nפרומפט באנגלית: ${english}`
-                : `Image generated locally in your browser only (${modelTag}). No cloud and no HTTP URLs — local blob only.\nEnglish prompt: ${english}`;
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  role: "assistant",
-                  content: caption,
-                  localImageUrl: imageUrl,
-                  modelLabel: activeModelShortLabelRef.current,
-                },
-              ]);
-              setStatus(isRtlText(userText) ? "מוכן" : "Ready");
+              runSummarize(local.objectUrl);
               return;
             }
             orchRef.current = null;
@@ -1357,11 +1249,30 @@ function App() {
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: `יצירת התמונה המקומית נכשלה: ${local.message}. עם רשת — טען את האפליקציה פעם אחת כדי שמשקולות ${labelForImageGenModel(imgModel)} יישמרו במטמון הדפדפן, ואז אפשר לעבוד offline.`,
+                content: `יצירת התמונה המקומית נכשלה: ${local.message}. עם רשת — טען את האפליקציה פעם אחת כדי שמשקולות SD-Turbo יישמרו במטמון, ואז אפשר לעבוד offline.`,
                 modelLabel: activeModelShortLabelRef.current,
               },
             ]);
           })();
+          return;
+        }
+
+        if (orch?.kind === "image" && orch.data.step === "summarize") {
+          const summary = sanitizeLocalImageCaption(buf || "התמונה מוכנה (נוצרה מקומית בדפדפן).");
+          const imageUrl = orch.data.imageUrl;
+          orchRef.current = null;
+          setIsGenerating(false);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `${summary}\n\n![Generated](${imageUrl})`,
+              modelLabel: activeModelShortLabelRef.current,
+            },
+          ]);
+          setAssistantBuffer("");
+          assistantBufferRef.current = "";
           return;
         }
 
@@ -1450,8 +1361,7 @@ function App() {
         orchRef.current = null;
         setIsGenerating(false);
         setIsLoading(false);
-        startupPhaseRef.current = "idle";
-        setPreloadUiStage(0);
+        setPreloadAllLoading(false);
         setProgress(0);
         setLoadingDetail("");
         setStatus(`Error: ${msg.error}`);
@@ -1472,7 +1382,7 @@ function App() {
       worker.terminate();
       workerRef.current = null;
     };
-  }, [setMessages, workerGeneration]);
+  }, [setMessages, workerReloadKey]);
 
   useEffect(() => {
     workerRef.current?.postMessage({
@@ -1492,13 +1402,11 @@ function App() {
     if (!workerRef.current) return;
     const mid = normalizeTextChatModelId(appSettingsRef.current.textChatModelId);
     setModelId(mid);
-    startupPhaseRef.current = "gemma";
-    setPreloadUiStage(1);
     setWorkerBootError(null);
     setLoadingSlowHint("");
     setIsLoading(true);
-    setIsLoaded(false);
-    setStatus(`Loading ${mid.split("/").pop() ?? mid} (Gemma)…`);
+    setPreloadAllLoading(false);
+    setStatus(`Loading ${mid.split("/").pop() ?? mid}…`);
     setProgress(0);
     setLoadingDetail("");
     workerRef.current.postMessage({
@@ -1517,93 +1425,126 @@ function App() {
   };
 
   const clearModelCache = async () => {
-    if (isGenerating) {
-      setStatus("המתן לסיום התשובה — לא ניתן לנקות מטמון בזמן יצירה.");
-      return;
-    }
-    setStatus("מנקה מטמון מודלים…");
-    setIsLoading(false);
-    setProgress(0);
-    setLoadingDetail("");
-    setIsLoaded(false);
-    startupPhaseRef.current = "idle";
-    setPreloadUiStage(0);
-    setWorkerBootError(null);
+    if (isGenerating) return;
 
-    /** Close model worker before touching IndexedDB — an open connection blocks `deleteDatabase`. */
+    const fmtMB = (bytes: number) => {
+      if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+      if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+      return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+    };
+
+    const estimateUsage = async (): Promise<number> => {
+      try {
+        if (!navigator.storage?.estimate) return -1;
+        const est = await navigator.storage.estimate();
+        return typeof est.usage === "number" ? est.usage : -1;
+      } catch {
+        return -1;
+      }
+    };
+
+    const before = await estimateUsage();
+    setStatus(
+      before >= 0
+        ? `מנקה מטמון מלא… (כרגע בשימוש: ${fmtMB(before)})`
+        : "מנקה מטמון מלא…",
+    );
+
     try {
+      terminateLocalImageWorker();
+      revokeImageUrl(generatedImageUrl);
+      setGeneratedImageUrl(null);
+      lastGeneratedUrlRef.current = null;
+
       workerRef.current?.postMessage({ type: "clear_runtime_cache" });
-    } catch {
-      /* ignore */
-    }
-    try {
-      workerRef.current?.terminate();
-    } catch {
-      /* ignore */
-    }
-    workerRef.current = null;
+      try {
+        workerRef.current?.terminate();
+      } catch {
+        /* noop */
+      }
+      workerRef.current = null;
 
-    terminateLocalImageWorker();
-    revokeImageUrl(generatedImageUrl);
-    setGeneratedImageUrl(null);
-    lastGeneratedUrlRef.current = null;
-    localStorage.removeItem(MODEL_CACHE_FLAG);
-    orchRef.current = null;
-    setAssistantBuffer("");
-    assistantBufferRef.current = "";
+      localStorage.removeItem(MODEL_CACHE_FLAG);
+      setShouldWarmupOnStart(true);
+      orchRef.current = null;
 
-    try {
       if ("caches" in window) {
-        const cacheKeys = await caches.keys();
-        const toDelete = new Set<string>();
-        for (const key of cacheKeys) {
-          if (shouldDeleteBrowserCache(key)) toDelete.add(key);
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k).catch(() => false)));
+        } catch (e) {
+          console.warn("[GROVEE] caches clear failed:", e);
         }
-        toDelete.add(WEB_TXT2IMG_CACHE);
-        toDelete.add(TRANSFORMERS_CACHE);
-        await Promise.all([...toDelete].map((key) => caches.delete(key)));
       }
 
-      const indexedDbGlobal = indexedDB as IDBFactory & {
+      const idb = indexedDB as IDBFactory & {
         databases?: () => Promise<Array<{ name?: string }>>;
       };
-      const deleteIdb = (name: string) => {
+      if (idb.databases) {
         try {
-          indexedDB.deleteDatabase(name);
-        } catch {
-          /* ignore */
+          const dbs = await idb.databases();
+          await Promise.all(
+            dbs.map((db) => {
+              const name = db.name ?? "";
+              if (!name) return Promise.resolve();
+              return new Promise<void>((resolve) => {
+                const req = indexedDB.deleteDatabase(name);
+                const done = () => resolve();
+                req.onsuccess = done;
+                req.onerror = done;
+                req.onblocked = done;
+              });
+            }),
+          );
+        } catch (e) {
+          console.warn("[GROVEE] indexedDB clear failed:", e);
         }
+      }
+
+      const storageWithDir = navigator.storage as StorageManager & {
+        getDirectory?: () => Promise<FileSystemDirectoryHandle>;
       };
-      for (const name of INDEXEDDB_FALLBACK_NAMES) {
-        deleteIdb(name);
-      }
-      if (indexedDbGlobal.databases) {
-        const dbs = await indexedDbGlobal.databases();
-        for (const db of dbs) {
-          const name = db.name ?? "";
-          if (!name) continue;
-          const lower = name.toLowerCase();
-          if (
-            lower.includes("transformers") ||
-            lower.includes("huggingface") ||
-            lower.includes("onnx") ||
-            lower.includes("web-txt2img") ||
-            lower.includes("txt2img")
-          ) {
-            deleteIdb(name);
+      if (storageWithDir.getDirectory) {
+        try {
+          const root = await storageWithDir.getDirectory();
+          const walker = root as FileSystemDirectoryHandle & {
+            entries?: () => AsyncIterableIterator<[string, FileSystemHandle]>;
+            removeEntry: (name: string, opts?: { recursive?: boolean }) => Promise<void>;
+          };
+          if (walker.entries) {
+            for await (const [name] of walker.entries()) {
+              try {
+                await walker.removeEntry(name, { recursive: true });
+              } catch (e) {
+                console.warn(`[GROVEE] OPFS removeEntry failed for ${name}:`, e);
+              }
+            }
           }
+        } catch (e) {
+          console.warn("[GROVEE] OPFS clear failed:", e);
         }
       }
 
-      /** Let the browser finish dropping IDB handles before spinning a new worker. */
-      await new Promise((r) => setTimeout(r, 350));
+      const after = await estimateUsage();
+      const freed = before > 0 && after >= 0 ? Math.max(0, before - after) : -1;
 
-      setStatus("המטמון נוקה. לחץ «התחל» כדי לטעון מחדש.");
+      setProgress(0);
+      setLoadingDetail("");
+      setIsLoaded(false);
+      setIsLoading(false);
+      setPreloadAllLoading(false);
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
+      setWorkerReloadKey((k) => k + 1);
+
+      const summary =
+        freed >= 0
+          ? `נוקה. שוחררו ${fmtMB(freed)}. נותר בשימוש: ${fmtMB(after)}. לחץ «התחל» לטעינה מחדש.`
+          : "המטמון נוקה. לחץ «התחל» לטעינה מחדש.";
+      setStatus(summary);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setStatus(`ניקוי מטמון נכשל: ${message}`);
-    } finally {
-      setWorkerGeneration((g) => g + 1);
     }
   };
 
@@ -1611,27 +1552,22 @@ function App() {
     const normalized: AppSettings = {
       ...s,
       textChatModelId: normalizeTextChatModelId(s.textChatModelId),
-      imageGenModelId: normalizeImageGenModelId(s.imageGenModelId),
-      captionModelId: normalizeCaptionModelId(s.captionModelId),
     };
     setAppSettings((prev) => {
       const modelChanged = normalized.textChatModelId !== prev.textChatModelId;
       const backendChanged = normalized.inferenceBackend !== prev.inferenceBackend;
-      const imageGenChanged = normalized.imageGenModelId !== prev.imageGenModelId;
-      const captionChanged = normalized.captionModelId !== prev.captionModelId;
-      if (modelChanged || backendChanged || imageGenChanged || captionChanged) {
+      if (modelChanged || backendChanged) {
         queueMicrotask(() => {
           if (modelChanged) setModelId(normalized.textChatModelId);
           setIsLoaded(false);
           setIsLoading(false);
-          startupPhaseRef.current = "idle";
-          setPreloadUiStage(0);
-          const bits: string[] = [];
-          if (modelChanged) bits.push("מודל צ'אט");
-          if (backendChanged) bits.push("מנוע חישוב");
-          if (imageGenChanged) bits.push("יצירת תמונה");
-          if (captionChanged) bits.push("כיתוב תמונה");
-          setStatus(`${bits.join(" · ")} השתנו — לחץ «התחל» כדי לטעון מחדש`);
+          setStatus(
+            modelChanged && backendChanged
+              ? "מודל או מנוע חישוב השתנו — לחץ «התחל» כדי לטעון מחדש"
+              : backendChanged
+                ? "מנוע חישוב השתנה — לחץ «התחל» כדי לטעון מחדש"
+                : "מודל צ'אט השתנה — לחץ «התחל» כדי לטעון מחדש",
+          );
         });
       }
       return normalized;
@@ -1646,7 +1582,7 @@ function App() {
     if (!trimmed && !imageDataUrl) return;
 
     if (imageDataUrl) {
-      const captionModelId = normalizeCaptionModelId(appSettings.captionModelId);
+      const captionModelId = DEFAULT_CAPTION_MODEL_ID;
       const userLine = trimmed || "תאר את התמונה";
       const attachment = imageDataUrl;
       setMessages((prev) => [
@@ -1775,98 +1711,32 @@ function App() {
           <h1 className="hero-brand">GROVEE</h1>
           <p className="hero-tagline">צ&apos;אט פרטי בדפדפן · עברית ואנגלית · מודלים נטענים אצלך במחשב</p>
           <div className="hero-actions">
-            <button
-              type="button"
-              className="pill-button"
-              data-testid="grovee-start"
-              onClick={loadModel}
-              disabled={isLoading || isGenerating}
-            >
-              התחל
+            <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
+              {preloadAllLoading ? "מסיים…" : "התחל"}
             </button>
-            <button
-              type="button"
-              className="pill-button subtle-btn"
-              data-testid="grovee-clear-cache"
-              onClick={() => void clearModelCache()}
-              disabled={isGenerating}
-            >
+            <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
               נקה מטמון
             </button>
           </div>
-          <p className="hero-status" aria-live="polite">
-            {status}
-          </p>
         </section>
       )}
 
       {phase === "loading" && isLoading && (
-        <section
-          className="loading-screen glass"
-          aria-busy="true"
-          aria-live="polite"
-          data-preload-stage={preloadUiStage > 0 ? preloadUiStage : undefined}
-        >
+        <section className="loading-screen glass" aria-busy="true" aria-live="polite">
           <h2>GROVEE</h2>
           <div className="loading-model">{modelLabel}</div>
-          <ol className="loading-stage-rail" aria-label="Startup stages">
-            {(
-              [
-                { stage: 1, label: "Gemma chat" },
-                { stage: 2, label: "Qwen code" },
-                { stage: 3, label: "Image-gen" },
-                { stage: 4, label: "Caption" },
-              ] as const
-            ).map(({ stage, label }) => (
-              <li
-                key={stage}
-                className={`loading-stage-pill${preloadUiStage > stage ? " done" : ""}${
-                  preloadUiStage === stage ? " active" : ""
-                }`}
-              >
-                {label}
-              </li>
-            ))}
-          </ol>
-          <p className="loading-headline">
-            <span className="loading-headline-status" title={status}>
-              {status}
-            </span>
-            <span className="loading-headline-pct" aria-hidden="true">
-              {Math.min(100, Math.round(progress))}%
-            </span>
-          </p>
-          <div className="meter-wrap meter-wrap--stages4">
-            <div
-              className="meter meter--stages4"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={progress}
-            >
-              <div className="meter-fill" style={{ width: `${Math.min(100, progress)}%` }} />
-            </div>
-            <div className="meter-phase-ticks" aria-hidden="true" />
+          <p className="loading-phase">{status}</p>
+          <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+            <div className="meter-fill" style={{ width: `${Math.min(100, progress)}%` }} />
           </div>
-          <p className="loading-subline" title={loadingDetail || undefined}>
-            {loadingDetail || "\u00a0"}
-          </p>
+          <div className="percent">{Math.min(100, Math.round(progress))}%</div>
+          {loadingDetail ? (
+            <p className="loading-file-detail">{loadingDetail}</p>
+          ) : null}
           {loadingSlowHint ? <p className="loading-slow-hint">{loadingSlowHint}</p> : null}
           <p className="loading-meter-note">
-            מד אחד עם ארבעה מקטעים (25% / 25% / 35% / 15%): Gemma → Qwen Coder → יצירת תמונה מקומית → כיתוב תמונה. הצ&apos;אט
-            נפתח רק בסיום כל השלבים.
+            ההתקדמות עולה מונוטונית; הספירה מתחת מתייחסת לקובץ הפעיל בלבד. עד ~96% בזמן הורדה; 100% כשהמודל מוכן.
           </p>
-          <div className="hero-actions" style={{ marginTop: 16 }}>
-            <button
-              type="button"
-              className="pill-button subtle-btn"
-              data-testid="grovee-clear-cache"
-              onClick={() => void clearModelCache()}
-              disabled={isGenerating}
-            >
-              נקה מטמון ואיפוס טעינה
-            </button>
-          </div>
         </section>
       )}
 
@@ -1959,7 +1829,7 @@ function App() {
                       <img src={msg.imageDataUrl} alt="" />
                     </div>
                   ) : null}
-                  <MessageBody content={msg.content} localImageUrl={msg.localImageUrl} />
+                  <MessageBody content={msg.content} />
                 </article>
               ))}
               {assistantBuffer && (
@@ -1989,7 +1859,6 @@ function App() {
                 <textarea
                   ref={textareaRef}
                   className="composer-body-input"
-                  data-testid="grovee-prompt"
                   dir="auto"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -2052,7 +1921,6 @@ function App() {
                     <button
                       type="submit"
                       className="composer-send-inner"
-                      data-testid="grovee-send"
                       disabled={!isLoaded || isGenerating}
                       aria-label="Send"
                       title="Send"
@@ -2078,9 +1946,8 @@ function App() {
               <button
                 type="button"
                 className="text-btn"
-                data-testid="grovee-clear-cache"
-                onClick={() => void clearModelCache()}
-                disabled={isGenerating}
+                onClick={clearModelCache}
+                disabled={isGenerating || isLoading}
               >
                 Clear model cache
               </button>

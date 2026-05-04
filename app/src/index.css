@@ -160,16 +160,6 @@ body {
   line-height: 1.5;
 }
 
-.hero-status {
-  margin: 0;
-  max-width: min(36rem, 92vw);
-  min-height: 1.35em;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  color: #b8c8ec;
-  text-align: center;
-}
-
 .settings-micro {
   margin: 0 0 0.75rem;
   font-size: 0.78rem;
@@ -204,159 +194,43 @@ body {
   padding: 4px 10px;
 }
 
-.meter-wrap {
-  width: min(520px, 88%);
-}
-
-.meter-wrap--stages4 {
-  position: relative;
-}
-
 .meter {
-  width: 100%;
+  width: min(520px, 88%);
   height: 8px;
   border-radius: 999px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.16);
 }
 
-.meter--stages4 {
-  /* subtle segment tints: Gemma 0–25%, Qwen 25–50%, image 50–85%, caption 85–100% */
-  background: linear-gradient(
-    90deg,
-    rgba(45, 143, 255, 0.22) 0%,
-    rgba(45, 143, 255, 0.22) 25%,
-    rgba(34, 211, 180, 0.18) 25%,
-    rgba(34, 211, 180, 0.18) 50%,
-    rgba(167, 139, 250, 0.2) 50%,
-    rgba(167, 139, 250, 0.2) 85%,
-    rgba(251, 191, 36, 0.2) 85%,
-    rgba(251, 191, 36, 0.2) 100%
-  );
-}
-
-.meter-phase-ticks {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 8px;
-  border-radius: 999px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent 0,
-    transparent calc(25% - 0.5px),
-    rgba(255, 255, 255, 0.55) 25%,
-    transparent calc(25% + 0.5px),
-    transparent calc(50% - 0.5px),
-    rgba(255, 255, 255, 0.55) 50%,
-    transparent calc(50% + 0.5px),
-    transparent calc(85% - 0.5px),
-    rgba(255, 255, 255, 0.55) 85%,
-    transparent calc(85% + 0.5px)
-  );
-}
-
 .meter-fill {
   height: 100%;
   width: 0;
   background: linear-gradient(90deg, #2d8fff, #22d3b4);
-  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: width 280ms ease;
 }
 
-.loading-stage-rail {
-  list-style: none;
-  margin: 0 auto 10px;
-  padding: 0;
-  display: flex;
-  width: min(520px, 92%);
-  gap: 6px;
-  font-size: 0.72rem;
-  color: #9cb3df;
-  flex-wrap: wrap;
-  justify-content: space-between;
-}
-
-.loading-stage-pill {
-  flex: 1 1 20%;
-  min-width: 4.5rem;
-  text-align: center;
-  padding: 4px 6px;
-  border-radius: 8px;
-  border: 1px solid rgba(112, 142, 204, 0.28);
-  background: rgba(17, 28, 55, 0.45);
-}
-
-.loading-stage-pill.active {
-  border-color: rgba(45, 143, 255, 0.65);
-  color: #e8f0ff;
-  box-shadow: 0 0 0 1px rgba(45, 143, 255, 0.25);
-}
-
-.loading-stage-pill.done {
-  border-color: rgba(34, 211, 180, 0.45);
-  color: #c6f6ea;
-}
-
-/* One stable row: status truncates with ellipsis; % never wraps to its own line (no layout jump). */
-.loading-headline {
+.loading-phase {
   margin: 0.35rem 0 0.65rem;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  column-gap: 0.65rem;
-  width: min(540px, 92%);
-  max-width: min(540px, 92%);
-  min-height: 1.65em;
-  box-sizing: border-box;
-  padding: 0 4px;
-  text-align: start;
-  /* Worker status is usually English; keep [text][%] order stable even if the shell is RTL. */
-  direction: ltr;
-  unicode-bidi: isolate;
-}
-
-.loading-headline-status {
   font-size: 0.95rem;
   color: #c8d7fc;
-  line-height: 1.45;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.loading-headline-pct {
-  font-size: 1.35rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: #e8eeff;
-  line-height: 1.2;
-  min-width: 3.25ch;
-  text-align: end;
-  justify-self: end;
-}
-
-.loading-subline {
-  box-sizing: border-box;
-  margin: 0.55rem 0 0;
-  padding: 0 6px;
-  min-height: 2.6em;
+  text-align: center;
   max-width: min(520px, 92%);
-  font-size: 0.82rem;
-  line-height: 1.35;
+}
+
+.loading-file-detail {
+  margin: 0.65rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
   color: #93abd9;
   text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: min(580px, 94%);
+  word-break: break-word;
   font-variant-numeric: tabular-nums;
 }
 
 .loading-meter-note {
-  margin: 0.75rem 0 0;
-  font-size: 0.7rem;
+  margin: 0.85rem 0 0;
+  font-size: 0.72rem;
   line-height: 1.35;
   color: rgba(198, 212, 255, 0.52);
   text-align: center;
