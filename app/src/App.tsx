@@ -19,6 +19,7 @@ import {
   normalizePollinationsModel,
   type PollinationsModelId,
 } from "./cloudImage";
+import { formatBytes, requestPersistentStorage } from "./storageReport";
 
 type Role = "user" | "assistant";
 
@@ -1425,6 +1426,10 @@ function App() {
       type: "configure_inference",
       backend: appSettingsRef.current.inferenceBackend,
     });
+    void (async () => {
+      const r = await requestPersistentStorage();
+      console.info("[GROVEE] storage.persist:", r);
+    })();
     return () => {
       worker.terminate();
       workerRef.current = null;
@@ -1474,10 +1479,10 @@ function App() {
   const clearModelCache = async () => {
     if (isGenerating) return;
 
-    const fmtMB = (bytes: number) => {
-      if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
-      if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-      return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+    const lines: string[] = [];
+    const log = (s: string) => {
+      console.info("[GROVEE clear]", s);
+      lines.push(s);
     };
 
     const estimateUsage = async (): Promise<number> => {
@@ -1490,12 +1495,9 @@ function App() {
       }
     };
 
+    setStatus("סורק מטמון לפני ניקוי…");
     const before = await estimateUsage();
-    setStatus(
-      before >= 0
-        ? `מנקה מטמון מלא… (כרגע בשימוש: ${fmtMB(before)})`
-        : "מנקה מטמון מלא…",
-    );
+    log(`לפני: ${formatBytes(before)} בשימוש`);
 
     try {
       terminateLocalImageWorker();
@@ -1506,8 +1508,9 @@ function App() {
       workerRef.current?.postMessage({ type: "clear_runtime_cache" });
       try {
         workerRef.current?.terminate();
-      } catch {
-        /* noop */
+        log("✓ סיימתי את ה-worker (משחרר handles על קבצי ONNX)");
+      } catch (e) {
+        log(`✗ worker.terminate נכשל: ${(e as Error)?.message ?? e}`);
       }
       workerRef.current = null;
 
@@ -1515,39 +1518,68 @@ function App() {
       setShouldWarmupOnStart(true);
       orchRef.current = null;
 
-      if ("caches" in window) {
+      setStatus("מוחק Cache Storage…");
+      if ("caches" in self) {
         try {
           const keys = await caches.keys();
-          await Promise.all(keys.map((k) => caches.delete(k).catch(() => false)));
+          if (keys.length === 0) {
+            log("Cache Storage: ריק");
+          } else {
+            log(`Cache Storage נמצאו: ${keys.join(", ")}`);
+            for (const k of keys) {
+              try {
+                const ok = await caches.delete(k);
+                log(`  ${ok ? "✓" : "✗"} delete cache ${k}`);
+              } catch (e) {
+                log(`  ✗ cache ${k}: ${(e as Error)?.message ?? e}`);
+              }
+            }
+          }
         } catch (e) {
-          console.warn("[GROVEE] caches clear failed:", e);
+          log(`✗ caches.keys נכשל: ${(e as Error)?.message ?? e}`);
         }
+      } else {
+        log("Cache Storage לא נתמך");
       }
 
+      setStatus("מוחק IndexedDB…");
       const idb = indexedDB as IDBFactory & {
         databases?: () => Promise<Array<{ name?: string }>>;
       };
       if (idb.databases) {
         try {
           const dbs = await idb.databases();
-          await Promise.all(
-            dbs.map((db) => {
-              const name = db.name ?? "";
-              if (!name) return Promise.resolve();
-              return new Promise<void>((resolve) => {
+          if (dbs.length === 0) {
+            log("IndexedDB: ריק");
+          } else {
+            const names = dbs.map((d) => d.name).filter(Boolean) as string[];
+            log(`IndexedDB נמצאו: ${names.join(", ") || "(ללא שם)"}`);
+            for (const name of names) {
+              await new Promise<void>((resolve) => {
                 const req = indexedDB.deleteDatabase(name);
-                const done = () => resolve();
-                req.onsuccess = done;
-                req.onerror = done;
-                req.onblocked = done;
+                req.onsuccess = () => {
+                  log(`  ✓ deleteDatabase ${name}`);
+                  resolve();
+                };
+                req.onerror = () => {
+                  log(`  ✗ deleteDatabase ${name} (error)`);
+                  resolve();
+                };
+                req.onblocked = () => {
+                  log(`  ⚠ deleteDatabase ${name} (blocked — open elsewhere?)`);
+                  resolve();
+                };
               });
-            }),
-          );
+            }
+          }
         } catch (e) {
-          console.warn("[GROVEE] indexedDB clear failed:", e);
+          log(`✗ idb.databases נכשל: ${(e as Error)?.message ?? e}`);
         }
+      } else {
+        log("indexedDB.databases() לא נתמך — לא ניתן למנות מסדי נתונים");
       }
 
+      setStatus("מוחק OPFS (Origin Private File System)…");
       const storageWithDir = navigator.storage as StorageManager & {
         getDirectory?: () => Promise<FileSystemDirectoryHandle>;
       };
@@ -1556,24 +1588,67 @@ function App() {
           const root = await storageWithDir.getDirectory();
           const walker = root as FileSystemDirectoryHandle & {
             entries?: () => AsyncIterableIterator<[string, FileSystemHandle]>;
+            keys?: () => AsyncIterableIterator<string>;
             removeEntry: (name: string, opts?: { recursive?: boolean }) => Promise<void>;
           };
+          const collected: string[] = [];
           if (walker.entries) {
-            for await (const [name] of walker.entries()) {
+            for await (const [name] of walker.entries()) collected.push(name);
+          } else if (walker.keys) {
+            for await (const name of walker.keys()) collected.push(name);
+          }
+          if (collected.length === 0) {
+            log("OPFS: ריק");
+          } else {
+            log(`OPFS נמצאו: ${collected.join(", ")}`);
+            for (const name of collected) {
               try {
                 await walker.removeEntry(name, { recursive: true });
+                log(`  ✓ removeEntry ${name}`);
               } catch (e) {
-                console.warn(`[GROVEE] OPFS removeEntry failed for ${name}:`, e);
+                log(`  ✗ ${name}: ${(e as Error)?.message ?? e}`);
               }
             }
           }
         } catch (e) {
-          console.warn("[GROVEE] OPFS clear failed:", e);
+          log(`✗ OPFS getDirectory נכשל: ${(e as Error)?.message ?? e}`);
         }
+      } else {
+        log("OPFS לא נתמך בדפדפן הזה");
       }
 
+      setStatus("מבטל רישום Service Workers…");
+      if ("serviceWorker" in navigator) {
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          if (regs.length === 0) {
+            log("Service Workers: אין");
+          } else {
+            for (const r of regs) {
+              try {
+                const ok = await r.unregister();
+                log(`  ${ok ? "✓" : "✗"} unregister ${r.scope}`);
+              } catch (e) {
+                log(`  ✗ ${r.scope}: ${(e as Error)?.message ?? e}`);
+              }
+            }
+          }
+        } catch (e) {
+          log(`✗ serviceWorker.getRegistrations נכשל: ${(e as Error)?.message ?? e}`);
+        }
+      } else {
+        log("Service Workers לא נתמכים");
+      }
+
+      setStatus("בודק שטח אחרי ניקוי…");
       const after = await estimateUsage();
-      const freed = before > 0 && after >= 0 ? Math.max(0, before - after) : -1;
+      log(`אחרי: ${formatBytes(after)} בשימוש`);
+      if (before >= 0 && after >= 0) {
+        const freed = Math.max(0, before - after);
+        log(`שוחרר: ${formatBytes(freed)}`);
+      }
+      log("");
+      log("הערה: Brave/Chromium עשויים לדווח על שטח דיסק שהשתחרר באיחור (housekeeping אסינכרוני). בקש storage persist בעת «התחל» כדי שמודלים לא ייבעטו אוטומטית.");
 
       setProgress(0);
       setLoadingDetail("");
@@ -1584,14 +1659,33 @@ function App() {
       assistantBufferRef.current = "";
       setWorkerReloadKey((k) => k + 1);
 
-      const summary =
-        freed >= 0
-          ? `נוקה. שוחררו ${fmtMB(freed)}. נותר בשימוש: ${fmtMB(after)}. לחץ «התחל» לטעינה מחדש.`
-          : "המטמון נוקה. לחץ «התחל» לטעינה מחדש.";
-      setStatus(summary);
+      const freedSummary =
+        before >= 0 && after >= 0
+          ? `שוחררו ${formatBytes(Math.max(0, before - after))} · נותר בשימוש: ${formatBytes(after)}`
+          : "ניקוי הסתיים";
+      setStatus(`${freedSummary}. לחץ «התחל» לטעינה מחדש.`);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `**דוח ניקוי מטמון**\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``,
+          modelLabel: "GROVEE",
+        },
+      ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      log(`✗ שגיאה כללית: ${message}`);
       setStatus(`ניקוי מטמון נכשל: ${message}`);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `**דוח ניקוי (חלקי)**\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``,
+          modelLabel: "GROVEE",
+        },
+      ]);
     }
   };
 
