@@ -92,9 +92,26 @@ export function buildGenerateParams(prompt: string): {
   return { model: "sd-turbo", prompt, width: 512, height: 512 };
 }
 
+export type SdTurboBackendPref = "auto" | "webgpu" | "wasm";
+
+/**
+ * Loader signature. Exported so App can pass `forceBackend: "wasm"` for the
+ * documented retry path when WebGPU dies mid-init (the
+ * `Cannot read properties of undefined (reading 'destroy')` /
+ * `A valid external Instance reference no longer exists` family of errors,
+ * very common with multiple ONNX sessions sharing one GPU adapter).
+ */
+export interface EnsureSdTurboLoadedOptions {
+  forceBackend?: SdTurboBackendPref;
+}
+
 /** Ensures SD-Turbo weights are cached locally. Safe to call multiple times. */
-export async function ensureSdTurboLoaded(onStatus: (s: string) => void): Promise<boolean> {
+export async function ensureSdTurboLoaded(
+  onStatus: (s: string) => void,
+  options: EnsureSdTurboLoadedOptions = {},
+): Promise<boolean> {
   if (loadPromise) return loadPromise;
+  const forceBackend = options.forceBackend ?? "auto";
 
   loadPromise = (async () => {
     const c = getClient();
@@ -103,10 +120,15 @@ export async function ensureSdTurboLoaded(onStatus: (s: string) => void): Promis
       onStatus("Local image: no WASM backend");
       return false;
     }
-    const adapterOk = await hasWebGpuAdapter();
-    const useWebGpuFirst = !!cap.webgpu && adapterOk;
+    const adapterOk = forceBackend === "wasm" ? false : await hasWebGpuAdapter();
+    const useWebGpuFirst =
+      forceBackend === "wasm" ? false : forceBackend === "webgpu" ? !!cap.webgpu && adapterOk : !!cap.webgpu && adapterOk;
     onStatus(
-      useWebGpuFirst ? "Local image: loading SD-Turbo (WebGPU)…" : "Local image: loading SD-Turbo (WASM/CPU)…",
+      useWebGpuFirst
+        ? "Local image: loading SD-Turbo (WebGPU)…"
+        : forceBackend === "wasm"
+          ? "Local image: loading SD-Turbo (WASM/CPU, forced)…"
+          : "Local image: loading SD-Turbo (WASM/CPU)…",
     );
     const res = await c.load("sd-turbo", buildLoadOptions(useWebGpuFirst), (p: LoadProgressLike) => {
       const pct = typeof p.pct === "number" ? Math.round(p.pct) : undefined;
@@ -127,6 +149,16 @@ export async function ensureSdTurboLoaded(onStatus: (s: string) => void): Promis
   const ok = await loadPromise;
   if (!ok) loadPromise = null;
   return ok;
+}
+
+/**
+ * Heuristic for the GPU-state errors that show up under memory pressure when
+ * multiple ONNX sessions share one adapter. Used by App to decide whether to
+ * retry SD-Turbo on WASM after a WebGPU failure.
+ */
+export function isWebGpuStateError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /reading\s+'destroy'|external Instance|GPU device was lost|Aborted\(.*\)/i.test(message);
 }
 
 export async function generateSdTurboPng(

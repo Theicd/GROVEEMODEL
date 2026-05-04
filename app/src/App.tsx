@@ -12,6 +12,7 @@ import {
   ensureSdTurboLoaded,
   generateSdTurboPng,
   getSdTurboSizeNote,
+  isWebGpuStateError,
   revokeImageUrl,
   terminateLocalImageWorker,
 } from "./localImageGen";
@@ -1677,28 +1678,58 @@ function App() {
       return;
     }
 
+    /**
+     * Free GPU/RAM held by the chat/code/caption ONNX sessions before SD-Turbo grabs
+     * a WebGPU device. Without this we get `reading 'destroy'` / "external Instance
+     * reference no longer exists" from ORT during SD-Turbo init under memory pressure.
+     * The Cache Storage / IDB / OPFS bytes stay -- only the in-memory sessions go.
+     */
+    workerRef.current?.postMessage({ type: "clear_runtime_cache" });
+    try {
+      workerRef.current?.terminate();
+    } catch {
+      /* noop */
+    }
+    workerRef.current = null;
+    setIsLoaded(false);
+    setIsLoading(false);
+
     setOfflinePack((p) => ({
       ...p,
       phase: "image",
       overallPct: Math.max(p.overallPct, 70),
-      detail: "מוריד SD-Turbo (~2.3GB) מקומית…",
+      detail: "פינה זיכרון GPU והחל הורדת SD-Turbo (~2.3GB)…",
     }));
 
-    const sdOk = await ensureSdTurboLoaded((line) => {
+    let lastSdStatus = "";
+    const onSdStatus = (line: string) => {
+      lastSdStatus = line;
       setOfflinePack((p) => ({
         ...p,
         overallPct: Math.max(p.overallPct, mapImagePhaseProgress(line)),
         detail: line,
       }));
-    });
+    };
+
+    let sdOk = await ensureSdTurboLoaded(onSdStatus);
+
+    if (!sdOk && isWebGpuStateError(lastSdStatus)) {
+      setOfflinePack((p) => ({
+        ...p,
+        detail: "WebGPU נכשל באמצע — מנסה שוב על WASM (CPU, איטי יותר אך יציב)…",
+      }));
+      terminateLocalImageWorker();
+      sdOk = await ensureSdTurboLoaded(onSdStatus, { forceBackend: "wasm" });
+    }
 
     offlinePackActiveRef.current = false;
+    setWorkerReloadKey((k) => k + 1); // recreate the chat worker so the user can keep using the app
 
     if (!sdOk) {
       setOfflinePack((p) => ({
         ...p,
         phase: "error",
-        error: "SD-Turbo נכשל לטעון. נסה שוב, או בחר Pollinations בענן בהגדרות.",
+        error: `SD-Turbo נכשל לטעון (${lastSdStatus || "load error"}). שינה «נקה מטמון» ואז נסה שוב, או בחר Pollinations בהגדרות.`,
       }));
       return;
     }
@@ -1708,7 +1739,7 @@ function App() {
     setOfflinePack({
       phase: "done",
       overallPct: 100,
-      detail: "החבילה מוכנה — אפשר לעבוד offline.",
+      detail: "החבילה מוכנה — אפשר לנתק רשת.",
       error: null,
       completedAt: at,
     });

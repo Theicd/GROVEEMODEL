@@ -5,6 +5,7 @@ import {
   buildLoadOptions,
   ensureSdTurboLoaded,
   generateSdTurboPng,
+  isWebGpuStateError,
   terminateLocalImageWorker,
   type GenProgressLike,
   type ImageWorkerClientLike,
@@ -269,5 +270,51 @@ describe("localImageGen — generate flow", () => {
     expect(out.ok).toBe(false);
     if (out.ok) return;
     expect(out.message).toBe("SD-Turbo not loaded");
+  });
+});
+
+describe("localImageGen — isWebGpuStateError", () => {
+  it("matches the production GPU-state error families", () => {
+    expect(isWebGpuStateError("Cannot read properties of undefined (reading 'destroy')")).toBe(true);
+    expect(isWebGpuStateError("A valid external Instance reference no longer exists.")).toBe(true);
+    expect(isWebGpuStateError("GPU device was lost: device_lost")).toBe(true);
+    expect(isWebGpuStateError("Aborted(both async and sync fetching of the wasm failed)")).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isWebGpuStateError(null)).toBe(false);
+    expect(isWebGpuStateError("Failed to fetch")).toBe(false);
+    expect(isWebGpuStateError("404 Not Found")).toBe(false);
+    expect(isWebGpuStateError("")).toBe(false);
+  });
+});
+
+describe("localImageGen — forceBackend wasm fallback", () => {
+  it("never asks for a WebGPU adapter when forceBackend='wasm'", async () => {
+    const requestAdapter = vi.fn();
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { gpu: { requestAdapter } },
+    });
+    if (typeof globalThis.structuredClone !== "function") {
+      globalThis.structuredClone = ((v: unknown) => JSON.parse(JSON.stringify(v))) as typeof globalThis.structuredClone;
+    }
+
+    const calls: { backend: string[] }[] = [];
+    const client: ImageWorkerClientLike = {
+      detect: async () => ({ webgpu: true, wasm: true, shaderF16: false }),
+      load: async (_model, options) => {
+        calls.push({ backend: (options as { backendPreference: string[] }).backendPreference });
+        return { ok: true, backendUsed: "wasm" };
+      },
+      generate: () => ({ id: "x", promise: Promise.resolve({ ok: false }), abort: async () => {} }),
+      terminate: () => {},
+    };
+    __setImageClientFactoryForTests(() => client);
+
+    const ok = await ensureSdTurboLoaded(() => {}, { forceBackend: "wasm" });
+    expect(ok).toBe(true);
+    expect(calls[0].backend).toEqual(["wasm"]);
+    expect(requestAdapter).not.toHaveBeenCalled();
   });
 });
