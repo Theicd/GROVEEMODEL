@@ -238,15 +238,38 @@ const defaultAppSettings = (): AppSettings => ({
   gemma: { ...defaultGemmaSettings },
   coder: { ...defaultCoderSettings },
   visionMaxTokens: 96,
-  imageProvider: "pollinations",
+  /**
+   * Default = fully local: image is rendered in the browser by SD-Turbo (web-txt2img).
+   * First run downloads ~2.3GB once, then no network needed for images.
+   * Pollinations stays available in Settings for users who want a fast cloud link.
+   */
+  imageProvider: "local_sd_turbo",
   imageBackendModel: "flux",
 });
+
+/** One-time flag: existing users had `pollinations` as the default. Reset them once to local. */
+const IMAGE_PROVIDER_LOCAL_DEFAULT_FLAG = "grovee_image_provider_local_default_v1";
 
 const loadSettings = (): AppSettings => {
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return defaultAppSettings();
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    let imageProvider: ImageProviderId =
+      parsed.imageProvider === "local_sd_turbo" || parsed.imageProvider === "pollinations"
+        ? parsed.imageProvider
+        : defaultAppSettings().imageProvider;
+    try {
+      if (
+        imageProvider === "pollinations" &&
+        localStorage.getItem(IMAGE_PROVIDER_LOCAL_DEFAULT_FLAG) !== "1"
+      ) {
+        imageProvider = "local_sd_turbo";
+        localStorage.setItem(IMAGE_PROVIDER_LOCAL_DEFAULT_FLAG, "1");
+      }
+    } catch {
+      // ignore quota / private-mode failures
+    }
     return {
       ...defaultAppSettings(),
       textChatModelId: normalizeTextChatModelId(
@@ -263,10 +286,7 @@ const loadSettings = (): AppSettings => {
         typeof parsed.visionMaxTokens === "number" && Number.isFinite(parsed.visionMaxTokens)
           ? Math.min(256, Math.max(32, Math.round(parsed.visionMaxTokens)))
           : defaultAppSettings().visionMaxTokens,
-      imageProvider:
-        parsed.imageProvider === "local_sd_turbo" || parsed.imageProvider === "pollinations"
-          ? parsed.imageProvider
-          : defaultAppSettings().imageProvider,
+      imageProvider,
       imageBackendModel: normalizePollinationsModel(
         typeof parsed.imageBackendModel === "string" ? parsed.imageBackendModel : undefined,
       ),
@@ -864,8 +884,12 @@ function SettingsModal({
             </label>
           )}
           <p className="settings-micro">
-            ברירת מחדל: ענן (Pollinations) — לינק HTTP מהיר. אם תבחר Local SD-Turbo: פעם ראשונה דורשת רשת כדי למשוך
-            משקולות (~2.3GB); אחרי שהתמונה נוצרה מקומית, אם הוא נכשל — נופל אוטומטית לענן.
+            <strong>למה יש בכלל אפשרות ענן?</strong> ה־LLM (Gemma) רץ מקומית ומכין רק את הפרומפט באנגלית. את הפיקסלים
+            עצמם של התמונה צריך מודל דיפוזיה (SD-Turbo) — או שירץ אצלך בדפדפן, או שיוצר אצל ספק ענן (Pollinations).
+          </p>
+          <p className="settings-micro">
+            ברירת מחדל: <strong>מקומי</strong> (SD-Turbo) — פעם ראשונה דורשת רשת להורדת ~2.3GB, אחר כך התמונה נוצרת בלי
+            לינקי HTTP. אם הטעינה המקומית נכשלת, האפליקציה נופלת אוטומטית ל־Pollinations (ענן).
           </p>
           <p className="settings-micro">
             <a href="https://image.pollinations.ai" target="_blank" rel="noreferrer">
@@ -1291,16 +1315,20 @@ function App() {
           };
 
           if (appSettingsRef.current.imageProvider === "local_sd_turbo") {
+            setStatus(
+              "יוצר תמונה מקומית בדפדפן (SD-Turbo). פעם ראשונה: הורדה חד־פעמית של ~2.3GB · לאחר מכן ללא רשת.",
+            );
             void (async () => {
               const local = await generateSdTurboPng(english, (s) => setStatus(s));
               if (local.ok) {
                 runSummarize(local.objectUrl);
               } else {
-                setStatus(`Local image failed (${local.message}). Using cloud…`);
+                setStatus(`יצירה מקומית נכשלה (${local.message}). נופל לענן Pollinations…`);
                 runSummarize(cloudUrl);
               }
             })();
           } else {
+            setStatus("יוצר תמונה דרך Pollinations (ענן · דורש רשת)…");
             runSummarize(cloudUrl);
           }
           return;
