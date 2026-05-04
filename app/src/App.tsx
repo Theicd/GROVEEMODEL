@@ -13,6 +13,12 @@ import {
   revokeImageUrl,
   terminateLocalImageWorker,
 } from "./localImageGen";
+import {
+  IMAGE_MODEL_OPTIONS,
+  buildPollinationsUrl,
+  normalizePollinationsModel,
+  type PollinationsModelId,
+} from "./cloudImage";
 
 type Role = "user" | "assistant";
 
@@ -202,6 +208,8 @@ const defaultCoderSettings: TunableModelSettings = {
 /** ONNX Runtime backend: auto = WebGPU then WASM; wasm = CPU everywhere; webgpu = GPU only (fails on bad drivers). */
 type InferenceBackendPreference = "auto" | "webgpu" | "wasm";
 
+type ImageProviderId = "pollinations" | "local_sd_turbo";
+
 type AppSettings = {
   /** Primary ONNX text model loaded on Start (see TEXT_CHAT_MODEL_OPTIONS). */
   textChatModelId: string;
@@ -215,6 +223,10 @@ type AppSettings = {
   gemma: TunableModelSettings;
   coder: TunableModelSettings;
   visionMaxTokens: number;
+  /** "pollinations" = cloud HTTP link · "local_sd_turbo" = in-browser SD-Turbo (~2.3GB cache). */
+  imageProvider: ImageProviderId;
+  /** Pollinations model id (flux/turbo/sdxl). */
+  imageBackendModel: PollinationsModelId;
 };
 
 const defaultAppSettings = (): AppSettings => ({
@@ -224,6 +236,8 @@ const defaultAppSettings = (): AppSettings => ({
   gemma: { ...defaultGemmaSettings },
   coder: { ...defaultCoderSettings },
   visionMaxTokens: 96,
+  imageProvider: "pollinations",
+  imageBackendModel: "flux",
 });
 
 const loadSettings = (): AppSettings => {
@@ -247,6 +261,13 @@ const loadSettings = (): AppSettings => {
         typeof parsed.visionMaxTokens === "number" && Number.isFinite(parsed.visionMaxTokens)
           ? Math.min(256, Math.max(32, Math.round(parsed.visionMaxTokens)))
           : defaultAppSettings().visionMaxTokens,
+      imageProvider:
+        parsed.imageProvider === "local_sd_turbo" || parsed.imageProvider === "pollinations"
+          ? parsed.imageProvider
+          : defaultAppSettings().imageProvider,
+      imageBackendModel: normalizePollinationsModel(
+        typeof parsed.imageBackendModel === "string" ? parsed.imageBackendModel : undefined,
+      ),
     };
   } catch {
     return defaultAppSettings();
@@ -298,13 +319,6 @@ const cleanModelOutput = (input: string): string => {
   if (normalized.length) return normalized;
   const raw = input.trim();
   return raw.length ? raw.slice(0, 2000) : "No response generated.";
-};
-
-/** Image replies must use only the in-app blob URL; strip any http(s) links the model echoed. */
-const sanitizeLocalImageCaption = (text: string): string => {
-  const noMdImg = text.replace(/!\[[^\]]*]\([^)]*\)/g, "");
-  const noUrls = noMdImg.replace(/https?:\/\/[^\s)\]]+/gi, "");
-  return noUrls.replace(/\n{3,}/g, "\n\n").trim();
 };
 
 /** GitHub requires a User-Agent on API requests. */
@@ -813,16 +827,52 @@ function SettingsModal({
 
         <section className="settings-section">
           <h3>Image generation</h3>
+          <label className="settings-row block">
+            <span>Engine</span>
+            <select
+              value={draft.imageProvider}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, imageProvider: e.target.value as ImageProviderId }))
+              }
+            >
+              <option value="pollinations">Cloud — Pollinations (HTTP link, fast, needs network)</option>
+              <option value="local_sd_turbo">
+                Local — SD-Turbo in browser ({getSdTurboSizeNote()})
+              </option>
+            </select>
+          </label>
+          {draft.imageProvider === "pollinations" && (
+            <label className="settings-row block">
+              <span>Pollinations model</span>
+              <select
+                value={draft.imageBackendModel}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    imageBackendModel: normalizePollinationsModel(e.target.value),
+                  }))
+                }
+              >
+                {IMAGE_MODEL_OPTIONS.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <p className="settings-micro">
-            תמונות נוצרות רק מקומית בדפדפן (SD-Turbo דרך web-txt2img) — בלי לינקי HTTP וללא שרת תמונה חיצוני. פעם ראשונה
-            דורשת רשת כדי למשוך משקולות (~2.3GB); אחרי מכן נשמרות במטמון הדפדפן וניתן לעבוד offline. {getSdTurboSizeNote()}
+            ברירת מחדל: ענן (Pollinations) — לינק HTTP מהיר. אם תבחר Local SD-Turbo: פעם ראשונה דורשת רשת כדי למשוך
+            משקולות (~2.3GB); אחרי שהתמונה נוצרה מקומית, אם הוא נכשל — נופל אוטומטית לענן.
           </p>
           <p className="settings-micro">
-            See{" "}
+            <a href="https://image.pollinations.ai" target="_blank" rel="noreferrer">
+              image.pollinations.ai
+            </a>{" "}
+            ·{" "}
             <a href="https://github.com/lacerbi/web-txt2img" target="_blank" rel="noreferrer">
               web-txt2img
             </a>
-            .
           </p>
         </section>
 
@@ -1208,6 +1258,11 @@ function App() {
           assistantBufferRef.current = "";
           setAssistantBuffer("");
 
+          const cloudUrl = buildPollinationsUrl({
+            prompt: english,
+            model: appSettingsRef.current.imageBackendModel,
+          });
+
           const runSummarize = (imageUrl: string) => {
             setGeneratedImageUrl(imageUrl);
             orchRef.current = {
@@ -1223,7 +1278,7 @@ function App() {
             const g = appSettingsRef.current.gemma;
             const userLang = isRtlText(userText) ? "Hebrew" : "the same language as the user";
             runGemmaGenerate(
-              `User request:\n${userText}\n\nA local image was rendered from this English prompt (SD-Turbo in the browser):\n${english}\n\nReply in ${userLang} with 2–4 short sentences describing what was created. Say the image was generated locally in the browser. Do NOT include any URLs, links, or markdown images in your reply.`,
+              `User request:\n${userText}\n\nWe generated an image using this English prompt for the image model:\n${english}\n\nReply in ${userLang}: 2–4 sentences explaining what was created; mention that the prompt was translated for the image engine. Then add a line with the image URL:\n${imageUrl}`,
               g.systemPrompt,
               Math.min(320, g.maxNewTokens),
               g.temperature,
@@ -1233,32 +1288,24 @@ function App() {
             );
           };
 
-          void (async () => {
-            const local = await generateSdTurboPng(english, (s) => setStatus(s));
-            if (local.ok) {
-              runSummarize(local.objectUrl);
-              return;
-            }
-            orchRef.current = null;
-            setIsGenerating(false);
-            setAssistantBuffer("");
-            assistantBufferRef.current = "";
-            setStatus("Local image failed");
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `יצירת התמונה המקומית נכשלה: ${local.message}. עם רשת — טען את האפליקציה פעם אחת כדי שמשקולות SD-Turbo יישמרו במטמון, ואז אפשר לעבוד offline.`,
-                modelLabel: activeModelShortLabelRef.current,
-              },
-            ]);
-          })();
+          if (appSettingsRef.current.imageProvider === "local_sd_turbo") {
+            void (async () => {
+              const local = await generateSdTurboPng(english, (s) => setStatus(s));
+              if (local.ok) {
+                runSummarize(local.objectUrl);
+              } else {
+                setStatus(`Local image failed (${local.message}). Using cloud…`);
+                runSummarize(cloudUrl);
+              }
+            })();
+          } else {
+            runSummarize(cloudUrl);
+          }
           return;
         }
 
         if (orch?.kind === "image" && orch.data.step === "summarize") {
-          const summary = sanitizeLocalImageCaption(buf || "התמונה מוכנה (נוצרה מקומית בדפדפן).");
+          const summary = buf || "Image ready.";
           const imageUrl = orch.data.imageUrl;
           orchRef.current = null;
           setIsGenerating(false);
