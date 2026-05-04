@@ -5,6 +5,7 @@ import {
   isImageGenerationRequest,
   isRtlText,
   isSimpleGreeting,
+  stripImageEchoes,
 } from "./chatIntents";
 
 describe("chatIntents", () => {
@@ -33,5 +34,45 @@ describe("chatIntents", () => {
     expect(isSimpleGreeting("היי")).toBe(true);
     expect(isSimpleGreeting("hello")).toBe(true);
     expect(isSimpleGreeting("צור תמונה")).toBe(false);
+  });
+});
+
+describe("stripImageEchoes", () => {
+  it("removes markdown image tags", () => {
+    expect(stripImageEchoes("hello\n![alt](https://x/y.jpg)\nworld")).toBe("hello\nworld");
+  });
+
+  it("removes bare and angle-bracketed URLs from the text", () => {
+    const out1 = stripImageEchoes("see https://image.pollinations.ai/prompt/x?y=1 thanks");
+    expect(out1).not.toContain("http");
+    expect(out1).toContain("see");
+    expect(out1).toContain("thanks");
+    expect(
+      stripImageEchoes(
+        "<https://image.pollinations.ai/?prompt=A%0Aphotorealistic+image+of+a+cute+golden+retriever?width=",
+      ),
+    ).toBe("");
+  });
+
+  it("removes 'URL:/width=/height=/model=' lines that the model copies from the prompt", () => {
+    const messy = [
+      "נוצרה תמונה ריאליסטית של כלבת גולדן רטריבר.",
+      "URL:",
+      "<https://image.pollinations.ai/?prompt=A%0Aphotorealistic+image",
+      "width=1000",
+      "height=1600",
+      "model=flux",
+      "nologo=true",
+    ].join("\n");
+    expect(stripImageEchoes(messy)).toBe("נוצרה תמונה ריאליסטית של כלבת גולדן רטריבר.");
+  });
+
+  it("collapses consecutive blank lines and trims edges", () => {
+    expect(stripImageEchoes("\n\n hello \n\n\n world \n\n")).toBe("hello\nworld");
+  });
+
+  it("leaves clean caption text untouched", () => {
+    const clean = "נוצרה תמונה ריאליסטית של כלבת גולדן רטריבר חמודה משחקת בפארק שמשי.";
+    expect(stripImageEchoes(clean)).toBe(clean);
   });
 });

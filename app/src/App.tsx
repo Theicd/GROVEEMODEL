@@ -6,6 +6,7 @@ import {
   isImageGenerationRequest,
   isRtlText,
   isSimpleGreeting,
+  stripImageEchoes,
 } from "./chatIntents";
 import {
   generateSdTurboPng,
@@ -1279,10 +1280,10 @@ function App() {
             const g = appSettingsRef.current.gemma;
             const userLang = isRtlText(userText) ? "Hebrew" : "the same language as the user";
             runGemmaGenerate(
-              `User request:\n${userText}\n\nWe generated an image using this English prompt for the image model:\n${english}\n\nReply in ${userLang}: 2–4 sentences explaining what was created; mention that the prompt was translated for the image engine. Then add a line with the image URL:\n${imageUrl}`,
+              `The user asked for an image: "${userText}"\n\nThe image has already been generated and is displayed separately in the chat. Write ONE short sentence in ${userLang} describing the image (no preamble, no labels, no URLs, no markdown image tags, no quotes). Maximum 20 words.`,
               g.systemPrompt,
-              Math.min(320, g.maxNewTokens),
-              g.temperature,
+              80,
+              0.2,
               g.repetitionPenalty,
               g.topP,
               "",
@@ -1306,7 +1307,7 @@ function App() {
         }
 
         if (orch?.kind === "image" && orch.data.step === "summarize") {
-          const summary = buf || "Image ready.";
+          const summary = stripImageEchoes(buf) || "התמונה מוכנה.";
           const imageUrl = orch.data.imageUrl;
           orchRef.current = null;
           setIsGenerating(false);
@@ -1989,13 +1990,6 @@ function App() {
               onDragOver={onComposerDragOver}
               onDrop={onComposerDrop}
             >
-              {generatedImageUrl ? (
-                <div className="composer-last-gen-strip">
-                  <img className="composer-last-gen-thumb" src={generatedImageUrl} alt="" />
-                  <span className="composer-last-gen-label">Last generated</span>
-                </div>
-              ) : null}
-
               <div className={`composer-card ${composerDragOver ? "composer-card--dropping" : ""}`}>
                 <textarea
                   ref={textareaRef}

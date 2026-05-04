@@ -54,3 +54,23 @@ export const isImageGenerationRequest = (text: string): boolean => {
     /צור תמונה|תמונה של|הפק תמונה|ייצר תמונה|צייר|איור של|תאר תמונה ש|בנה תמונה/.test(text);
   return he || /(create|generate|draw|make)\s+(an?\s+)?image|text-to-image|image of\b/.test(t);
 };
+
+/**
+ * The image is rendered as a separate markdown image inside the bubble; Gemma's
+ * caption text must not echo the URL or duplicate the image. Strips:
+ *   - markdown image tags `![...](...)`
+ *   - bare or angle-bracketed `http(s)://...` URLs (incl. partial wraps)
+ *   - obvious "URL/Width/Height/Prompt:" lines copied from the prompt
+ *   - empty leading/trailing lines and consecutive blanks
+ */
+export const stripImageEchoes = (text: string): string => {
+  const noMd = text.replace(/!\[[^\]]*]\([^)]*\)/g, "");
+  const noUrl = noMd.replace(/<?https?:\/\/[^\s<>)\]]+>?/gi, "");
+  return noUrl
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^(url|link|prompt|width|height|model|nologo)\s*[:=]/i.test(l))
+    .join("\n")
+    .trim();
+};
