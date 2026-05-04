@@ -35,6 +35,13 @@ import {
   readOfflinePackCompletedAt,
   writeOfflinePackCompletedAt,
 } from "./offlinePack";
+import {
+  type StorageAudit,
+  auditAppStorage,
+  isAuditEmpty,
+  summarizeStorageHeader,
+  summarizeStorageInventory,
+} from "./storageAudit";
 
 type Role = "user" | "assistant";
 
@@ -643,6 +650,11 @@ function SettingsModal({
   offlinePack,
   onStartOfflinePack,
   onRemoveOfflinePack,
+  storageSnapshot,
+  storageScanning,
+  onRefreshStorage,
+  onClearCache,
+  cacheClearing,
 }: {
   open: boolean;
   onClose: () => void;
@@ -651,6 +663,11 @@ function SettingsModal({
   offlinePack: OfflinePackUiState;
   onStartOfflinePack: () => void;
   onRemoveOfflinePack: () => void;
+  storageSnapshot: StorageAudit | null;
+  storageScanning: boolean;
+  onRefreshStorage: () => void;
+  onClearCache: () => void;
+  cacheClearing: boolean;
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
 
@@ -925,6 +942,74 @@ function SettingsModal({
         </section>
 
         <section className="settings-section offline-pack-section">
+          <h3>תפיסת שטח אחסון — Storage Snapshot</h3>
+          <p className="settings-micro">
+            ראה <strong>בעיניים שלך</strong> מה באמת שמור על הדיסק עכשיו, ואחרי «נקה מטמון» ראה שזה אכן יורד ל-0.
+            הסקירה מתעדכנת אוטומטית כשפותחים את ההגדרות, ושוב אחרי ניקוי.
+          </p>
+          {storageSnapshot ? (
+            <>
+              <p className="offline-pack-detail">
+                <strong>סך הכל:</strong> {summarizeStorageHeader(storageSnapshot)} · {summarizeStorageInventory(storageSnapshot)}
+              </p>
+              {storageSnapshot.caches.length > 0 ? (
+                <ul className="offline-pack-list">
+                  {storageSnapshot.caches.map((c) => (
+                    <li key={c.name} className="offline-pack-item">
+                      <span className="offline-pack-item-label">Cache · {c.name}</span>
+                      <span className="offline-pack-item-size">{c.entryCount} קבצים</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {storageSnapshot.idbNames.length > 0 ? (
+                <p className="offline-pack-detail offline-pack-detail-thin">
+                  <strong>IndexedDB:</strong> {storageSnapshot.idbNames.join(", ")}
+                </p>
+              ) : null}
+              {storageSnapshot.opfsEntries.length > 0 ? (
+                <p className="offline-pack-detail offline-pack-detail-thin">
+                  <strong>OPFS:</strong> {storageSnapshot.opfsEntries.join(", ")}
+                </p>
+              ) : null}
+              {isAuditEmpty(storageSnapshot) ? (
+                <p className="offline-pack-detail" role="status">
+                  ✓ אין שום מודלים שמורים כרגע — לחיצה הבאה על «התחל» תוריד הכול מחדש.
+                </p>
+              ) : null}
+              {storageSnapshot.errors.length > 0 ? (
+                <p className="offline-pack-detail offline-pack-detail-thin">
+                  <strong>אזהרות:</strong> {storageSnapshot.errors.join(" · ")}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="offline-pack-detail offline-pack-detail-thin">
+              {storageScanning ? "סורק…" : "—"}
+            </p>
+          )}
+          <div className="offline-pack-actions">
+            <button
+              type="button"
+              className="subtle-btn"
+              onClick={onRefreshStorage}
+              disabled={storageScanning}
+            >
+              {storageScanning ? "סורק…" : "רענן סקירה"}
+            </button>
+            <button
+              type="button"
+              className="pill-button"
+              onClick={onClearCache}
+              disabled={cacheClearing}
+              style={{ background: cacheClearing ? undefined : "#dc2626" }}
+            >
+              {cacheClearing ? "מנקה…" : "נקה מטמון מודלים (מחק מהדיסק)"}
+            </button>
+          </div>
+        </section>
+
+        <section className="settings-section offline-pack-section">
           <h3>הורדה למחשב — מצב Offline מלא</h3>
           <p className="settings-micro">
             לחיצה אחת מורידה את <strong>כל</strong> המודלים למטמון הדפדפן: שפה (Gemma + Qwen Coder), תיאור תמונה
@@ -1050,6 +1135,10 @@ function App() {
   const [offlinePack, setOfflinePack] = useState<OfflinePackUiState>(() =>
     initialOfflinePackState(readOfflinePackCompletedAt()),
   );
+  /** Snapshot of every storage area (caches/IDB/OPFS/SW) shown in Settings. */
+  const [storageSnapshot, setStorageSnapshot] = useState<StorageAudit | null>(null);
+  const [storageScanning, setStorageScanning] = useState(false);
+  const [cacheClearing, setCacheClearing] = useState(false);
   /**
    * When true, the next `preload_all_done` from the worker resolves the offline-pack
    * promise instead of triggering the normal "warmed on start" UI flow.
@@ -1757,8 +1846,26 @@ function App() {
     });
   };
 
+  const refreshStorageSnapshot = useCallback(async () => {
+    setStorageScanning(true);
+    try {
+      const audit = await auditAppStorage();
+      setStorageSnapshot(audit);
+    } finally {
+      setStorageScanning(false);
+    }
+  }, []);
+
+  // Auto-snapshot the first time the user opens Settings, and re-snapshot after clear.
+  useEffect(() => {
+    if (settingsOpen && !storageSnapshot && !storageScanning) {
+      void refreshStorageSnapshot();
+    }
+  }, [settingsOpen, storageSnapshot, storageScanning, refreshStorageSnapshot]);
+
   const clearModelCache = async () => {
-    if (isGenerating) return;
+    if (isGenerating || cacheClearing) return;
+    setCacheClearing(true);
 
     const lines: string[] = [];
     const log = (s: string) => {
@@ -1835,6 +1942,13 @@ function App() {
       const idb = indexedDB as IDBFactory & {
         databases?: () => Promise<Array<{ name?: string }>>;
       };
+      const deleteOneIdb = (name: string): Promise<"ok" | "error" | "blocked"> =>
+        new Promise<"ok" | "error" | "blocked">((resolve) => {
+          const req = indexedDB.deleteDatabase(name);
+          req.onsuccess = () => resolve("ok");
+          req.onerror = () => resolve("error");
+          req.onblocked = () => resolve("blocked");
+        });
       if (idb.databases) {
         try {
           const dbs = await idb.databases();
@@ -1843,22 +1957,29 @@ function App() {
           } else {
             const names = dbs.map((d) => d.name).filter(Boolean) as string[];
             log(`IndexedDB נמצאו: ${names.join(", ") || "(ללא שם)"}`);
+            // Pass 1: try every DB.
+            const blockedNames: string[] = [];
             for (const name of names) {
-              await new Promise<void>((resolve) => {
-                const req = indexedDB.deleteDatabase(name);
-                req.onsuccess = () => {
-                  log(`  ✓ deleteDatabase ${name}`);
-                  resolve();
-                };
-                req.onerror = () => {
-                  log(`  ✗ deleteDatabase ${name} (error)`);
-                  resolve();
-                };
-                req.onblocked = () => {
-                  log(`  ⚠ deleteDatabase ${name} (blocked — open elsewhere?)`);
-                  resolve();
-                };
-              });
+              const result = await deleteOneIdb(name);
+              if (result === "ok") log(`  ✓ deleteDatabase ${name}`);
+              else if (result === "blocked") {
+                blockedNames.push(name);
+                log(`  ⚠ ${name} blocked — אנסה שוב אחרי השהיה`);
+              } else {
+                log(`  ✗ deleteDatabase ${name} (error)`);
+              }
+            }
+            // Pass 2: small delay then retry blocked ones (gives the browser time to drop locks).
+            if (blockedNames.length > 0) {
+              await new Promise((r) => setTimeout(r, 600));
+              for (const name of blockedNames) {
+                const result = await deleteOneIdb(name);
+                log(
+                  result === "ok"
+                    ? `  ✓ retry deleteDatabase ${name}`
+                    : `  ✗ retry ${name} (${result})`,
+                );
+              }
             }
           }
         } catch (e) {
@@ -1948,6 +2069,9 @@ function App() {
       assistantBufferRef.current = "";
       setWorkerReloadKey((k) => k + 1);
 
+      // Refresh the audit panel so the user can SEE that the storage went to zero.
+      void refreshStorageSnapshot();
+
       const freedSummary =
         before >= 0 && after >= 0
           ? `שוחררו ${formatBytes(Math.max(0, before - after))} · נותר בשימוש: ${formatBytes(after)}`
@@ -1975,6 +2099,8 @@ function App() {
           modelLabel: "GROVEE",
         },
       ]);
+    } finally {
+      setCacheClearing(false);
     }
   };
 
@@ -2137,6 +2263,11 @@ function App() {
         offlinePack={offlinePack}
         onStartOfflinePack={runOfflinePack}
         onRemoveOfflinePack={removeOfflinePackMarker}
+        storageSnapshot={storageSnapshot}
+        storageScanning={storageScanning}
+        onRefreshStorage={() => void refreshStorageSnapshot()}
+        onClearCache={() => void clearModelCache()}
+        cacheClearing={cacheClearing}
       />
 
       {phase === "start" && (
