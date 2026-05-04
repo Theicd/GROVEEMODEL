@@ -9,6 +9,7 @@ import {
   stripImageEchoes,
 } from "./chatIntents";
 import {
+  ensureSdTurboLoaded,
   generateSdTurboPng,
   getSdTurboSizeNote,
   revokeImageUrl,
@@ -21,6 +22,18 @@ import {
   type PollinationsModelId,
 } from "./cloudImage";
 import { formatBytes, requestPersistentStorage } from "./storageReport";
+import {
+  OFFLINE_PACK_COMPONENTS,
+  type OfflinePackUiState,
+  clearOfflinePackCompletedAt,
+  formatOfflinePackCompletedAt,
+  initialOfflinePackState,
+  mapImagePhaseProgress,
+  mapModelsPhaseProgress,
+  offlinePackTotalLabel,
+  readOfflinePackCompletedAt,
+  writeOfflinePackCompletedAt,
+} from "./offlinePack";
 
 type Role = "user" | "assistant";
 
@@ -626,15 +639,23 @@ function SettingsModal({
   onClose,
   settings,
   onSave,
+  offlinePack,
+  onStartOfflinePack,
+  onRemoveOfflinePack,
 }: {
   open: boolean;
   onClose: () => void;
   settings: AppSettings;
   onSave: (s: AppSettings) => void;
+  offlinePack: OfflinePackUiState;
+  onStartOfflinePack: () => void;
+  onRemoveOfflinePack: () => void;
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
 
   if (!open) return null;
+  const offlineRunning = offlinePack.phase === "models" || offlinePack.phase === "image";
+  const offlineDone = offlinePack.phase === "done";
 
   const row = (label: string, children: ReactNode) => (
     <label className="settings-row">
@@ -902,6 +923,83 @@ function SettingsModal({
           </p>
         </section>
 
+        <section className="settings-section offline-pack-section">
+          <h3>הורדה למחשב — מצב Offline מלא</h3>
+          <p className="settings-micro">
+            לחיצה אחת מורידה את <strong>כל</strong> המודלים למטמון הדפדפן: שפה (Gemma + Qwen Coder), תיאור תמונה
+            (ViT-GPT2) ו-SD-Turbo ליצירת תמונות. אחרי ההורדה — צ&apos;אט, קוד ותמונות עובדים <strong>בלי רשת</strong>.
+            סך הכל ~{offlinePackTotalLabel()}, שמור פעם אחת.
+          </p>
+          <ul className="offline-pack-list">
+            {OFFLINE_PACK_COMPONENTS.map((c) => (
+              <li key={c.id} className="offline-pack-item">
+                <span className="offline-pack-item-label">{c.label}</span>
+                <span className="offline-pack-item-size">{formatBytes(c.approxBytes)}</span>
+                <span className="offline-pack-item-desc">{c.description}</span>
+              </li>
+            ))}
+          </ul>
+          {offlineRunning ? (
+            <>
+              <div
+                className="meter"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={offlinePack.overallPct}
+              >
+                <div
+                  className="meter-fill"
+                  style={{ width: `${Math.min(100, offlinePack.overallPct)}%` }}
+                />
+              </div>
+              <p className="offline-pack-detail">
+                {offlinePack.phase === "models" ? "שלב 1/2 · מודלי שפה ו-vision" : "שלב 2/2 · SD-Turbo (תמונות)"} ·{" "}
+                {Math.round(offlinePack.overallPct)}%
+              </p>
+              <p className="offline-pack-detail offline-pack-detail-thin">{offlinePack.detail}</p>
+            </>
+          ) : null}
+          {offlinePack.error ? (
+            <p className="offline-pack-error" role="alert">
+              {offlinePack.error}
+            </p>
+          ) : null}
+          {offlineDone && offlinePack.completedAt ? (
+            <p className="offline-pack-detail offline-pack-detail-thin">
+              {formatOfflinePackCompletedAt(offlinePack.completedAt)}
+            </p>
+          ) : null}
+          <div className="offline-pack-actions">
+            <button
+              type="button"
+              className="pill-button"
+              onClick={onStartOfflinePack}
+              disabled={offlineRunning}
+            >
+              {offlineRunning
+                ? `מוריד… ${Math.round(offlinePack.overallPct)}%`
+                : offlineDone
+                  ? "הורד שוב (רענון מלא)"
+                  : "הורד את כל המודלים למחשב"}
+            </button>
+            {offlineDone ? (
+              <button
+                type="button"
+                className="subtle-btn"
+                onClick={onRemoveOfflinePack}
+                disabled={offlineRunning}
+              >
+                סמן «לא הורד»
+              </button>
+            ) : null}
+          </div>
+          <p className="settings-micro">
+            הורדה משתמשת במטמון Cache Storage / IndexedDB / OPFS של הדפדפן. אם תלחץ «נקה מטמון» אחר כך — הקבצים יימחקו
+            ותצטרך להוריד שוב.
+          </p>
+        </section>
+
         <div className="settings-actions">
           <button type="button" className="subtle-btn" onClick={() => setDraft(defaultAppSettings())}>
             Reset defaults
@@ -947,6 +1045,16 @@ function App() {
   const [loadingSlowHint, setLoadingSlowHint] = useState("");
   /** Bumped after Clear cache: forces the worker effect to re-create a fresh worker. */
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
+  /** Offline pack download (Settings → "הורד את כל המודלים למחשב"). */
+  const [offlinePack, setOfflinePack] = useState<OfflinePackUiState>(() =>
+    initialOfflinePackState(readOfflinePackCompletedAt()),
+  );
+  /**
+   * When true, the next `preload_all_done` from the worker resolves the offline-pack
+   * promise instead of triggering the normal "warmed on start" UI flow.
+   */
+  const offlinePackActiveRef = useRef(false);
+  const offlinePackResolveRef = useRef<((ok: boolean) => void) | null>(null);
   const [prompt, setPrompt] = useState("");
   const [chatSessionsState, setChatSessionsState] = useState<ChatSessionsState>(() => loadChatSessionsState());
   const [assistantBuffer, setAssistantBuffer] = useState("");
@@ -1176,11 +1284,23 @@ function App() {
       const msg = event.data;
       if (msg.type === "status") {
         setStatus(msg.text);
+        if (offlinePackActiveRef.current) {
+          setOfflinePack((p) => ({ ...p, detail: msg.text }));
+        }
       } else if (msg.type === "progress") {
         setStatus(msg.text);
         setLoadingDetail(msg.detail ?? "");
         const loadingPhase = isLoadingRef.current || preloadAllLoadingRef.current;
         setProgress((prev) => (loadingPhase ? Math.max(prev, msg.progress) : msg.progress));
+        if (offlinePackActiveRef.current) {
+          const overall = mapModelsPhaseProgress(msg.progress);
+          setOfflinePack((p) => ({
+            ...p,
+            phase: "models",
+            overallPct: Math.max(p.overallPct, overall),
+            detail: msg.detail || msg.text,
+          }));
+        }
       } else if (msg.type === "loaded") {
         setWorkerBootError(null);
         setIsLoaded(true);
@@ -1227,6 +1347,11 @@ function App() {
             ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
             : `מוכנים: Gemma + כיתוב תמונה (${msg.captionModels}) — קוד בטעינה עצלה`,
         );
+        if (offlinePackActiveRef.current && offlinePackResolveRef.current) {
+          const ok = !failedT && !failedC;
+          offlinePackResolveRef.current(ok);
+          offlinePackResolveRef.current = null;
+        }
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
@@ -1443,6 +1568,10 @@ function App() {
         setLoadingDetail("");
         setStatus(`Error: ${msg.error}`);
         setWorkerBootError(msg.error);
+        if (offlinePackActiveRef.current && offlinePackResolveRef.current) {
+          offlinePackResolveRef.current(false);
+          offlinePackResolveRef.current = null;
+        }
       }
     };
 
@@ -1505,6 +1634,98 @@ function App() {
     });
   };
 
+  const runOfflinePack = async () => {
+    if (!workerRef.current || offlinePack.phase === "models" || offlinePack.phase === "image") return;
+
+    setOfflinePack({
+      phase: "models",
+      overallPct: 0,
+      detail: "מתחיל הורדת מודלי שפה ו-vision…",
+      error: null,
+      completedAt: offlinePack.completedAt,
+    });
+    setStatus("מוריד חבילה לאופליין…");
+
+    offlinePackActiveRef.current = true;
+
+    const textModelIds = Array.from(
+      new Set([
+        normalizeTextChatModelId(appSettingsRef.current.textChatModelId),
+        ...TEXT_CHAT_MODEL_OPTIONS.map((m) => m.id),
+        CODE_MODEL,
+      ]),
+    );
+    const captionModelIds = [DEFAULT_CAPTION_MODEL_ID];
+
+    const modelsOk = await new Promise<boolean>((resolve) => {
+      offlinePackResolveRef.current = resolve;
+      workerRef.current?.postMessage({
+        type: "preload_all",
+        textModelIds,
+        captionModelIds,
+        dtype: "q4",
+      });
+    });
+
+    if (!modelsOk) {
+      offlinePackActiveRef.current = false;
+      setOfflinePack((p) => ({
+        ...p,
+        phase: "error",
+        error: "הורדת מודלי שפה / vision נכשלה. נסה שוב או נקה מטמון תחילה.",
+      }));
+      return;
+    }
+
+    setOfflinePack((p) => ({
+      ...p,
+      phase: "image",
+      overallPct: Math.max(p.overallPct, 70),
+      detail: "מוריד SD-Turbo (~2.3GB) מקומית…",
+    }));
+
+    const sdOk = await ensureSdTurboLoaded((line) => {
+      setOfflinePack((p) => ({
+        ...p,
+        overallPct: Math.max(p.overallPct, mapImagePhaseProgress(line)),
+        detail: line,
+      }));
+    });
+
+    offlinePackActiveRef.current = false;
+
+    if (!sdOk) {
+      setOfflinePack((p) => ({
+        ...p,
+        phase: "error",
+        error: "SD-Turbo נכשל לטעון. נסה שוב, או בחר Pollinations בענן בהגדרות.",
+      }));
+      return;
+    }
+
+    const at = Date.now();
+    writeOfflinePackCompletedAt(at);
+    setOfflinePack({
+      phase: "done",
+      overallPct: 100,
+      detail: "החבילה מוכנה — אפשר לעבוד offline.",
+      error: null,
+      completedAt: at,
+    });
+    setStatus("חבילת offline הורדה. אפשר לנתק רשת.");
+  };
+
+  const removeOfflinePackMarker = () => {
+    clearOfflinePackCompletedAt();
+    setOfflinePack({
+      phase: "idle",
+      overallPct: 0,
+      detail: "",
+      error: null,
+      completedAt: null,
+    });
+  };
+
   const clearModelCache = async () => {
     if (isGenerating) return;
 
@@ -1544,6 +1765,14 @@ function App() {
       workerRef.current = null;
 
       localStorage.removeItem(MODEL_CACHE_FLAG);
+      clearOfflinePackCompletedAt();
+      setOfflinePack({
+        phase: "idle",
+        overallPct: 0,
+        detail: "",
+        error: null,
+        completedAt: null,
+      });
       setShouldWarmupOnStart(true);
       orchRef.current = null;
 
@@ -1874,6 +2103,9 @@ function App() {
         onClose={() => setSettingsOpen(false)}
         settings={appSettings}
         onSave={persistSettings}
+        offlinePack={offlinePack}
+        onStartOfflinePack={runOfflinePack}
+        onRemoveOfflinePack={removeOfflinePackMarker}
       />
 
       {phase === "start" && (
