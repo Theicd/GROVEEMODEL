@@ -209,6 +209,10 @@ const saveChatSessionsState = (state: ChatSessionsState) => {
           messages: s.messages.map((m) => ({
             ...m,
             content: m.content.length > 12_000 ? `${m.content.slice(0, 12_000)}…` : m.content,
+            thought:
+              m.thought && m.thought.length > 24_000
+                ? `${m.thought.slice(0, 24_000)}…`
+                : m.thought,
             artifact:
               m.artifact && m.artifact.content.length > 500_000
                 ? { ...m.artifact, content: `${m.artifact.content.slice(0, 500_000)}…` }
@@ -826,6 +830,7 @@ function App() {
                 ...next[i],
                 content: artifact ? next[i].content || content : content,
                 artifact: artifact ?? next[i].artifact,
+                thought: thought ?? next[i].thought,
               };
               return next;
             }
@@ -837,6 +842,7 @@ function App() {
               role: "assistant" as const,
               content,
               artifact: artifact ?? undefined,
+              thought: thought ?? undefined,
               modelLabel: "Gemma 4",
             },
           ];
@@ -849,6 +855,7 @@ function App() {
             role: "assistant",
             content,
             artifact: artifact ?? undefined,
+            thought: thought ?? undefined,
             modelLabel: "Gemma 4",
           },
         ]);
@@ -1589,14 +1596,12 @@ function App() {
                   </div>
                   <div className="msg-txt">
                     {msg.images?.length ? <UserAttachedImages images={msg.images} /> : null}
-                    {msg.artifact ? (
-                      <ArtifactChip
-                        kind={msg.artifact.kind}
-                        label={msg.artifact.kind === "html" ? "HTML" : msg.artifact.title}
-                        onOpen={() => openArtifact(msg.artifact!)}
-                      />
-                    ) : null}
-                    <MessageBody content={msg.content} onOpenArtifact={openArtifact} />
+                    <MessageBody
+                      content={msg.content}
+                      onOpenArtifact={openArtifact}
+                      savedThought={msg.thought}
+                      savedArtifact={msg.artifact}
+                    />
                   </div>
                 </article>
               ))}
