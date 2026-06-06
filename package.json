@@ -9,21 +9,23 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "qa:pages": "node --import tsx scripts/qa-pages.mjs"
+    "qa:pages": "node --import tsx scripts/qa-pages.mjs",
+    "check-node": "node scripts/check-node.mjs"
+  },
+  "engines": {
+    "node": ">=18.18.0"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "web-txt2img": "^0.3.1"
+    "react-dom": "^19.2.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@rolldown/binding-win32-x64-msvc": "^1.0.0-rc.17",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -32,7 +34,7 @@
     "tsx": "^4.21.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10",
-    "vitest": "^4.1.5"
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
   }
 }

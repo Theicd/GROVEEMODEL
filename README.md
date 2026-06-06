@@ -4,8 +4,10 @@ Browser UI similar to the Gemma-4 WebGPU demo, running ONNX models locally on th
 
 ## Features
 
-- Load model files directly from Hugging Face (no server inference API).
+- Single local model: **Gemma 4 E2B** (`onnx-community/gemma-4-E2B-it-ONNX`).
+- Load model weights directly from Hugging Face (no server inference API).
 - Chat UI with token streaming from a Web Worker.
+- **Vision:** attach images (file, paste, drag-drop) — Gemma 4 describes them locally.
 - WebGPU first, automatic WASM fallback.
 - Ready for static hosting (GitHub Pages / Vercel / Netlify / HF Spaces).
 
@@ -51,9 +53,10 @@ Console warnings like `Permissions-Policy ... browsing-topics` come from **githu
 
 The repo has a **root `.nojekyll`** file so GitHub Pages does not run Jekyll (which can hide or mishandle static folders like `docs/`).
 
-## Model IDs you can try
+## Model
 
-- `onnx-community/gemma-4-E2B-it-ONNX`
-- `onnx-community/Qwen3-0.6B-ONNX`
+This build uses one ONNX model only:
 
-You can add more supported ONNX models by editing constants in `app/src/App.tsx`.
+- `onnx-community/gemma-4-E2B-it-ONNX` (q4, Transformers.js)
+
+Constants live in `app/src/App.tsx` and `app/src/model.worker.ts`.
