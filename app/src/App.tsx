@@ -1,47 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 import {
-  cleanEnglishImagePrompt,
-  isCodeRequest,
-  isImageGenerationRequest,
+  CODE_TOKEN_CAP,
+  CODE_TOKEN_FLOOR,
+  CONTINUE_CODE_SYSTEM_HINT,
+  isCodeGenerationRequest,
   isRtlText,
   isSimpleGreeting,
-  stripImageEchoes,
+  shouldContinueCode,
+  getArtifactScanContent,
+  splitAssistantStream,
+  trimHistoryForContext,
+  type ChatTurn,
 } from "./chatIntents";
 import {
-  ensureSdTurboLoaded,
-  generateSdTurboPng,
-  getSdTurboSizeNote,
-  isWebGpuStateError,
-  revokeImageUrl,
-  terminateLocalImageWorker,
-} from "./localImageGen";
+  defaultVisionPrompt,
+  MAX_ATTACHMENTS,
+  prepareImageAttachment,
+  type PendingImage,
+  type StoredMessageImage,
+} from "./imageAttachments";
+import { IntroCanvas } from "./IntroCanvas";
+import { ArtifactPanel, type Artifact } from "./ArtifactPanel";
 import {
-  IMAGE_MODEL_OPTIONS,
-  buildPollinationsUrl,
-  normalizePollinationsModel,
-  type PollinationsModelId,
-} from "./cloudImage";
+  buildPersistedAssistantPayload,
+  extractPrimaryArtifact,
+  extractRichParts,
+} from "./artifacts";
 import { formatBytes, requestPersistentStorage } from "./storageReport";
-import {
-  OFFLINE_PACK_COMPONENTS,
-  type OfflinePackUiState,
-  clearOfflinePackCompletedAt,
-  formatOfflinePackCompletedAt,
-  initialOfflinePackState,
-  mapImagePhaseProgress,
-  mapModelsPhaseProgress,
-  offlinePackTotalLabel,
-  readOfflinePackCompletedAt,
-  writeOfflinePackCompletedAt,
-} from "./offlinePack";
-import {
-  type StorageAudit,
-  auditAppStorage,
-  isAuditEmpty,
-  summarizeStorageHeader,
-  summarizeStorageInventory,
-} from "./storageAudit";
 
 type Role = "user" | "assistant";
 
@@ -50,48 +36,59 @@ type ChatMessage = {
   role: Role;
   content: string;
   modelLabel?: string;
-  /** Inline preview for user messages sent with an image */
-  imageDataUrl?: string;
+  /** Full HTML/code source — persisted so chat switching does not corrupt preview. */
+  artifact?: Artifact;
+  /** Native thinking channel — rendered in ThinkingBlock after generation ends. */
+  thought?: string;
+  /** Thumbnails for user-attached images (session memory; not persisted to localStorage). */
+  images?: StoredMessageImage[];
 };
 
 type WorkerOutMessage =
   | { type: "status"; text: string }
-  | { type: "progress"; text: string; progress: number; detail?: string; file?: string }
-  | { type: "loaded"; modelId: string; device: string }
-  | { type: "caption_model_loaded"; modelId: string; device: string }
   | {
-      type: "preload_all_done";
-      textModels: number;
-      captionModels: number;
-      failedTextModelIds?: string[];
-      failedCaptionModelIds?: string[];
+      type: "progress";
+      text: string;
+      progress: number;
+      phase?: "download" | "init";
+      loaded?: number;
+      total?: number;
+      speedBps?: number;
+      detail?: string;
+      file?: string;
     }
+  | { type: "loaded"; modelId: string; device: string }
   | { type: "token"; text: string }
-  | { type: "caption_done"; text: string }
   | { type: "done" }
+  | { type: "aborted" }
   | { type: "error"; error: string };
 
-const DEFAULT_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
-/** Main chat models (Transformers.js ONNX). See https://huggingface.co/collections/webml-community/transformersjs-v4-demos */
-const TEXT_CHAT_MODEL_OPTIONS = [
-  { id: DEFAULT_MODEL, label: "Gemma 4 E2B — עברית/אנגלית (ברירת מחדל)" },
-  {
-    id: "LiquidAI/LFM2.5-1.2B-Thinking-ONNX",
-    label: "LFM2.5 1.2B Thinking — מודל חשיבה (כבד, ~GB+)",
-  },
-  { id: "onnx-community/LFM2.5-350M-ONNX", label: "LFM2.5 350M — קל יחסית" },
-] as const;
-
-const KNOWN_TEXT_CHAT_MODEL_IDS = new Set<string>(TEXT_CHAT_MODEL_OPTIONS.map((o) => o.id));
-
-const normalizeTextChatModelId = (id: string | undefined): string =>
-  id && KNOWN_TEXT_CHAT_MODEL_IDS.has(id) ? id : DEFAULT_MODEL;
-
-/** Public ONNX repo for Transformers.js (the *-Instruct-ONNX* repo returns 401 for anonymous fetch). */
-const CODE_MODEL = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
-const MODEL_CACHE_FLAG = "grovee_models_warmed_v1";
+const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
+
+/** Friendly product tips while Gemma downloads — explain what GROVEE is. */
+const LOADING_DOWNLOAD_TIPS = [
+  "GROVEE הוא צ'אט AI חינמי — רץ על המחשב שלך, בלי מנוי ובלי שליחת שיחות לענן.",
+  "שואלים בעברית או באנגלית, מקבלים תשובות ישירות מהדפדפן — המודל Gemma 4 E2B נטען אצלך.",
+  "הפרטיות נשארת אצלך: מה שאתה כותב לא עובר לשרת AI חיצוני.",
+  "אחרי שההורדה הראשונה תסתיים, אפשר לשוחח גם בלי חיבור אינטרנט.",
+  "אפשר לבקש קוד, הסברים, סיפורים ודפי HTML — GROVEE מייצר הכול מקומית.",
+  "זו לא אפליקציית ענן: המשקולות (~3.9GB, פעם ראשונה) נשמרות במטמון הדפדפן.",
+  "GROVEE בנוי על Transformers.js — AI בדפדפן, כולל ראייה (תמונות) מקומית.",
+  "צרף תמונה בכפתור 📎 או הדבק (Ctrl+V) — המודל יתאר ויפענח אותה אצלך במחשב.",
+  "כפתור Think מפעיל <|think|> native של Gemma 4; Search מוסיף הקשר מוויקיפדיה ו-GitHub.",
+  "ההורדה ארוכה רק בפעם הראשונה — בפעם הבאה GROVEE יעלה הרבה יותר מהר.",
+  "עוד רגע תוכל לפתוח שיחה חדשה ולדבר עם העוזר המקומי שלך — חינם לגמרי.",
+] as const;
+
+const LOADING_INIT_TIPS = [
+  "GROVEE כמעט מוכן — טוענים את Gemma לזיכרון (ONNX / WebGPU).",
+  "הקבצים כבר אצלך — זה השלב האחרון לפני הצ'אט החינמי.",
+  "עוד שנייה ותוכל לשאול כל שאלה — בלי לחכות לענן.",
+] as const;
+
+const LOADING_TIP_INTERVAL_MS = 10_000;
 
 type ChatSession = {
   id: string;
@@ -102,20 +99,69 @@ type ChatSession = {
 
 type ChatSessionsState = { activeId: string; sessions: ChatSession[] };
 
+type TunableModelSettings = {
+  temperature: number;
+  maxNewTokens: number;
+  repetitionPenalty: number;
+  topP: number;
+  systemPrompt: string;
+};
+
+type InferenceBackendPreference = "auto" | "webgpu" | "wasm";
+
+type AppSettings = {
+  hfRemoteHost: string;
+  inferenceBackend: InferenceBackendPreference;
+  gemma: TunableModelSettings;
+};
+
+const defaultGemmaSettings: TunableModelSettings = {
+  temperature: 0.2,
+  maxNewTokens: 2048,
+  repetitionPenalty: 1.12,
+  topP: 0.9,
+  systemPrompt:
+    'You are a helpful assistant. Always respond in clear, well-formed sentences in the same language as the user (Hebrew stays RTL-friendly: full sentences, correct punctuation at end of sentence). Do not repeat role labels. When the user asks for HTML/CSS/JS (including a single-file page), output exactly one fenced block: ```html ... ``` containing a complete, valid document: <!DOCTYPE html>, <html lang="he" dir="rtl">, <head> with <meta charset="UTF-8">, embedded <style> and <script> as needed, and <body>. No duplicate stray tags; no broken CSS.',
+};
+
+const defaultAppSettings = (): AppSettings => ({
+  hfRemoteHost: "",
+  inferenceBackend: "auto",
+  gemma: { ...defaultGemmaSettings },
+});
+
+const loadSettings = (): AppSettings => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return defaultAppSettings();
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    return {
+      ...defaultAppSettings(),
+      hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
+      inferenceBackend:
+        parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
+          ? parsed.inferenceBackend
+          : "auto",
+      gemma: { ...defaultGemmaSettings, ...parsed.gemma },
+    };
+  } catch {
+    return defaultAppSettings();
+  }
+};
+
+const saveSettings = (s: AppSettings) => {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    // ignore
+  }
+};
+
 const sessionTitleFromMessages = (sessionMessages: ChatMessage[]): string => {
   const firstUser = sessionMessages.find((m) => m.role === "user")?.content?.trim();
   if (!firstUser) return "שיחה חדשה";
   return firstUser.slice(0, 28) + (firstUser.length > 28 ? "…" : "");
 };
-
-const stripImageDataForStorage = (sessionMessages: ChatMessage[]): ChatMessage[] =>
-  sessionMessages.map((m) => {
-    if (!m.imageDataUrl) return m;
-    const { id, role, content, modelLabel } = m;
-    const trimmed: ChatMessage = { id, role, content };
-    if (modelLabel !== undefined) trimmed.modelLabel = modelLabel;
-    return trimmed;
-  });
 
 const newChatSessionId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -151,13 +197,7 @@ const loadChatSessionsState = (): ChatSessionsState => {
 };
 
 const saveChatSessionsState = (state: ChatSessionsState) => {
-  const serializable = {
-    activeId: state.activeId,
-    sessions: state.sessions.map((s) => ({
-      ...s,
-      messages: stripImageDataForStorage(s.messages),
-    })),
-  };
+  const serializable = { activeId: state.activeId, sessions: state.sessions };
   try {
     localStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(serializable));
   } catch {
@@ -166,9 +206,13 @@ const saveChatSessionsState = (state: ChatSessionsState) => {
         activeId: state.activeId,
         sessions: state.sessions.map((s) => ({
           ...s,
-          messages: stripImageDataForStorage(s.messages).map((m) => ({
+          messages: s.messages.map((m) => ({
             ...m,
             content: m.content.length > 12_000 ? `${m.content.slice(0, 12_000)}…` : m.content,
+            artifact:
+              m.artifact && m.artifact.content.length > 500_000
+                ? { ...m.artifact, content: `${m.artifact.content.slice(0, 500_000)}…` }
+                : m.artifact,
           })),
         })),
       };
@@ -187,190 +231,8 @@ const formatInferenceDevice = (device: string): string => {
   return device;
 };
 
-const shortLabelForTextModel = (id: string): string => {
-  if (id.includes("LFM2.5") && id.toLowerCase().includes("thinking")) return "LFM2.5 Thinking";
-  if (id.includes("LFM2.5")) return "LFM2.5";
-  if (id.toLowerCase().includes("gemma")) return "Gemma 4";
-  return "Assistant";
-};
-
-const VISION_MODEL_OPTIONS = [
-  { id: "Xenova/vit-gpt2-image-captioning", label: "ViT-GPT2 Captioning (Fast)" },
-  { id: "onnx-community/moondream2", label: "Moondream2 (Better detail)" },
-] as const;
-
-/** Chat + warmup only use the fast caption model; Moondream is omitted to avoid multi‑GB RAM / OOM on refresh. */
-const DEFAULT_CAPTION_MODEL_ID = VISION_MODEL_OPTIONS[0].id;
-
-type TunableModelSettings = {
-  temperature: number;
-  maxNewTokens: number;
-  repetitionPenalty: number;
-  topP: number;
-  systemPrompt: string;
-};
-
-const defaultGemmaSettings: TunableModelSettings = {
-  temperature: 0.2,
-  maxNewTokens: 512,
-  repetitionPenalty: 1.12,
-  topP: 0.9,
-  systemPrompt:
-    "You are a helpful assistant. Always respond in clear, well-formed sentences in the same language as the user (Hebrew stays RTL-friendly: full sentences, correct punctuation at end of sentence). Do not repeat role labels. When the user asks for HTML/CSS/JS (including a single-file page), output exactly one fenced block: ```html ... ``` containing a complete, valid document: <!DOCTYPE html>, <html lang=\"he\" dir=\"rtl\">, <head> with <meta charset=\"UTF-8\">, embedded <style> and <script> as needed, and <body>. No duplicate stray tags; no broken CSS.",
-};
-
-const defaultCoderSettings: TunableModelSettings = {
-  temperature: 0.08,
-  maxNewTokens: 768,
-  repetitionPenalty: 1.06,
-  topP: 0.88,
-  systemPrompt:
-    "You are an expert programmer. Output working code with brief comments. Prefer markdown code fences with language tags.",
-};
-
-/** ONNX Runtime backend: auto = WebGPU then WASM; wasm = CPU everywhere; webgpu = GPU only (fails on bad drivers). */
-type InferenceBackendPreference = "auto" | "webgpu" | "wasm";
-
-type ImageProviderId = "pollinations" | "local_sd_turbo";
-
-type AppSettings = {
-  /** Primary ONNX text model loaded on Start (see TEXT_CHAT_MODEL_OPTIONS). */
-  textChatModelId: string;
-  /**
-   * Optional Hugging Face Hub mirror (Transformers.js `env.remoteHost`), e.g. https://hf-mirror.com
-   * when https://huggingface.co is blocked. Empty = official hub.
-   */
-  hfRemoteHost: string;
-  /** Where Transformers.js runs models (important for different GPUs / drivers). */
-  inferenceBackend: InferenceBackendPreference;
-  gemma: TunableModelSettings;
-  coder: TunableModelSettings;
-  visionMaxTokens: number;
-  /** "pollinations" = cloud HTTP link · "local_sd_turbo" = in-browser SD-Turbo (~2.3GB cache). */
-  imageProvider: ImageProviderId;
-  /** Pollinations model id (flux/turbo/sdxl). */
-  imageBackendModel: PollinationsModelId;
-};
-
-const defaultAppSettings = (): AppSettings => ({
-  textChatModelId: DEFAULT_MODEL,
-  hfRemoteHost: "",
-  inferenceBackend: "auto",
-  gemma: { ...defaultGemmaSettings },
-  coder: { ...defaultCoderSettings },
-  visionMaxTokens: 96,
-  /**
-   * Default = fully local: image is rendered in the browser by SD-Turbo (web-txt2img).
-   * First run downloads ~2.3GB once, then no network needed for images.
-   * Pollinations stays available in Settings for users who want a fast cloud link.
-   */
-  imageProvider: "local_sd_turbo",
-  imageBackendModel: "flux",
-});
-
-/** One-time flag: existing users had `pollinations` as the default. Reset them once to local. */
-const IMAGE_PROVIDER_LOCAL_DEFAULT_FLAG = "grovee_image_provider_local_default_v1";
-
-const loadSettings = (): AppSettings => {
-  try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return defaultAppSettings();
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
-    let imageProvider: ImageProviderId =
-      parsed.imageProvider === "local_sd_turbo" || parsed.imageProvider === "pollinations"
-        ? parsed.imageProvider
-        : defaultAppSettings().imageProvider;
-    try {
-      if (
-        imageProvider === "pollinations" &&
-        localStorage.getItem(IMAGE_PROVIDER_LOCAL_DEFAULT_FLAG) !== "1"
-      ) {
-        imageProvider = "local_sd_turbo";
-        localStorage.setItem(IMAGE_PROVIDER_LOCAL_DEFAULT_FLAG, "1");
-      }
-    } catch {
-      // ignore quota / private-mode failures
-    }
-    return {
-      ...defaultAppSettings(),
-      textChatModelId: normalizeTextChatModelId(
-        typeof parsed.textChatModelId === "string" ? parsed.textChatModelId : undefined,
-      ),
-      hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
-      inferenceBackend:
-        parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
-          ? parsed.inferenceBackend
-          : "auto",
-      gemma: { ...defaultGemmaSettings, ...parsed.gemma },
-      coder: { ...defaultCoderSettings, ...parsed.coder },
-      visionMaxTokens:
-        typeof parsed.visionMaxTokens === "number" && Number.isFinite(parsed.visionMaxTokens)
-          ? Math.min(256, Math.max(32, Math.round(parsed.visionMaxTokens)))
-          : defaultAppSettings().visionMaxTokens,
-      imageProvider,
-      imageBackendModel: normalizePollinationsModel(
-        typeof parsed.imageBackendModel === "string" ? parsed.imageBackendModel : undefined,
-      ),
-    };
-  } catch {
-    return defaultAppSettings();
-  }
-};
-
-const saveSettings = (s: AppSettings) => {
-  try {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(s));
-  } catch {
-    // ignore
-  }
-};
-
-type ImageOrch =
-  | { step: "translate"; userText: string }
-  | { step: "summarize"; userText: string; englishPrompt: string; imageUrl: string };
-
-type CodeOrch =
-  | { step: "route"; userText: string }
-  | { step: "code"; userText: string; techTask: string }
-  | { step: "summarize"; userText: string; techTask: string; codeOut: string };
-
-type CaptionOrch = { step: "polish"; userText: string; rawCaption: string };
-
-type Orchestration = { kind: "image"; data: ImageOrch } | { kind: "code"; data: CodeOrch } | { kind: "caption"; data: CaptionOrch };
-
-/** Strip common chat-template junk from raw model output. */
-const cleanModelOutput = (input: string): string => {
-  const cleaned = input
-    .replace(/\r/g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(User|Assistant|System)\s*:/i.test(line))
-    .join("\n")
-    .replace(/^["']+|["']+$/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  const lines = cleaned
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const deduped: string[] = [];
-  for (const line of lines) {
-    if (deduped[deduped.length - 1] !== line) deduped.push(line);
-  }
-  const normalized = deduped.join("\n");
-
-  if (normalized.length) return normalized;
-  const raw = input.trim();
-  return raw.length ? raw.slice(0, 2000) : "No response generated.";
-};
-
-/** GitHub requires a User-Agent on API requests. */
 const WEB_LOOKUP_USER_AGENT = "GROVEEMODEL/1.0 (browser chat; no backend)";
 
-/**
- * When the user writes in Hebrew (no Latin tokens), map common tech phrases to English
- * so GitHub repository search can still return repos.
- */
 const expandHebrewTechSearchTerms = (query: string): string => {
   const parts: string[] = [];
   if (/מצלמ[ות]? אבטחה|מצלמת אבטחה|אבטחה ומעקב/i.test(query)) {
@@ -407,10 +269,7 @@ const fetchWikipediaSnippets = async (query: string, lang: "en" | "he"): Promise
   const endpoint = `https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encoded}&limit=4&namespace=0&format=json&origin=*`;
   try {
     const response = await fetch(endpoint);
-    if (!response.ok) {
-      console.warn("[GROVEE] Wikipedia HTTP", response.status, lang, endpoint.slice(0, 96));
-      return "";
-    }
+    if (!response.ok) return "";
     const data = (await response.json()) as [string, string[], string[], string[]];
     const titles = data[1] ?? [];
     const snippets = data[2] ?? [];
@@ -419,8 +278,7 @@ const fetchWikipediaSnippets = async (query: string, lang: "en" | "he"): Promise
     return titles
       .map((title, i) => `- ${title}: ${snippets[i] ?? ""} (${urls[i] ?? ""})`)
       .join("\n");
-  } catch (e) {
-    console.warn("[GROVEE] Wikipedia fetch failed", lang, e);
+  } catch {
     return "";
   }
 };
@@ -437,10 +295,7 @@ const fetchGitHubRepoHits = async (searchQuery: string): Promise<string> => {
         "User-Agent": WEB_LOOKUP_USER_AGENT,
       },
     });
-    if (!response.ok) {
-      console.warn("[GROVEE] GitHub API HTTP", response.status, url.slice(0, 120));
-      return "";
-    }
+    if (!response.ok) return "";
     const data = (await response.json()) as {
       items?: Array<{ full_name: string; description: string | null; html_url: string; stargazers_count: number }>;
     };
@@ -452,13 +307,11 @@ const fetchGitHubRepoHits = async (searchQuery: string): Promise<string> => {
           `- ${item.full_name}${item.description ? `: ${item.description}` : ""} (${item.html_url}) ★${item.stargazers_count}`,
       )
       .join("\n");
-  } catch (e) {
-    console.warn("[GROVEE] GitHub fetch failed", e);
+  } catch {
     return "";
   }
 };
 
-/** Wikipedia (en + optional he) + GitHub repo search — not a full web search engine. */
 const fetchWebContext = async (query: string): Promise<string> => {
   const q = query.trim();
   if (!q) return "";
@@ -479,151 +332,108 @@ const fetchWebContext = async (query: string): Promise<string> => {
   return blocks.join("\n\n");
 };
 
-type MsgPart = { type: "text" | "html" | "image" | "code"; value: string; lang?: string };
-
-/** Build srcDoc for sandboxed iframe: full documents pass through; fragments get a minimal shell. */
-const normalizeHtmlForIframe = (fragmentOrDoc: string): string => {
-  const t = fragmentOrDoc.trim();
-  const headSample = t.slice(0, 600).toLowerCase();
-  if (headSample.includes("<!doctype") || headSample.startsWith("<html")) {
-    if (!headSample.includes("charset")) {
-      if (/<head\b/i.test(t)) {
-        return t.replace(/<head\b[^>]*>/i, (h) => `${h}<meta charset="utf-8">`);
-      }
-      return `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${t}</body></html>`;
-    }
-    return t;
-  }
-  return `<!DOCTYPE html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{min-height:100%;margin:0;}</style></head><body>${t}</body></html>`;
-};
-
-const extractRichParts = (content: string): MsgPart[] => {
-  const parts: MsgPart[] = [];
-  let remaining = content;
-  const pushText = (t: string) => {
-    if (t) parts.push({ type: "text", value: t });
-  };
-
-  while (remaining.length) {
-    type Cand = { idx: number; len: number; part: MsgPart };
-    const candidates: Cand[] = [];
-
-    const htmlFence = remaining.match(/```html\s*([\s\S]*?)(?:```|$)/i);
-    if (htmlFence && htmlFence.index !== undefined && (htmlFence[1].trim().length > 0 || htmlFence[0].includes("```"))) {
-      candidates.push({
-        idx: htmlFence.index,
-        len: htmlFence[0].length,
-        part: { type: "html", value: htmlFence[1].trim() },
-      });
-    }
-
-    const codeFence = remaining.match(/```(?!html)(\w*)\s*([\s\S]*?)```/i);
-    if (codeFence && codeFence.index !== undefined) {
-      candidates.push({
-        idx: codeFence.index,
-        len: codeFence[0].length,
-        part: { type: "code", value: codeFence[2], lang: codeFence[1] || "text" },
-      });
-    }
-
-    const imgMatch = remaining.match(/!\[([^\]]*)\]\(([^)]+)\)/);
-    if (imgMatch && imgMatch.index !== undefined) {
-      candidates.push({
-        idx: imgMatch.index,
-        len: imgMatch[0].length,
-        part: { type: "image", value: imgMatch[2].trim() },
-      });
-    }
-
-    const fullDoc = remaining.match(/(?:<!DOCTYPE\s+html[^>]*>|<html\b[^>]*>)[\s\S]*?<\/html>/i);
-    if (fullDoc && fullDoc.index !== undefined) {
-      candidates.push({
-        idx: fullDoc.index,
-        len: fullDoc[0].length,
-        part: { type: "html", value: fullDoc[0].trim() },
-      });
-    }
-
-    let best: Cand | null = null;
-    for (const c of candidates) {
-      if (!best || c.idx < best.idx) best = c;
-    }
-
-    if (!best) {
-      pushText(remaining);
-      break;
-    }
-
-    pushText(remaining.slice(0, best.idx));
-    parts.push(best.part);
-    remaining = remaining.slice(best.idx + best.len);
-  }
-
-  if (!parts.length) parts.push({ type: "text", value: content });
-  return parts;
-};
-
-function HtmlSandboxBlock({ html }: { html: string }) {
-  const [tab, setTab] = useState<"preview" | "source">("preview");
-  const srcDoc = useMemo(() => normalizeHtmlForIframe(html), [html]);
-
+function ArtifactChip({
+  kind,
+  label,
+  onOpen,
+}: {
+  kind: "code" | "html";
+  label: string;
+  onOpen: () => void;
+}) {
   return (
-    <div className="html-preview-wrap">
-      <div className="html-preview-toolbar">
-        <span className="html-preview-label">HTML</span>
-        <div className="html-preview-tabs" role="tablist" aria-label="HTML view">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "preview"}
-            className={`html-preview-tab ${tab === "preview" ? "active" : ""}`}
-            onClick={() => setTab("preview")}
-          >
-            תצוגה חיה
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "source"}
-            className={`html-preview-tab ${tab === "source" ? "active" : ""}`}
-            onClick={() => setTab("source")}
-          >
-            מקור
-          </button>
-        </div>
-      </div>
-      {tab === "preview" ? (
-        <iframe
-          className="html-preview-frame"
-          title="HTML preview"
-          sandbox="allow-scripts allow-forms"
-          srcDoc={srcDoc}
-        />
-      ) : (
-        <pre className="html-source-block">
-          <code>{html}</code>
-        </pre>
-      )}
+    <button type="button" className="artifact-chip" onClick={onOpen}>
+      <span className="artifact-chip-icon" aria-hidden="true">
+        {kind === "html" ? "◫" : "{}"}
+      </span>
+      <span className="artifact-chip-text">פתח {label} בחלונית</span>
+      <span className="artifact-chip-arrow" aria-hidden="true">
+        ←
+      </span>
+    </button>
+  );
+}
+
+function ThinkingBlock({ thought, streaming }: { thought: string; streaming?: boolean }) {
+  if (!thought.trim()) return null;
+  return (
+    <details className="thinking-block" open={streaming}>
+      <summary>{streaming ? "חושב…" : "תהליך חשיבה"}</summary>
+      <pre className="thinking-block-body">{thought}</pre>
+    </details>
+  );
+}
+
+function UserAttachedImages({ images }: { images: StoredMessageImage[] }) {
+  if (!images.length) return null;
+  return (
+    <div className="msg-user-images">
+      {images.map((img) => (
+        <img key={img.id} className="msg-user-image" src={img.previewUrl} alt="" loading="lazy" />
+      ))}
     </div>
   );
 }
 
-function MessageBody({ content }: { content: string }) {
-  const parts = useMemo(() => extractRichParts(content), [content]);
-  const dir = isRtlText(content) ? "rtl" : "ltr";
+function MessageBody({
+  content,
+  onOpenArtifact,
+  showThinking = false,
+  savedThought,
+  savedArtifact,
+}: {
+  content: string;
+  onOpenArtifact?: (artifact: Artifact) => void;
+  showThinking?: boolean;
+  savedThought?: string;
+  savedArtifact?: Artifact;
+}) {
+  const streamParts = useMemo(() => splitAssistantStream(content, showThinking), [content, showThinking]);
+  const thoughtText = showThinking ? streamParts.thought : (savedThought ?? "");
+  const displayContent = showThinking ? streamParts.answer : content;
+  const parts = useMemo(() => extractRichParts(displayContent), [displayContent]);
+  const dir = isRtlText(displayContent || thoughtText) ? "rtl" : "ltr";
 
   return (
     <div className="msg-body" dir={dir}>
+      {thoughtText.trim() ? (
+        <ThinkingBlock thought={thoughtText} streaming={showThinking && streamParts.thinkingInProgress} />
+      ) : null}
+      {savedArtifact && onOpenArtifact ? (
+        <ArtifactChip
+          kind={savedArtifact.kind}
+          label={savedArtifact.kind === "html" ? "HTML" : savedArtifact.title}
+          onOpen={() => onOpenArtifact(savedArtifact)}
+        />
+      ) : null}
       {parts.map((part, i) => {
+        if (savedArtifact && (part.type === "html" || part.type === "code")) return null;
         if (part.type === "html" && part.value.length > 0) {
-          return <HtmlSandboxBlock key={i} html={part.value} />;
+          if (onOpenArtifact) {
+            return (
+              <ArtifactChip
+                key={i}
+                kind="html"
+                label="HTML"
+                onOpen={() => onOpenArtifact({ kind: "html", content: part.value, title: "HTML" })}
+              />
+            );
+          }
         }
         if (part.type === "code") {
-          return (
-            <pre key={i} className="msg-code-block">
-              <code className={part.lang ? `lang-${part.lang}` : undefined}>{part.value}</code>
-            </pre>
-          );
+          if (onOpenArtifact) {
+            const lang = part.lang || "code";
+            return (
+              <ArtifactChip
+                key={i}
+                kind="code"
+                label={lang}
+                onOpen={() =>
+                  onOpenArtifact({ kind: "code", content: part.value, lang: part.lang, title: lang })
+                }
+              />
+            );
+          }
         }
         if (part.type === "image") {
           return (
@@ -647,12 +457,6 @@ function SettingsModal({
   onClose,
   settings,
   onSave,
-  offlinePack,
-  onStartOfflinePack,
-  onRemoveOfflinePack,
-  storageSnapshot,
-  storageScanning,
-  onRefreshStorage,
   onClearCache,
   cacheClearing,
 }: {
@@ -660,445 +464,161 @@ function SettingsModal({
   onClose: () => void;
   settings: AppSettings;
   onSave: (s: AppSettings) => void;
-  offlinePack: OfflinePackUiState;
-  onStartOfflinePack: () => void;
-  onRemoveOfflinePack: () => void;
-  storageSnapshot: StorageAudit | null;
-  storageScanning: boolean;
-  onRefreshStorage: () => void;
   onClearCache: () => void;
   cacheClearing: boolean;
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
 
   if (!open) return null;
-  const offlineRunning = offlinePack.phase === "models" || offlinePack.phase === "image";
-  const offlineDone = offlinePack.phase === "done";
 
-  const row = (label: string, children: ReactNode) => (
-    <label className="settings-row">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
+  const setBackend = (inferenceBackend: InferenceBackendPreference) => {
+    setDraft((d) => ({ ...d, inferenceBackend }));
+  };
+
+  const backendOptions: { id: InferenceBackendPreference; label: string; hint: string }[] = [
+    { id: "auto", label: "Auto", hint: "WebGPU אם אפשר, אחרת WASM" },
+    { id: "wasm", label: "WASM", hint: "מעבד — יציב" },
+    { id: "webgpu", label: "WebGPU", hint: "GPU — מהיר יותר" },
+  ];
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <div className="settings-panel glass">
+    <div
+      className="settings-overlay modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="settings-panel modal-box">
         <div className="settings-head">
-          <h2 id="settings-title">Model settings</h2>
-          <button type="button" className="icon-close" onClick={onClose} aria-label="Close">
+          <div className="settings-head-brand">
+            <span className="settings-head-badge">G</span>
+            <div>
+              <h2 id="settings-title">הגדרות Gemma</h2>
+              <p className="settings-head-sub">GEMMA 4 E2B · מקומי בדפדפן</p>
+            </div>
+          </div>
+          <button type="button" className="icon-close settings-close" onClick={onClose} aria-label="סגור">
             ×
           </button>
         </div>
-        <p className="settings-hint">
-          מודל הצ&apos;אט הראשי (למשל Gemma או LFM Thinking) מטפל בשיחה; לבקשות קוד האפליקציה מפיקה משימה טכנית באנגלית ואז{" "}
-          <strong>Qwen Coder</strong> כותב קוד. תמונות: פרומפט באנגלית אוטומטית, ענן או SD-Turbo מקומי.
-        </p>
 
-        <section className="settings-section">
-          <h3>מודל צ&apos;אט ראשי (ONNX / Transformers.js)</h3>
-          <p className="settings-micro">
-            אוסף דמוים:{" "}
-            <a
-              href="https://huggingface.co/collections/webml-community/transformersjs-v4-demos"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Transformers.js V4 demos
-            </a>
-            . אחרי שינוי מודל יש ללחוץ שוב <strong>התחל</strong> כדי לטעון משקולות.
-          </p>
-          <label className="settings-row block">
-            <span>בחירת מודל</span>
-            <select
-              value={draft.textChatModelId}
-              onChange={(e) => setDraft((d) => ({ ...d, textChatModelId: e.target.value }))}
-            >
-              {TEXT_CHAT_MODEL_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="settings-row block">
-            <span>HF mirror (אם Failed to fetch)</span>
-            <input
-              type="url"
-              inputMode="url"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="ריק = huggingface.co · לדוגמה: https://hf-mirror.com"
-              value={draft.hfRemoteHost}
-              onChange={(e) => setDraft((d) => ({ ...d, hfRemoteHost: e.target.value }))}
-            />
-          </label>
-          <p className="settings-micro">
-            אם יש <code>Failed to fetch</code> ל־huggingface.co, האפליקציה מנסה פעם אחת אוטומטית דרך hf-mirror.com. אם גם זה נכשל: הגדר מראה ידנית, שמור → נקה מטמון מודל → התחל (או רשת/VPN אחרים).
-          </p>
-          <label className="settings-row block">
-            <span>מנוע חישוב (כל כרטיסי המסך)</span>
-            <select
-              value={draft.inferenceBackend}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  inferenceBackend: e.target.value as InferenceBackendPreference,
-                }))
-              }
-            >
-              <option value="auto">Auto — WebGPU אם אפשר, אחרת WASM על המעבד</option>
-              <option value="wasm">WASM — רק מעבד (יציב בכל מחשב, איטי יותר)</option>
-              <option value="webgpu">WebGPU — רק כרטיס מתאים (כשלים אפשריים אם אין תמיכה)</option>
-            </select>
-          </label>
-          <p className="settings-micro">
-            כרטיסים ודרייברים שונים מתנהגים אחרת; Auto מומלץ. אחרי שינוי: שמור → לחץ שוב <strong>התחל</strong>.
-          </p>
-          <p className="settings-micro">
-            Linux (מינט וכו&apos;): אם אין מתאם WebGPU, האפליקציה עוברת אוטומטית ל־WASM על המעבד — השיחה אמורה לעלות. ל־GPU:
-            דפדפן מעודכן (Chromium מומלץ), דרייברים ל־NVIDIA / AMD / Intel, ובלינוקס לעיתים חבילות Vulkan (למשל{" "}
-            <code>mesa-vulkan-drivers</code>).
-          </p>
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            מנוע חישוב
+          </h3>
+          <div className="settings-backend-pills" role="radiogroup" aria-label="מנוע חישוב">
+            {backendOptions.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={draft.inferenceBackend === opt.id}
+                className={`settings-backend-pill ${draft.inferenceBackend === opt.id ? "active" : ""}`}
+                onClick={() => setBackend(opt.id)}
+              >
+                <span className="settings-backend-pill-label">{opt.label}</span>
+                <span className="settings-backend-pill-hint">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
         </section>
 
-        <section className="settings-section">
-          <h3>פרמטרי צ&apos;אט (טמפרטורה, פרומפט מערכת)</h3>
-          {row(
-            "Temperature",
-            <input
-              type="number"
-              step={0.05}
-              min={0}
-              max={2}
-              value={draft.gemma.temperature}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, gemma: { ...d.gemma, temperature: Number(e.target.value) } }))
-              }
-            />,
-          )}
-          {row(
-            "Max tokens",
-            <input
-              type="number"
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            פרמטרי המודל
+          </h3>
+          <div className="settings-grid">
+            <label className="settings-field">
+              <span className="settings-field-label">טמפרטורה</span>
+              <input
+                type="number"
+                step={0.05}
+                min={0}
+                max={2}
+                value={draft.gemma.temperature}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, gemma: { ...d.gemma, temperature: Number(e.target.value) } }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">מקסימום טוקנים</span>
+              <input
+                type="number"
               min={32}
-              max={2048}
-              value={draft.gemma.maxNewTokens}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, gemma: { ...d.gemma, maxNewTokens: Number(e.target.value) } }))
-              }
-            />,
-          )}
-          {row(
-            "Top P",
-            <input
-              type="number"
-              step={0.05}
-              min={0}
-              max={1}
-              value={draft.gemma.topP}
-              onChange={(e) => setDraft((d) => ({ ...d, gemma: { ...d.gemma, topP: Number(e.target.value) } }))}
-            />,
-          )}
-          {row(
-            "Repetition penalty",
-            <input
-              type="number"
-              step={0.02}
-              min={1}
-              max={2}
-              value={draft.gemma.repetitionPenalty}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, gemma: { ...d.gemma, repetitionPenalty: Number(e.target.value) } }))
-              }
-            />,
-          )}
-          <label className="settings-row block">
-            <span>System prompt</span>
+              max={4096}
+                value={draft.gemma.maxNewTokens}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, gemma: { ...d.gemma, maxNewTokens: Number(e.target.value) } }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">Top P</span>
+              <input
+                type="number"
+                step={0.05}
+                min={0}
+                max={1}
+                value={draft.gemma.topP}
+                onChange={(e) => setDraft((d) => ({ ...d, gemma: { ...d.gemma, topP: Number(e.target.value) } }))}
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">קנס חזרות</span>
+              <input
+                type="number"
+                step={0.02}
+                min={1}
+                max={2}
+                value={draft.gemma.repetitionPenalty}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, gemma: { ...d.gemma, repetitionPenalty: Number(e.target.value) } }))
+                }
+              />
+            </label>
+          </div>
+          <label className="settings-field settings-field--full">
+            <span className="settings-field-label">הנחיה ראשית (System prompt)</span>
             <textarea
-              rows={3}
+              rows={5}
+              className="settings-prompt-area"
               value={draft.gemma.systemPrompt}
               onChange={(e) => setDraft((d) => ({ ...d, gemma: { ...d.gemma, systemPrompt: e.target.value } }))}
+              dir="ltr"
             />
           </label>
         </section>
 
-        <section className="settings-section">
-          <h3>Code model (Qwen Coder)</h3>
-          {row(
-            "Temperature",
-            <input
-              type="number"
-              step={0.05}
-              min={0}
-              max={1.5}
-              value={draft.coder.temperature}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, coder: { ...d.coder, temperature: Number(e.target.value) } }))
-              }
-            />,
-          )}
-          {row(
-            "Max tokens",
-            <input
-              type="number"
-              min={64}
-              max={2048}
-              value={draft.coder.maxNewTokens}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, coder: { ...d.coder, maxNewTokens: Number(e.target.value) } }))
-              }
-            />,
-          )}
-          {row(
-            "Top P",
-            <input
-              type="number"
-              step={0.05}
-              min={0}
-              max={1}
-              value={draft.coder.topP}
-              onChange={(e) => setDraft((d) => ({ ...d, coder: { ...d.coder, topP: Number(e.target.value) } }))}
-            />,
-          )}
-          <label className="settings-row block">
-            <span>System prompt</span>
-            <textarea
-              rows={2}
-              value={draft.coder.systemPrompt}
-              onChange={(e) => setDraft((d) => ({ ...d, coder: { ...d.coder, systemPrompt: e.target.value } }))}
-            />
-          </label>
+        <section className="settings-card settings-card--danger">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot settings-card-dot--warn" aria-hidden="true" />
+            מטמון המודל
+          </h3>
+          <p className="settings-danger-note">מוחק ~3.9GB של משקולות Gemma (טקסט + ראייה) מהדפדפן. יידרש להוריד מחדש.</p>
+          <button type="button" className="settings-btn-danger" onClick={onClearCache} disabled={cacheClearing}>
+            {cacheClearing ? "מנקה מטמון…" : "נקה מטמון מודל"}
+          </button>
         </section>
 
-        <section className="settings-section">
-          <h3>Vision caption</h3>
-          {row(
-            "Max caption tokens",
-            <input
-              type="number"
-              min={32}
-              max={256}
-              value={draft.visionMaxTokens}
-              onChange={(e) => setDraft((d) => ({ ...d, visionMaxTokens: Number(e.target.value) }))}
-            />,
-          )}
-        </section>
-
-        <section className="settings-section">
-          <h3>Image generation</h3>
-          <label className="settings-row block">
-            <span>Engine</span>
-            <select
-              value={draft.imageProvider}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, imageProvider: e.target.value as ImageProviderId }))
-              }
-            >
-              <option value="pollinations">Cloud — Pollinations (HTTP link, fast, needs network)</option>
-              <option value="local_sd_turbo">
-                Local — SD-Turbo in browser ({getSdTurboSizeNote()})
-              </option>
-            </select>
-          </label>
-          {draft.imageProvider === "pollinations" && (
-            <label className="settings-row block">
-              <span>Pollinations model</span>
-              <select
-                value={draft.imageBackendModel}
-                onChange={(e) =>
-                  setDraft((d) => ({
-                    ...d,
-                    imageBackendModel: normalizePollinationsModel(e.target.value),
-                  }))
-                }
-              >
-                {IMAGE_MODEL_OPTIONS.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <p className="settings-micro">
-            <strong>למה יש בכלל אפשרות ענן?</strong> ה־LLM (Gemma) רץ מקומית ומכין רק את הפרומפט באנגלית. את הפיקסלים
-            עצמם של התמונה צריך מודל דיפוזיה (SD-Turbo) — או שירץ אצלך בדפדפן, או שיוצר אצל ספק ענן (Pollinations).
-          </p>
-          <p className="settings-micro">
-            ברירת מחדל: <strong>מקומי</strong> (SD-Turbo) — פעם ראשונה דורשת רשת להורדת ~2.3GB, אחר כך התמונה נוצרת בלי
-            לינקי HTTP. אם הטעינה המקומית נכשלת, האפליקציה נופלת אוטומטית ל־Pollinations (ענן).
-          </p>
-          <p className="settings-micro">
-            <a href="https://image.pollinations.ai" target="_blank" rel="noreferrer">
-              image.pollinations.ai
-            </a>{" "}
-            ·{" "}
-            <a href="https://github.com/lacerbi/web-txt2img" target="_blank" rel="noreferrer">
-              web-txt2img
-            </a>
-          </p>
-        </section>
-
-        <section className="settings-section offline-pack-section">
-          <h3>תפיסת שטח אחסון — Storage Snapshot</h3>
-          <p className="settings-micro">
-            ראה <strong>בעיניים שלך</strong> מה באמת שמור על הדיסק עכשיו, ואחרי «נקה מטמון» ראה שזה אכן יורד ל-0.
-            הסקירה מתעדכנת אוטומטית כשפותחים את ההגדרות, ושוב אחרי ניקוי.
-          </p>
-          {storageSnapshot ? (
-            <>
-              <p className="offline-pack-detail">
-                <strong>סך הכל:</strong> {summarizeStorageHeader(storageSnapshot)} · {summarizeStorageInventory(storageSnapshot)}
-              </p>
-              {storageSnapshot.caches.length > 0 ? (
-                <ul className="offline-pack-list">
-                  {storageSnapshot.caches.map((c) => (
-                    <li key={c.name} className="offline-pack-item">
-                      <span className="offline-pack-item-label">Cache · {c.name}</span>
-                      <span className="offline-pack-item-size">{c.entryCount} קבצים</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {storageSnapshot.idbNames.length > 0 ? (
-                <p className="offline-pack-detail offline-pack-detail-thin">
-                  <strong>IndexedDB:</strong> {storageSnapshot.idbNames.join(", ")}
-                </p>
-              ) : null}
-              {storageSnapshot.opfsEntries.length > 0 ? (
-                <p className="offline-pack-detail offline-pack-detail-thin">
-                  <strong>OPFS:</strong> {storageSnapshot.opfsEntries.join(", ")}
-                </p>
-              ) : null}
-              {isAuditEmpty(storageSnapshot) ? (
-                <p className="offline-pack-detail" role="status">
-                  ✓ אין שום מודלים שמורים כרגע — לחיצה הבאה על «התחל» תוריד הכול מחדש.
-                </p>
-              ) : null}
-              {storageSnapshot.errors.length > 0 ? (
-                <p className="offline-pack-detail offline-pack-detail-thin">
-                  <strong>אזהרות:</strong> {storageSnapshot.errors.join(" · ")}
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <p className="offline-pack-detail offline-pack-detail-thin">
-              {storageScanning ? "סורק…" : "—"}
-            </p>
-          )}
-          <div className="offline-pack-actions">
-            <button
-              type="button"
-              className="subtle-btn"
-              onClick={onRefreshStorage}
-              disabled={storageScanning}
-            >
-              {storageScanning ? "סורק…" : "רענן סקירה"}
-            </button>
-            <button
-              type="button"
-              className="pill-button"
-              onClick={onClearCache}
-              disabled={cacheClearing}
-              style={{ background: cacheClearing ? undefined : "#dc2626" }}
-            >
-              {cacheClearing ? "מנקה…" : "נקה מטמון מודלים (מחק מהדיסק)"}
-            </button>
-          </div>
-        </section>
-
-        <section className="settings-section offline-pack-section">
-          <h3>הורדה למחשב — מצב Offline מלא</h3>
-          <p className="settings-micro">
-            לחיצה אחת מורידה את <strong>כל</strong> המודלים למטמון הדפדפן: שפה (Gemma + Qwen Coder), תיאור תמונה
-            (ViT-GPT2) ו-SD-Turbo ליצירת תמונות. אחרי ההורדה — צ&apos;אט, קוד ותמונות עובדים <strong>בלי רשת</strong>.
-            סך הכל ~{offlinePackTotalLabel()}, שמור פעם אחת.
-          </p>
-          <ul className="offline-pack-list">
-            {OFFLINE_PACK_COMPONENTS.map((c) => (
-              <li key={c.id} className="offline-pack-item">
-                <span className="offline-pack-item-label">{c.label}</span>
-                <span className="offline-pack-item-size">{formatBytes(c.approxBytes)}</span>
-                <span className="offline-pack-item-desc">{c.description}</span>
-              </li>
-            ))}
-          </ul>
-          {offlineRunning ? (
-            <>
-              <div
-                className="meter"
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={offlinePack.overallPct}
-              >
-                <div
-                  className="meter-fill"
-                  style={{ width: `${Math.min(100, offlinePack.overallPct)}%` }}
-                />
-              </div>
-              <p className="offline-pack-detail">
-                {offlinePack.phase === "models" ? "שלב 1/2 · מודלי שפה ו-vision" : "שלב 2/2 · SD-Turbo (תמונות)"} ·{" "}
-                {Math.round(offlinePack.overallPct)}%
-              </p>
-              <p className="offline-pack-detail offline-pack-detail-thin">{offlinePack.detail}</p>
-            </>
-          ) : null}
-          {offlinePack.error ? (
-            <p className="offline-pack-error" role="alert">
-              {offlinePack.error}
-            </p>
-          ) : null}
-          {offlineDone && offlinePack.completedAt ? (
-            <p className="offline-pack-detail offline-pack-detail-thin">
-              {formatOfflinePackCompletedAt(offlinePack.completedAt)}
-            </p>
-          ) : null}
-          <div className="offline-pack-actions">
-            <button
-              type="button"
-              className="pill-button"
-              onClick={onStartOfflinePack}
-              disabled={offlineRunning}
-            >
-              {offlineRunning
-                ? `מוריד… ${Math.round(offlinePack.overallPct)}%`
-                : offlineDone
-                  ? "הורד שוב (רענון מלא)"
-                  : "הורד את כל המודלים למחשב"}
-            </button>
-            {offlineDone ? (
-              <button
-                type="button"
-                className="subtle-btn"
-                onClick={onRemoveOfflinePack}
-                disabled={offlineRunning}
-              >
-                סמן «לא הורד»
-              </button>
-            ) : null}
-          </div>
-          <p className="settings-micro">
-            הורדה משתמשת במטמון Cache Storage / IndexedDB / OPFS של הדפדפן. אם תלחץ «נקה מטמון» אחר כך — הקבצים יימחקו
-            ותצטרך להוריד שוב.
-          </p>
-        </section>
-
-        <div className="settings-actions">
-          <button type="button" className="subtle-btn" onClick={() => setDraft(defaultAppSettings())}>
-            Reset defaults
+        <div className="settings-footer">
+          <button type="button" className="settings-btn-ghost" onClick={() => setDraft(defaultAppSettings())}>
+            איפוס ברירת מחדל
           </button>
           <button
             type="button"
-            className="pill-button"
+            className="settings-btn-save"
             onClick={() => {
               onSave(draft);
               onClose();
             }}
           >
-            Save
+            שמור
           </button>
         </div>
       </div>
@@ -1109,12 +629,10 @@ function SettingsModal({
 function App() {
   const workerRef = useRef<Worker | null>(null);
   const assistantBufferRef = useRef("");
-  const activeModelShortLabelRef = useRef("Assistant");
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const orchRef = useRef<Orchestration | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageBytesCacheRef = useRef<Map<string, { bytes: ArrayBuffer; mime: string }>>(new Map());
 
-  const [modelId, setModelId] = useState(() => normalizeTextChatModelId(loadSettings().textChatModelId));
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModalKey, setSettingsModalKey] = useState(0);
@@ -1123,51 +641,32 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState("Not loaded");
   const [progress, setProgress] = useState(0);
-  /** Technical line from worker (bytes / file); cleared when load completes. */
-  const [loadingDetail, setLoadingDetail] = useState("");
-  /** Worker/script/load failures — visible banner + Console already logged. */
+  const [loadingPhase, setLoadingPhase] = useState<"download" | "init">("download");
+  const [loadingBytes, setLoadingBytes] = useState({ loaded: 0, total: 0, speedBps: 0 });
+  const [loadingTipIndex, setLoadingTipIndex] = useState(0);
   const [workerBootError, setWorkerBootError] = useState<string | null>(null);
-  /** Long-running load hints (weak hardware / network). */
-  const [loadingSlowHint, setLoadingSlowHint] = useState("");
-  /** Bumped after Clear cache: forces the worker effect to re-create a fresh worker. */
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
-  /** Offline pack download (Settings → "הורד את כל המודלים למחשב"). */
-  const [offlinePack, setOfflinePack] = useState<OfflinePackUiState>(() =>
-    initialOfflinePackState(readOfflinePackCompletedAt()),
-  );
-  /** Snapshot of every storage area (caches/IDB/OPFS/SW) shown in Settings. */
-  const [storageSnapshot, setStorageSnapshot] = useState<StorageAudit | null>(null);
-  const [storageScanning, setStorageScanning] = useState(false);
   const [cacheClearing, setCacheClearing] = useState(false);
-  /**
-   * When true, the next `preload_all_done` from the worker resolves the offline-pack
-   * promise instead of triggering the normal "warmed on start" UI flow.
-   */
-  const offlinePackActiveRef = useRef(false);
-  const offlinePackResolveRef = useRef<((ok: boolean) => void) | null>(null);
   const [prompt, setPrompt] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingImage[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [chatSessionsState, setChatSessionsState] = useState<ChatSessionsState>(() => loadChatSessionsState());
   const [assistantBuffer, setAssistantBuffer] = useState("");
   const [thinkingMode, setThinkingMode] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
-  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
-  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
-  const lastGeneratedUrlRef = useRef<string | null>(null);
-  const [composerDragOver, setComposerDragOver] = useState(false);
-  const [preloadAllLoading, setPreloadAllLoading] = useState(false);
-  const [shouldWarmupOnStart, setShouldWarmupOnStart] = useState(() => {
-    try {
-      return localStorage.getItem(MODEL_CACHE_FLAG) !== "1";
-    } catch {
-      return true;
-    }
-  });
+  const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [artifactOpen, setArtifactOpen] = useState(false);
+  const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
+
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
-  const preloadAllLoadingRef = useRef(preloadAllLoading);
-  const shouldWarmupOnStartRef = useRef(shouldWarmupOnStart);
   const isLoadingRef = useRef(isLoading);
+  const messagesListRef = useRef<HTMLDivElement | null>(null);
+  const continueModeRef = useRef(false);
+  const loadingFileRef = useRef("");
 
   useEffect(() => {
     appSettingsRef.current = appSettings;
@@ -1178,12 +677,6 @@ function App() {
   useEffect(() => {
     webSearchRef.current = webSearchMode;
   }, [webSearchMode]);
-  useEffect(() => {
-    preloadAllLoadingRef.current = preloadAllLoading;
-  }, [preloadAllLoading]);
-  useEffect(() => {
-    shouldWarmupOnStartRef.current = shouldWarmupOnStart;
-  }, [shouldWarmupOnStart]);
   useEffect(() => {
     isLoadingRef.current = isLoading;
   }, [isLoading]);
@@ -1198,7 +691,6 @@ function App() {
     [chatSessionsState],
   );
   const messages = activeSession.messages;
-  const conversationTitle = activeSession.title;
 
   const sortedSessions = useMemo(
     () => [...chatSessionsState.sessions].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -1222,129 +714,236 @@ function App() {
     });
   }, []);
 
-  useEffect(() => {
-    const prev = lastGeneratedUrlRef.current;
-    if (prev && prev !== generatedImageUrl && prev.startsWith("blob:")) {
-      revokeImageUrl(prev);
-    }
-    lastGeneratedUrlRef.current = generatedImageUrl;
-  }, [generatedImageUrl]);
-
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
-  const modelLabel = useMemo(() => modelId.split("/").pop() ?? modelId, [modelId]);
+  const modelLabel = "Gemma 4 E2B";
+
+  const loadingByteLine = useMemo(() => {
+    if (loadingPhase === "init" || loadingBytes.total <= 0) return "";
+    const speed =
+      loadingBytes.speedBps > 0 ? ` · ~${formatBytes(loadingBytes.speedBps)}/s` : "";
+    return `${formatBytes(loadingBytes.loaded)} / ${formatBytes(loadingBytes.total)}${speed}`;
+  }, [loadingPhase, loadingBytes]);
+
+  const activeLoadingTips = loadingPhase === "init" ? LOADING_INIT_TIPS : LOADING_DOWNLOAD_TIPS;
+  const loadingTip = activeLoadingTips[loadingTipIndex % activeLoadingTips.length];
 
   useEffect(() => {
     if (phase !== "loading" || !isLoading) {
-      queueMicrotask(() => setLoadingSlowHint(""));
+      queueMicrotask(() => setLoadingTipIndex(0));
       return;
     }
-    const t2m = window.setTimeout(() => {
-      setLoadingSlowHint(
-        "עדיין טוען… על חומרה חלשה או רשת איטית זה נורמלי. נסה בהגדרות: מנוע WASM או HF mirror.",
-      );
-    }, 120_000);
-    const t10m = window.setTimeout(() => {
-      setLoadingSlowHint(
-        "מעל 10 דקות: פתח F12 → Network/Console. נסה נקה מטמון מודל, רשת אחרת, או WASM.",
-      );
-    }, 600_000);
-    return () => {
-      clearTimeout(t2m);
-      clearTimeout(t10m);
-    };
-  }, [phase, isLoading]);
+    setLoadingTipIndex(0);
+    const tips = loadingPhase === "init" ? LOADING_INIT_TIPS : LOADING_DOWNLOAD_TIPS;
+    const id = window.setInterval(() => {
+      setLoadingTipIndex((i) => (i + 1) % tips.length);
+    }, LOADING_TIP_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [phase, isLoading, loadingPhase]);
 
   useEffect(() => {
-    activeModelShortLabelRef.current = shortLabelForTextModel(modelId);
-  }, [modelId]);
-
-  const placeholder = useMemo(() => {
-    if (!isLoaded) return "Start the app first…";
-    return "Ask anything…";
-  }, [isLoaded]);
+    const el = messagesListRef.current;
+    if (!el || phase !== "ready") return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, assistantBuffer, phase]);
 
   useEffect(() => {
     const el = textareaRef.current;
     if (!el || phase !== "ready") return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
-  }, [prompt, phase, imageDataUrl]);
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 120)}px`;
+  }, [prompt, pendingAttachments.length, phase]);
 
-  const ingestImageFile = useCallback((file: File | undefined) => {
-    if (!file || !file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = () => setImageDataUrl(String(reader.result));
-    reader.readAsDataURL(file);
+  const buildHistoryForWorker = useCallback((priorMessages: ChatMessage[]): ChatTurn[] => {
+    return priorMessages.map((m) => {
+      if (m.role !== "user" || !m.images?.length) {
+        return { role: m.role, content: m.content };
+      }
+      const images = m.images
+        .map((img) => imageBytesCacheRef.current.get(img.id))
+        .filter((x): x is { bytes: ArrayBuffer; mime: string } => !!x && x.bytes.byteLength > 0)
+        .map((x) => ({ bytes: x.bytes, mime: x.mime }));
+      return { role: m.role, content: m.content, images: images.length ? images : undefined };
+    });
   }, []);
 
-  const onComposerDragEnter = useCallback((e: DragEvent<HTMLElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!e.dataTransfer.types.includes("Files")) return;
-    setComposerDragOver(true);
+  const addFilesAsAttachments = useCallback(async (files: FileList | File[]) => {
+    setAttachError(null);
+    const list = Array.from(files).filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif)$/i.test(f.name));
+    if (!list.length) {
+      setAttachError("לא נבחרו קבצי תמונה");
+      return;
+    }
+    const room = MAX_ATTACHMENTS - pendingAttachments.length;
+    if (room <= 0) {
+      setAttachError(`מקסימום ${MAX_ATTACHMENTS} תמונות`);
+      return;
+    }
+    const slice = list.slice(0, room);
+    try {
+      const prepared = await Promise.all(slice.map((f) => prepareImageAttachment(f)));
+      setPendingAttachments((prev) => [...prev, ...prepared]);
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : String(err));
+    }
+  }, [pendingAttachments.length]);
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.id !== id);
+    });
   }, []);
 
-  const onComposerDragLeave = useCallback((e: DragEvent<HTMLElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const related = e.relatedTarget as Node | null;
-    if (related && e.currentTarget.contains(related)) return;
-    setComposerDragOver(false);
+  const openArtifact = useCallback((artifact: Artifact) => {
+    setActiveArtifact(artifact);
+    setArtifactOpen(true);
   }, []);
 
-  const onComposerDragOver = useCallback((e: DragEvent<HTMLElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-  }, []);
+  const finalizeAssistantReply = useCallback(
+    (stopped: boolean) => {
+      setIsGenerating(false);
+      const raw = assistantBufferRef.current;
+      const { content, artifact, thought } = raw.trim()
+        ? buildPersistedAssistantPayload(raw, thinkingRef.current)
+        : { content: "", artifact: null, thought: undefined };
 
-  const onComposerDrop = useCallback(
-    (e: DragEvent<HTMLElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setComposerDragOver(false);
-      ingestImageFile(e.dataTransfer.files?.[0]);
+      if (!content.trim() && !artifact) {
+        setAssistantBuffer("");
+        assistantBufferRef.current = "";
+        setStatus(stopped ? "התשובה נעצרה" : "Ready");
+        continueModeRef.current = false;
+        return;
+      }
+
+      if (continueModeRef.current) {
+        continueModeRef.current = false;
+        setMessages((prev) => {
+          const next = [...prev];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === "assistant") {
+              next[i] = {
+                ...next[i],
+                content: artifact ? next[i].content || content : content,
+                artifact: artifact ?? next[i].artifact,
+              };
+              return next;
+            }
+          }
+          return [
+            ...next,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant" as const,
+              content,
+              artifact: artifact ?? undefined,
+              modelLabel: "Gemma 4",
+            },
+          ];
+        });
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content,
+            artifact: artifact ?? undefined,
+            modelLabel: "Gemma 4",
+          },
+        ]);
+      }
+
+      if (artifact) {
+        setActiveArtifact(artifact);
+      }
+
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
+      setStatus(stopped ? "התשובה נעצרה" : "Ready");
     },
-    [ingestImageFile],
+    [setMessages],
   );
+
+  const stopGeneration = useCallback(() => {
+    if (!isGenerating) return;
+    workerRef.current?.postMessage({ type: "abort" });
+    setStatus("עוצר…");
+  }, [isGenerating]);
+
+  useEffect(() => {
+    if (phase !== "ready") return;
+    const streamSource = getArtifactScanContent(assistantBuffer, thinkingRef.current).trim();
+    if (streamSource) {
+      const detected = extractPrimaryArtifact(streamSource);
+      if (detected) {
+        setActiveArtifact(detected);
+        setArtifactOpen(true);
+      }
+      return;
+    }
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    if (!lastAssistant) {
+      setActiveArtifact(null);
+      return;
+    }
+    if (lastAssistant.artifact) {
+      setActiveArtifact(lastAssistant.artifact);
+      return;
+    }
+    const detected = extractPrimaryArtifact(
+      getArtifactScanContent(lastAssistant.content, false).trim() || lastAssistant.content,
+    );
+    setActiveArtifact(detected);
+  }, [assistantBuffer, messages, phase]);
 
   const runGemmaGenerate = (
     promptText: string,
+    history: ChatTurn[],
     systemPrompt: string,
     maxNewTokens: number,
     temperature: number,
     repetitionPenalty: number,
     topP: number,
     webContext: string,
+    currentImages: ArrayBuffer[] = [],
+    currentImageMime = "image/jpeg",
   ) => {
-    workerRef.current?.postMessage({
-      type: "generate",
-      modelId: normalizeTextChatModelId(appSettingsRef.current.textChatModelId),
-      prompt: promptText,
-      systemPrompt,
-      maxNewTokens,
-      temperature,
-      repetitionPenalty,
-      topP,
-      thinkingMode: thinkingRef.current,
-      webContext,
-    });
-  };
+    const historyForWorker = history.map((turn) => ({
+      ...turn,
+      images: turn.images?.map((img) => ({ bytes: img.bytes.slice(0), mime: img.mime })),
+    }));
 
-  const runCoderGenerate = (promptText: string, webContext: string) => {
-    const c = appSettingsRef.current.coder;
-    workerRef.current?.postMessage({
-      type: "generate",
-      modelId: CODE_MODEL,
-      prompt: promptText,
-      systemPrompt: c.systemPrompt,
-      maxNewTokens: c.maxNewTokens,
-      temperature: c.temperature,
-      repetitionPenalty: c.repetitionPenalty,
-      topP: c.topP,
-      thinkingMode: false,
-      webContext,
-    });
+    const imagePayloads = currentImages.map((bytes) => ({
+      bytes: bytes.slice(0),
+      mime: currentImageMime,
+    }));
+
+    const transferables: ArrayBuffer[] = [];
+    for (const p of imagePayloads) transferables.push(p.bytes);
+    for (const turn of historyForWorker) {
+      if (turn.images) {
+        for (const img of turn.images) transferables.push(img.bytes);
+      }
+    }
+
+    workerRef.current?.postMessage(
+      {
+        type: "generate",
+        modelId: GEMMA_MODEL_ID,
+        prompt: promptText,
+        history: historyForWorker,
+        images: imagePayloads,
+        systemPrompt,
+        maxNewTokens,
+        temperature,
+        repetitionPenalty,
+        topP,
+        thinkingMode: thinkingRef.current,
+        webContext,
+      },
+      transferables,
+    );
   };
 
   useEffect(() => {
@@ -1364,8 +963,7 @@ function App() {
     worker.onerror = (ev: ErrorEvent) => {
       console.error("[GROVEE] worker script error:", ev.message, ev.filename, ev.lineno);
       setWorkerBootError(
-        ev.message ||
-          `Worker script failed (404/CORS?). File: ${ev.filename ?? "model.worker"}`,
+        ev.message || `Worker script failed (404/CORS?). File: ${ev.filename ?? "model.worker"}`,
       );
       setIsLoading(false);
     };
@@ -1374,294 +972,51 @@ function App() {
       const msg = event.data;
       if (msg.type === "status") {
         setStatus(msg.text);
-        if (offlinePackActiveRef.current) {
-          setOfflinePack((p) => ({ ...p, detail: msg.text }));
-        }
       } else if (msg.type === "progress") {
         setStatus(msg.text);
-        setLoadingDetail(msg.detail ?? "");
-        const loadingPhase = isLoadingRef.current || preloadAllLoadingRef.current;
-        setProgress((prev) => (loadingPhase ? Math.max(prev, msg.progress) : msg.progress));
-        if (offlinePackActiveRef.current) {
-          const overall = mapModelsPhaseProgress(msg.progress);
-          setOfflinePack((p) => ({
-            ...p,
-            phase: "models",
-            overallPct: Math.max(p.overallPct, overall),
-            detail: msg.detail || msg.text,
-          }));
+        if (isLoadingRef.current) {
+          if (msg.phase === "init") {
+            setProgress(msg.progress);
+            loadingFileRef.current = "";
+            setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
+          } else {
+            const nextFile = msg.file ?? "";
+            const nextLoaded = typeof msg.loaded === "number" ? msg.loaded : 0;
+            const nextTotal = typeof msg.total === "number" ? msg.total : 0;
+            const nextSpeed = typeof msg.speedBps === "number" ? msg.speedBps : 0;
+
+            if (nextFile) loadingFileRef.current = nextFile;
+            setProgress((prev) => Math.max(prev, msg.progress));
+            setLoadingBytes((prev) => ({
+              loaded: Math.max(prev.loaded, nextLoaded),
+              total: Math.max(prev.total, nextTotal),
+              speedBps: nextSpeed > 0 ? nextSpeed : prev.speedBps,
+            }));
+          }
+          setLoadingPhase(msg.phase === "init" ? "init" : "download");
         }
       } else if (msg.type === "loaded") {
         setWorkerBootError(null);
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
-        setLoadingDetail("");
-        setStatus(`Loaded on ${formatInferenceDevice(msg.device)}`);
-        if (workerRef.current && !preloadAllLoadingRef.current && shouldWarmupOnStartRef.current) {
-          setPreloadAllLoading(true);
-          setStatus("Gemma is ready. Warming vision model (weights stay in browser cache)…");
-          workerRef.current.postMessage({
-            type: "warmup_all",
-            textModelIds: [],
-            captionModelIds: [DEFAULT_CAPTION_MODEL_ID],
-            dtype: "q4",
-          });
-        } else {
-          setStatus(`Gemma controller ready on ${formatInferenceDevice(msg.device)}`);
-          workerRef.current?.postMessage({ type: "preload_caption", modelId: DEFAULT_CAPTION_MODEL_ID });
-        }
-      } else if (msg.type === "caption_model_loaded") {
-        setStatus(`Vision model ready on ${formatInferenceDevice(msg.device)}`);
-      } else if (msg.type === "preload_all_done") {
-        setWorkerBootError(null);
-        setPreloadAllLoading(false);
-        setIsLoading(false);
-        setIsLoaded(true);
-        setShouldWarmupOnStart(false);
-        try {
-          localStorage.setItem(MODEL_CACHE_FLAG, "1");
-        } catch {
-          // ignore
-        }
-        setProgress(100);
-        setLoadingDetail("");
-        const failedT = msg.failedTextModelIds?.length
-          ? ` · נכשלו מודלי טקסט: ${msg.failedTextModelIds.join(", ")}`
-          : "";
-        const failedC = msg.failedCaptionModelIds?.length
-          ? ` · נכשל vision: ${msg.failedCaptionModelIds.join(", ")}`
-          : "";
-        setStatus(
-          failedT || failedC
-            ? `מוכן חלקית: ${msg.textModels} טקסט + ${msg.captionModels} vision${failedT}${failedC}`
-            : `מוכנים: Gemma + כיתוב תמונה (${msg.captionModels}) — קוד בטעינה עצלה`,
-        );
-        if (offlinePackActiveRef.current && offlinePackResolveRef.current) {
-          const ok = !failedT && !failedC;
-          offlinePackResolveRef.current(ok);
-          offlinePackResolveRef.current = null;
-        }
+        setStatus(`Gemma ready on ${formatInferenceDevice(msg.device)}`);
       } else if (msg.type === "token") {
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
           assistantBufferRef.current = next;
           return next;
         });
-      } else if (msg.type === "caption_done") {
-        const raw = msg.text.trim();
-        if (!raw) {
-          setIsGenerating(false);
-          return;
-        }
-        orchRef.current = {
-          kind: "caption",
-          data: { step: "polish", userText: "", rawCaption: raw },
-        };
-        setAssistantBuffer("");
-        assistantBufferRef.current = "";
-        setStatus("Gemma: formatting caption in your language…");
-        const g = appSettingsRef.current.gemma;
-        runGemmaGenerate(
-          `Raw image description (English):\n${raw}\n\nRewrite for the user: one short paragraph in their language if the chat is Hebrew use Hebrew; keep meaning; no preamble.`,
-          g.systemPrompt,
-          Math.min(256, g.maxNewTokens),
-          Math.min(0.25, g.temperature),
-          g.repetitionPenalty,
-          g.topP,
-          "",
-        );
       } else if (msg.type === "done") {
-        const orch = orchRef.current;
-        const buf = cleanModelOutput(assistantBufferRef.current);
-
-        if (orch?.kind === "caption" && orch.data.step === "polish") {
-          const polished = buf || orch.data.rawCaption;
-          orchRef.current = null;
-          setIsGenerating(false);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: polished,
-              modelLabel: activeModelShortLabelRef.current,
-            },
-          ]);
-          setAssistantBuffer("");
-          assistantBufferRef.current = "";
-          return;
-        }
-
-        if (orch?.kind === "image" && orch.data.step === "translate") {
-          const english = cleanEnglishImagePrompt(assistantBufferRef.current);
-          const userText = orch.data.userText;
-          assistantBufferRef.current = "";
-          setAssistantBuffer("");
-
-          const cloudUrl = buildPollinationsUrl({
-            prompt: english,
-            model: appSettingsRef.current.imageBackendModel,
-          });
-
-          const runSummarize = (imageUrl: string) => {
-            setGeneratedImageUrl(imageUrl);
-            orchRef.current = {
-              kind: "image",
-              data: {
-                step: "summarize",
-                userText,
-                englishPrompt: english,
-                imageUrl,
-              },
-            };
-            setStatus("Gemma: replying in your language…");
-            const g = appSettingsRef.current.gemma;
-            const userLang = isRtlText(userText) ? "Hebrew" : "the same language as the user";
-            runGemmaGenerate(
-              `The user asked for an image: "${userText}"\n\nThe image has already been generated and is displayed separately in the chat. Write ONE short sentence in ${userLang} describing the image (no preamble, no labels, no URLs, no markdown image tags, no quotes). Maximum 20 words.`,
-              g.systemPrompt,
-              80,
-              0.2,
-              g.repetitionPenalty,
-              g.topP,
-              "",
-            );
-          };
-
-          if (appSettingsRef.current.imageProvider === "local_sd_turbo") {
-            setStatus(
-              "יוצר תמונה מקומית בדפדפן (SD-Turbo). פעם ראשונה: הורדה חד־פעמית של ~2.3GB · לאחר מכן ללא רשת.",
-            );
-            void (async () => {
-              const local = await generateSdTurboPng(english, (s) => setStatus(s));
-              if (local.ok) {
-                runSummarize(local.objectUrl);
-              } else {
-                setStatus(`יצירה מקומית נכשלה (${local.message}). נופל לענן Pollinations…`);
-                runSummarize(cloudUrl);
-              }
-            })();
-          } else {
-            setStatus("יוצר תמונה דרך Pollinations (ענן · דורש רשת)…");
-            runSummarize(cloudUrl);
-          }
-          return;
-        }
-
-        if (orch?.kind === "image" && orch.data.step === "summarize") {
-          const summary = stripImageEchoes(buf) || "התמונה מוכנה.";
-          const imageUrl = orch.data.imageUrl;
-          orchRef.current = null;
-          setIsGenerating(false);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: `${summary}\n\n![Generated](${imageUrl})`,
-              modelLabel: activeModelShortLabelRef.current,
-            },
-          ]);
-          setAssistantBuffer("");
-          assistantBufferRef.current = "";
-          return;
-        }
-
-        if (orch?.kind === "code" && orch.data.step === "route") {
-          const tech = buf || orch.data.userText;
-          orchRef.current = { kind: "code", data: { step: "code", userText: orch.data.userText, techTask: tech } };
-          assistantBufferRef.current = "";
-          setAssistantBuffer("");
-          setStatus("Code model running…");
-          void (async () => {
-            const techTask = tech;
-            let webContext = "";
-            if (webSearchRef.current) {
-              try {
-                webContext = await fetchWebContext(techTask);
-              } catch {
-                webContext = "";
-              }
-            }
-            runCoderGenerate(techTask, webContext);
-          })();
-          return;
-        }
-
-        if (orch?.kind === "code" && orch.data.step === "code") {
-          const codeOut = assistantBufferRef.current.trim() || buf;
-          orchRef.current = {
-            kind: "code",
-            data: {
-              step: "summarize",
-              userText: orch.data.userText,
-              techTask: orch.data.techTask,
-              codeOut,
-            },
-          };
-          assistantBufferRef.current = "";
-          setAssistantBuffer("");
-          setStatus("Gemma: summarizing in your language…");
-          const g = appSettingsRef.current.gemma;
-          const userLang = isRtlText(orch.data.userText) ? "Hebrew" : "the user's language";
-          runGemmaGenerate(
-            `Original user request:\n${orch.data.userText}\n\nTechnical task (English):\n${orch.data.techTask}\n\nCode model output:\n${codeOut}\n\nSummarize in ${userLang} what was done. Then include the full code in a markdown fenced block with the right language tag.`,
-            g.systemPrompt,
-            Math.min(700, g.maxNewTokens),
-            g.temperature,
-            g.repetitionPenalty,
-            g.topP,
-            "",
-          );
-          return;
-        }
-
-        if (orch?.kind === "code" && orch.data.step === "summarize") {
-          const finalText = buf;
-          orchRef.current = null;
-          setIsGenerating(false);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: finalText,
-              modelLabel: activeModelShortLabelRef.current,
-            },
-          ]);
-          setAssistantBuffer("");
-          assistantBufferRef.current = "";
-          return;
-        }
-
-        setIsGenerating(false);
-        let output = buf;
-        if (output.length > 4000) output = `${output.slice(0, 4000).trimEnd()}…`;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: output,
-            modelLabel: activeModelShortLabelRef.current,
-          },
-        ]);
-        setAssistantBuffer("");
-        assistantBufferRef.current = "";
+        finalizeAssistantReply(false);
+      } else if (msg.type === "aborted") {
+        finalizeAssistantReply(true);
       } else if (msg.type === "error") {
-        orchRef.current = null;
         setIsGenerating(false);
         setIsLoading(false);
-        setPreloadAllLoading(false);
         setProgress(0);
-        setLoadingDetail("");
         setStatus(`Error: ${msg.error}`);
         setWorkerBootError(msg.error);
-        if (offlinePackActiveRef.current && offlinePackResolveRef.current) {
-          offlinePackResolveRef.current(false);
-          offlinePackResolveRef.current = null;
-        }
       }
     };
 
@@ -1682,7 +1037,7 @@ function App() {
       worker.terminate();
       workerRef.current = null;
     };
-  }, [setMessages, workerReloadKey]);
+  }, [finalizeAssistantReply, setMessages, workerReloadKey]);
 
   useEffect(() => {
     workerRef.current?.postMessage({
@@ -1700,15 +1055,15 @@ function App() {
 
   const loadModel = () => {
     if (!workerRef.current) return;
-    const mid = normalizeTextChatModelId(appSettingsRef.current.textChatModelId);
-    setModelId(mid);
     setWorkerBootError(null);
-    setLoadingSlowHint("");
     setIsLoading(true);
-    setPreloadAllLoading(false);
-    setStatus(`Loading ${mid.split("/").pop() ?? mid}…`);
+    setIsLoaded(false);
+    setStatus("Loading Gemma 4 E2B…");
     setProgress(0);
-    setLoadingDetail("");
+    setLoadingPhase("download");
+    setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
+    setLoadingTipIndex(0);
+    loadingFileRef.current = "";
     workerRef.current.postMessage({
       type: "configure_hub",
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
@@ -1719,159 +1074,14 @@ function App() {
     });
     workerRef.current.postMessage({
       type: "load",
-      modelId: mid,
+      modelId: GEMMA_MODEL_ID,
       dtype: "q4",
     });
   };
 
-  const runOfflinePack = async () => {
-    if (!workerRef.current || offlinePack.phase === "models" || offlinePack.phase === "image") return;
-
-    setOfflinePack({
-      phase: "models",
-      overallPct: 0,
-      detail: "מתחיל הורדת מודלי שפה ו-vision…",
-      error: null,
-      completedAt: offlinePack.completedAt,
-    });
-    setStatus("מוריד חבילה לאופליין…");
-
-    offlinePackActiveRef.current = true;
-
-    const textModelIds = Array.from(
-      new Set([
-        normalizeTextChatModelId(appSettingsRef.current.textChatModelId),
-        ...TEXT_CHAT_MODEL_OPTIONS.map((m) => m.id),
-        CODE_MODEL,
-      ]),
-    );
-    const captionModelIds = [DEFAULT_CAPTION_MODEL_ID];
-
-    const modelsOk = await new Promise<boolean>((resolve) => {
-      offlinePackResolveRef.current = resolve;
-      workerRef.current?.postMessage({
-        type: "preload_all",
-        textModelIds,
-        captionModelIds,
-        dtype: "q4",
-      });
-    });
-
-    if (!modelsOk) {
-      offlinePackActiveRef.current = false;
-      setOfflinePack((p) => ({
-        ...p,
-        phase: "error",
-        error: "הורדת מודלי שפה / vision נכשלה. נסה שוב או נקה מטמון תחילה.",
-      }));
-      return;
-    }
-
-    /**
-     * Free GPU/RAM held by the chat/code/caption ONNX sessions before SD-Turbo grabs
-     * a WebGPU device. Without this we get `reading 'destroy'` / "external Instance
-     * reference no longer exists" from ORT during SD-Turbo init under memory pressure.
-     * The Cache Storage / IDB / OPFS bytes stay -- only the in-memory sessions go.
-     */
-    workerRef.current?.postMessage({ type: "clear_runtime_cache" });
-    try {
-      workerRef.current?.terminate();
-    } catch {
-      /* noop */
-    }
-    workerRef.current = null;
-    setIsLoaded(false);
-    setIsLoading(false);
-
-    setOfflinePack((p) => ({
-      ...p,
-      phase: "image",
-      overallPct: Math.max(p.overallPct, 70),
-      detail: "פינה זיכרון GPU והחל הורדת SD-Turbo (~2.3GB)…",
-    }));
-
-    let lastSdStatus = "";
-    const onSdStatus = (line: string) => {
-      lastSdStatus = line;
-      setOfflinePack((p) => ({
-        ...p,
-        overallPct: Math.max(p.overallPct, mapImagePhaseProgress(line)),
-        detail: line,
-      }));
-    };
-
-    let sdOk = await ensureSdTurboLoaded(onSdStatus);
-
-    if (!sdOk && isWebGpuStateError(lastSdStatus)) {
-      setOfflinePack((p) => ({
-        ...p,
-        detail: "WebGPU נכשל באמצע — מנסה שוב על WASM (CPU, איטי יותר אך יציב)…",
-      }));
-      terminateLocalImageWorker();
-      sdOk = await ensureSdTurboLoaded(onSdStatus, { forceBackend: "wasm" });
-    }
-
-    offlinePackActiveRef.current = false;
-    setWorkerReloadKey((k) => k + 1); // recreate the chat worker so the user can keep using the app
-
-    if (!sdOk) {
-      setOfflinePack((p) => ({
-        ...p,
-        phase: "error",
-        error: `SD-Turbo נכשל לטעון (${lastSdStatus || "load error"}). שינה «נקה מטמון» ואז נסה שוב, או בחר Pollinations בהגדרות.`,
-      }));
-      return;
-    }
-
-    const at = Date.now();
-    writeOfflinePackCompletedAt(at);
-    setOfflinePack({
-      phase: "done",
-      overallPct: 100,
-      detail: "החבילה מוכנה — אפשר לנתק רשת.",
-      error: null,
-      completedAt: at,
-    });
-    setStatus("חבילת offline הורדה. אפשר לנתק רשת.");
-  };
-
-  const removeOfflinePackMarker = () => {
-    clearOfflinePackCompletedAt();
-    setOfflinePack({
-      phase: "idle",
-      overallPct: 0,
-      detail: "",
-      error: null,
-      completedAt: null,
-    });
-  };
-
-  const refreshStorageSnapshot = useCallback(async () => {
-    setStorageScanning(true);
-    try {
-      const audit = await auditAppStorage();
-      setStorageSnapshot(audit);
-    } finally {
-      setStorageScanning(false);
-    }
-  }, []);
-
-  // Auto-snapshot the first time the user opens Settings, and re-snapshot after clear.
-  useEffect(() => {
-    if (settingsOpen && !storageSnapshot && !storageScanning) {
-      void refreshStorageSnapshot();
-    }
-  }, [settingsOpen, storageSnapshot, storageScanning, refreshStorageSnapshot]);
-
   const clearModelCache = async () => {
     if (isGenerating || cacheClearing) return;
     setCacheClearing(true);
-
-    const lines: string[] = [];
-    const log = (s: string) => {
-      console.info("[GROVEE clear]", s);
-      lines.push(s);
-    };
 
     const estimateUsage = async (): Promise<number> => {
       try {
@@ -1883,113 +1093,50 @@ function App() {
       }
     };
 
-    setStatus("סורק מטמון לפני ניקוי…");
+    setStatus("מנקה מטמון…");
     const before = await estimateUsage();
-    log(`לפני: ${formatBytes(before)} בשימוש`);
 
     try {
-      terminateLocalImageWorker();
-      revokeImageUrl(generatedImageUrl);
-      setGeneratedImageUrl(null);
-      lastGeneratedUrlRef.current = null;
-
       workerRef.current?.postMessage({ type: "clear_runtime_cache" });
       try {
         workerRef.current?.terminate();
-        log("✓ סיימתי את ה-worker (משחרר handles על קבצי ONNX)");
-      } catch (e) {
-        log(`✗ worker.terminate נכשל: ${(e as Error)?.message ?? e}`);
+      } catch {
+        /* noop */
       }
       workerRef.current = null;
 
-      localStorage.removeItem(MODEL_CACHE_FLAG);
-      clearOfflinePackCompletedAt();
-      setOfflinePack({
-        phase: "idle",
-        overallPct: 0,
-        detail: "",
-        error: null,
-        completedAt: null,
-      });
-      setShouldWarmupOnStart(true);
-      orchRef.current = null;
-
-      setStatus("מוחק Cache Storage…");
       if ("caches" in self) {
         try {
           const keys = await caches.keys();
-          if (keys.length === 0) {
-            log("Cache Storage: ריק");
-          } else {
-            log(`Cache Storage נמצאו: ${keys.join(", ")}`);
-            for (const k of keys) {
-              try {
-                const ok = await caches.delete(k);
-                log(`  ${ok ? "✓" : "✗"} delete cache ${k}`);
-              } catch (e) {
-                log(`  ✗ cache ${k}: ${(e as Error)?.message ?? e}`);
-              }
-            }
+          for (const k of keys) {
+            await caches.delete(k);
           }
-        } catch (e) {
-          log(`✗ caches.keys נכשל: ${(e as Error)?.message ?? e}`);
+        } catch {
+          /* ignore */
         }
-      } else {
-        log("Cache Storage לא נתמך");
       }
 
-      setStatus("מוחק IndexedDB…");
       const idb = indexedDB as IDBFactory & {
         databases?: () => Promise<Array<{ name?: string }>>;
       };
-      const deleteOneIdb = (name: string): Promise<"ok" | "error" | "blocked"> =>
-        new Promise<"ok" | "error" | "blocked">((resolve) => {
-          const req = indexedDB.deleteDatabase(name);
-          req.onsuccess = () => resolve("ok");
-          req.onerror = () => resolve("error");
-          req.onblocked = () => resolve("blocked");
-        });
       if (idb.databases) {
         try {
           const dbs = await idb.databases();
-          if (dbs.length === 0) {
-            log("IndexedDB: ריק");
-          } else {
-            const names = dbs.map((d) => d.name).filter(Boolean) as string[];
-            log(`IndexedDB נמצאו: ${names.join(", ") || "(ללא שם)"}`);
-            // Pass 1: try every DB.
-            const blockedNames: string[] = [];
-            for (const name of names) {
-              const result = await deleteOneIdb(name);
-              if (result === "ok") log(`  ✓ deleteDatabase ${name}`);
-              else if (result === "blocked") {
-                blockedNames.push(name);
-                log(`  ⚠ ${name} blocked — אנסה שוב אחרי השהיה`);
-              } else {
-                log(`  ✗ deleteDatabase ${name} (error)`);
-              }
-            }
-            // Pass 2: small delay then retry blocked ones (gives the browser time to drop locks).
-            if (blockedNames.length > 0) {
-              await new Promise((r) => setTimeout(r, 600));
-              for (const name of blockedNames) {
-                const result = await deleteOneIdb(name);
-                log(
-                  result === "ok"
-                    ? `  ✓ retry deleteDatabase ${name}`
-                    : `  ✗ retry ${name} (${result})`,
-                );
-              }
+          for (const db of dbs) {
+            if (db.name) {
+              await new Promise<void>((resolve) => {
+                const req = indexedDB.deleteDatabase(db.name!);
+                req.onsuccess = () => resolve();
+                req.onerror = () => resolve();
+                req.onblocked = () => resolve();
+              });
             }
           }
-        } catch (e) {
-          log(`✗ idb.databases נכשל: ${(e as Error)?.message ?? e}`);
+        } catch {
+          /* ignore */
         }
-      } else {
-        log("indexedDB.databases() לא נתמך — לא ניתן למנות מסדי נתונים");
       }
 
-      setStatus("מוחק OPFS (Origin Private File System)…");
       const storageWithDir = navigator.storage as StorageManager & {
         getDirectory?: () => Promise<FileSystemDirectoryHandle>;
       };
@@ -2007,240 +1154,174 @@ function App() {
           } else if (walker.keys) {
             for await (const name of walker.keys()) collected.push(name);
           }
-          if (collected.length === 0) {
-            log("OPFS: ריק");
-          } else {
-            log(`OPFS נמצאו: ${collected.join(", ")}`);
-            for (const name of collected) {
-              try {
-                await walker.removeEntry(name, { recursive: true });
-                log(`  ✓ removeEntry ${name}`);
-              } catch (e) {
-                log(`  ✗ ${name}: ${(e as Error)?.message ?? e}`);
-              }
+          for (const name of collected) {
+            try {
+              await walker.removeEntry(name, { recursive: true });
+            } catch {
+              /* ignore */
             }
           }
-        } catch (e) {
-          log(`✗ OPFS getDirectory נכשל: ${(e as Error)?.message ?? e}`);
+        } catch {
+          /* ignore */
         }
-      } else {
-        log("OPFS לא נתמך בדפדפן הזה");
       }
 
-      setStatus("מבטל רישום Service Workers…");
-      if ("serviceWorker" in navigator) {
-        try {
-          const regs = await navigator.serviceWorker.getRegistrations();
-          if (regs.length === 0) {
-            log("Service Workers: אין");
-          } else {
-            for (const r of regs) {
-              try {
-                const ok = await r.unregister();
-                log(`  ${ok ? "✓" : "✗"} unregister ${r.scope}`);
-              } catch (e) {
-                log(`  ✗ ${r.scope}: ${(e as Error)?.message ?? e}`);
-              }
-            }
-          }
-        } catch (e) {
-          log(`✗ serviceWorker.getRegistrations נכשל: ${(e as Error)?.message ?? e}`);
-        }
-      } else {
-        log("Service Workers לא נתמכים");
-      }
-
-      setStatus("בודק שטח אחרי ניקוי…");
       const after = await estimateUsage();
-      log(`אחרי: ${formatBytes(after)} בשימוש`);
-      if (before >= 0 && after >= 0) {
-        const freed = Math.max(0, before - after);
-        log(`שוחרר: ${formatBytes(freed)}`);
-      }
-      log("");
-      log("הערה: Brave/Chromium עשויים לדווח על שטח דיסק שהשתחרר באיחור (housekeeping אסינכרוני). בקש storage persist בעת «התחל» כדי שמודלים לא ייבעטו אוטומטית.");
-
       setProgress(0);
-      setLoadingDetail("");
       setIsLoaded(false);
       setIsLoading(false);
-      setPreloadAllLoading(false);
       setAssistantBuffer("");
       assistantBufferRef.current = "";
       setWorkerReloadKey((k) => k + 1);
 
-      // Refresh the audit panel so the user can SEE that the storage went to zero.
-      void refreshStorageSnapshot();
-
       const freedSummary =
         before >= 0 && after >= 0
-          ? `שוחררו ${formatBytes(Math.max(0, before - after))} · נותר בשימוש: ${formatBytes(after)}`
+          ? `שוחררו ${formatBytes(Math.max(0, before - after))} · נותר: ${formatBytes(after)}`
           : "ניקוי הסתיים";
       setStatus(`${freedSummary}. לחץ «התחל» לטעינה מחדש.`);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `**דוח ניקוי מטמון**\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``,
-          modelLabel: "GROVEE",
-        },
-      ]);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`✗ שגיאה כללית: ${message}`);
       setStatus(`ניקוי מטמון נכשל: ${message}`);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `**דוח ניקוי (חלקי)**\n\n\`\`\`\n${lines.join("\n")}\n\`\`\``,
-          modelLabel: "GROVEE",
-        },
-      ]);
     } finally {
       setCacheClearing(false);
     }
   };
 
   const persistSettings = (s: AppSettings) => {
-    const normalized: AppSettings = {
-      ...s,
-      textChatModelId: normalizeTextChatModelId(s.textChatModelId),
-    };
     setAppSettings((prev) => {
-      const modelChanged = normalized.textChatModelId !== prev.textChatModelId;
-      const backendChanged = normalized.inferenceBackend !== prev.inferenceBackend;
-      if (modelChanged || backendChanged) {
+      if (s.inferenceBackend !== prev.inferenceBackend || s.hfRemoteHost !== prev.hfRemoteHost) {
         queueMicrotask(() => {
-          if (modelChanged) setModelId(normalized.textChatModelId);
           setIsLoaded(false);
           setIsLoading(false);
-          setStatus(
-            modelChanged && backendChanged
-              ? "מודל או מנוע חישוב השתנו — לחץ «התחל» כדי לטעון מחדש"
-              : backendChanged
-                ? "מנוע חישוב השתנה — לחץ «התחל» כדי לטעון מחדש"
-                : "מודל צ'אט השתנה — לחץ «התחל» כדי לטעון מחדש",
-          );
+          setStatus("הגדרות השתנו — לחץ «התחל» כדי לטעון מחדש");
         });
       }
-      return normalized;
+      return s;
     });
-    saveSettings(normalized);
+    saveSettings(s);
   };
 
   const sendPrompt = async (e: FormEvent) => {
     e.preventDefault();
     if (!workerRef.current || !isLoaded || isGenerating) return;
     const trimmed = prompt.trim();
-    if (!trimmed && !imageDataUrl) return;
+    const hasImages = pendingAttachments.length > 0;
+    if (!trimmed && !hasImages) return;
 
-    if (imageDataUrl) {
-      const captionModelId = DEFAULT_CAPTION_MODEL_ID;
-      const userLine = trimmed || "תאר את התמונה";
-      const attachment = imageDataUrl;
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "user", content: userLine, imageDataUrl: attachment },
-      ]);
-      setPrompt("");
-      setImageDataUrl(null);
-      setIsGenerating(true);
-      orchRef.current = null;
-      workerRef.current.postMessage({
-        type: "caption",
-        imageDataUrl: attachment,
-        prompt: trimmed || undefined,
-        modelId: captionModelId,
-        maxNewTokens: appSettings.visionMaxTokens,
-      });
-      return;
+    const effectivePrompt =
+      trimmed || defaultVisionPrompt(trimmed ? isRtlText(trimmed) : true);
+
+    const priorTurns = buildHistoryForWorker(messages);
+
+    const continueCode = shouldContinueCode(effectivePrompt, priorTurns);
+    continueModeRef.current = continueCode;
+
+    const storedImages: StoredMessageImage[] = pendingAttachments.map((p) => ({
+      id: p.id,
+      previewUrl: p.previewUrl,
+    }));
+    for (const p of pendingAttachments) {
+      imageBytesCacheRef.current.set(p.id, { bytes: p.modelBytes.slice(0), mime: p.mime });
     }
 
-    if (!trimmed) return;
+    const displayText = trimmed || (hasImages ? "🖼️ תמונה" : effectivePrompt);
 
-    if (isImageGenerationRequest(trimmed)) {
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
-      setPrompt("");
-      setAssistantBuffer("");
-      assistantBufferRef.current = "";
-      setIsGenerating(true);
-      orchRef.current = { kind: "image", data: { step: "translate", userText: trimmed } };
-      setStatus("Gemma: preparing English image prompt…");
-      runGemmaGenerate(
-        `User message (may be Hebrew):\n${trimmed}\n\nOutput ONLY a single English image-generation prompt, max 40 words, no quotes, no explanation.`,
-        "You output only the English prompt text for an image model. No other text.",
-        120,
-        0.1,
-        1.05,
-        0.85,
-        "",
-      );
-      return;
-    }
-
-    if (isCodeRequest(trimmed)) {
-      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
-      setPrompt("");
-      setAssistantBuffer("");
-      assistantBufferRef.current = "";
-      setIsGenerating(true);
-      orchRef.current = { kind: "code", data: { step: "route", userText: trimmed } };
-      setStatus("Gemma: routing to code model…");
-      runGemmaGenerate(
-        `User message (may be Hebrew):\n${trimmed}\n\nOutput ONLY a concise technical coding task in English (one short paragraph). No preamble, no labels.`,
-        "You extract a coding task for a code LLM. English only in the answer body.",
-        200,
-        0.05,
-        1.05,
-        0.85,
-        "",
-      );
-      return;
-    }
-
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", content: trimmed }]);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: displayText,
+        images: storedImages.length ? storedImages : undefined,
+      },
+    ]);
     setPrompt("");
-    setAssistantBuffer("");
-    assistantBufferRef.current = "";
+    setPendingAttachments([]);
+    setAttachError(null);
+
+    if (continueCode) {
+      const lastAssistant = [...priorTurns].reverse().find((t) => t.role === "assistant");
+      const seed = lastAssistant?.content ?? "";
+      setAssistantBuffer(seed);
+      assistantBufferRef.current = seed;
+      setArtifactOpen(true);
+      if (lastAssistant) {
+        const art = extractPrimaryArtifact(seed);
+        if (art) setActiveArtifact(art);
+      }
+    } else {
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
+    }
+
     setIsGenerating(true);
-    orchRef.current = null;
 
     const g = appSettings.gemma;
-    const greeting = isSimpleGreeting(trimmed);
+    const greeting = isSimpleGreeting(effectivePrompt) && !hasImages;
     let webContext = "";
     let searchHint = "";
-    if (webSearchMode) {
+    if (webSearchMode && !hasImages) {
       setStatus("Searching…");
       try {
-        webContext = await fetchWebContext(trimmed);
-        if (!webContext.trim()) searchHint = " · אין תוצאות חיפוש — מענה בלי הקשר רשת";
-      } catch (e) {
-        console.warn("[GROVEE] fetchWebContext failed:", e);
+        webContext = await fetchWebContext(effectivePrompt);
+        if (!webContext.trim()) searchHint = " · אין תוצאות חיפוש";
+      } catch {
         webContext = "";
-        searchHint = " · חיפוש נכשל — מענה בלי הקשר רשת";
+        searchHint = " · חיפוש נכשל";
       }
     }
-    setStatus(`Generating…${searchHint}`);
+
+    const wantsLongOutput =
+      continueCode ||
+      isCodeGenerationRequest(effectivePrompt) ||
+      isCodeGenerationRequest(priorTurns.at(-1)?.content ?? "");
+    const tokenBudget = greeting
+      ? 40
+      : hasImages
+        ? Math.min(1024, g.maxNewTokens)
+        : wantsLongOutput
+          ? Math.min(CODE_TOKEN_CAP, Math.max(g.maxNewTokens, CODE_TOKEN_FLOOR))
+          : g.maxNewTokens;
+
+    let systemPrompt = greeting
+      ? `${g.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
+      : g.systemPrompt;
+    if (hasImages) {
+      systemPrompt = `${systemPrompt} When the user sends an image, describe what you see accurately and answer their question in the same language as the user (Hebrew if they write in Hebrew).`;
+    }
+    if (continueCode) {
+      systemPrompt = `${systemPrompt}\n\n${CONTINUE_CODE_SYSTEM_HINT}`;
+      setStatus("ממשיך כתיבת קוד…");
+    } else if (hasImages) {
+      setStatus("מנתח תמונה…");
+    } else {
+      setStatus(`Generating…${searchHint}`);
+    }
+
+    const historyForWorker = trimHistoryForContext(priorTurns, 32_000, continueCode);
+
+    const currentImageBuffers = storedImages
+      .map((img) => imageBytesCacheRef.current.get(img.id)?.bytes)
+      .filter((b): b is ArrayBuffer => !!b);
 
     runGemmaGenerate(
-      trimmed,
-      greeting
-        ? `${g.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
-        : g.systemPrompt,
-      greeting ? 40 : g.maxNewTokens,
+      effectivePrompt,
+      historyForWorker,
+      systemPrompt,
+      tokenBudget,
       greeting ? 0 : g.temperature,
       g.repetitionPenalty,
       g.topP,
       webContext,
+      currentImageBuffers,
+      "image/jpeg",
     );
   };
 
+  const sendActive = prompt.trim().length > 0 || pendingAttachments.length > 0;
+
   return (
-    <main className="app theme-space">
-      <div className="bg-overlay" />
+    <main className="app">
       {workerBootError ? (
         <div className="worker-boot-banner" role="alert">
           <strong>שגיאה:</strong> {workerBootError}
@@ -2254,65 +1335,147 @@ function App() {
           </button>
         </div>
       ) : null}
+
       <SettingsModal
         key={settingsModalKey}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         settings={appSettings}
         onSave={persistSettings}
-        offlinePack={offlinePack}
-        onStartOfflinePack={runOfflinePack}
-        onRemoveOfflinePack={removeOfflinePackMarker}
-        storageSnapshot={storageSnapshot}
-        storageScanning={storageScanning}
-        onRefreshStorage={() => void refreshStorageSnapshot()}
         onClearCache={() => void clearModelCache()}
         cacheClearing={cacheClearing}
       />
 
-      {phase === "start" && (
-        <section className="hero-screen glass hero-minimal">
-          <h1 className="hero-brand">GROVEE</h1>
-          <p className="hero-tagline">צ&apos;אט פרטי בדפדפן · עברית ואנגלית · מודלים נטענים אצלך במחשב</p>
-          <div className="hero-actions">
-            <button className="pill-button" onClick={loadModel} disabled={isLoading || isGenerating}>
-              {preloadAllLoading ? "מסיים…" : "התחל"}
-            </button>
-            <button className="pill-button subtle-btn" onClick={clearModelCache} disabled={isGenerating || isLoading}>
-              נקה מטמון
+      {infoModalOpen ? (
+        <div
+          className="modal info-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="info-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setInfoModalOpen(false);
+          }}
+        >
+          <div className="modal-box">
+            <h3 id="info-modal-title">טכנולוגיית GROVEE</h3>
+            <p>GROVEE מריץ מודלי AI מתקדמים ישירות בדפדפן שלך באמצעות WebAssembly ו-Transformers.js.</p>
+            <p>
+              כל הנתונים נשארים במכשיר שלך. המודל <strong>GEMMA 4 E2B</strong> מורד פעם אחת (~3.9GB, כולל ראייה) ועובד
+              במהירות שיא — גם בלי תלות בענן אחרי ההורדה.
+            </p>
+            <button type="button" className="close-modal" onClick={() => setInfoModalOpen(false)}>
+              סגור
             </button>
           </div>
-        </section>
-      )}
+        </div>
+      ) : null}
 
-      {phase === "loading" && isLoading && (
-        <section className="loading-screen glass" aria-busy="true" aria-live="polite">
-          <h2>GROVEE</h2>
-          <div className="loading-model">{modelLabel}</div>
-          <p className="loading-phase">{status}</p>
-          <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
-            <div className="meter-fill" style={{ width: `${Math.min(100, progress)}%` }} />
+      {(phase === "start" || phase === "loading") && (
+        <div
+          id="intro-screen"
+          className={`intro-screen ${phase === "loading" ? "intro-screen--loading" : ""}`}
+          aria-busy={phase === "loading"}
+          aria-live="polite"
+        >
+          <IntroCanvas />
+
+          <div className="core-visual" aria-hidden="true">
+            <div className="ring r1" />
+            <div className="ring r2" />
+            <div className="ring r3" />
           </div>
-          <div className="percent">{Math.min(100, Math.round(progress))}%</div>
-          {loadingDetail ? (
-            <p className="loading-file-detail">{loadingDetail}</p>
-          ) : null}
-          {loadingSlowHint ? <p className="loading-slow-hint">{loadingSlowHint}</p> : null}
-          <p className="loading-meter-note">
-            ההתקדמות עולה מונוטונית; הספירה מתחת מתייחסת לקובץ הפעיל בלבד. עד ~96% בזמן הורדה; 100% כשהמודל מוכן.
-          </p>
-        </section>
+
+          <div className="intro-text">
+            <div className="brand-title">GROVEE</div>
+            <div className="model-name">GEMMA 4 E2B</div>
+
+            {phase === "start" ? (
+              <>
+                <button
+                  type="button"
+                  className="load-btn"
+                  onClick={loadModel}
+                  disabled={isLoading || isGenerating || !!workerBootError}
+                >
+                  טען מודל מקומי
+                </button>
+                <button type="button" className="learn-link" onClick={() => setInfoModalOpen(true)}>
+                  איך זה עובד?
+                </button>
+                <button
+                  type="button"
+                  className="learn-link learn-link--muted"
+                  onClick={() => void clearModelCache()}
+                  disabled={isGenerating || isLoading || cacheClearing}
+                >
+                  {cacheClearing ? "מנקה מטמון…" : "נקה מטמון"}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="progress-wrapper progress-wrapper--visible">
+                  <div
+                    className="progress-fill"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.min(100, Math.round(progress))}
+                    style={{ width: `${Math.min(100, progress)}%` }}
+                  />
+                </div>
+                <div className="status-msg">{status}</div>
+                {loadingPhase === "init" ? (
+                  <p className="loading-file-detail">מאתחל ONNX — כמעט מוכן</p>
+                ) : loadingByteLine ? (
+                  <p className="loading-file-detail" dir="ltr">
+                    {loadingByteLine}
+                  </p>
+                ) : null}
+                <p className="loading-rotating-tip" key={loadingTipIndex} dir="rtl">
+                  {loadingTip}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {phase === "ready" && (
-        <section className="ready-shell">
-          <aside className="sidebar">
-            <h3>GROVEE</h3>
+        <div
+          id="app-container"
+          className={`app-container app-container--visible ${artifactOpen ? "app-container--artifact-open" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
+        >
+          <div
+            className={`sb-overlay ${sidebarOpen ? "active" : ""}`}
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+          />
+
+          <aside className={`sidebar ${sidebarOpen ? "active" : ""}`}>
+            <div className="sb-header">
+              <div className="sb-header-start">
+                <div className="sb-logo">G</div>
+                GROVEE
+              </div>
+              <button
+                type="button"
+                className="sb-close-btn"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="סגור היסטוריה"
+              >
+                ×
+              </button>
+            </div>
             <button
               type="button"
-              className="new-chat-btn"
+              className="new-chat"
               onClick={() => {
                 const id = newChatSessionId();
+                setPendingAttachments((prev) => {
+                  for (const p of prev) URL.revokeObjectURL(p.previewUrl);
+                  return [];
+                });
+                setAttachError(null);
                 setChatSessionsState((s) => ({
                   activeId: id,
                   sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }, ...s.sessions],
@@ -2320,29 +1483,26 @@ function App() {
                 setAssistantBuffer("");
                 assistantBufferRef.current = "";
                 setPrompt("");
-                setImageDataUrl(null);
-                setComposerDragOver(false);
-                revokeImageUrl(generatedImageUrl);
-                setGeneratedImageUrl(null);
-                lastGeneratedUrlRef.current = null;
-                orchRef.current = null;
+                setSidebarOpen(false);
+                setArtifactOpen(false);
               }}
               disabled={isGenerating}
             >
-              + New chat
+              צ&apos;אט חדש
             </button>
-            <div className="chat-list">
+            <div className="history chat-list">
               {sortedSessions.map((s) => (
                 <button
                   key={s.id}
                   type="button"
-                  className={`chat-item ${s.id === chatSessionsState.activeId ? "active" : ""}`}
+                  className={`hist-item chat-item ${s.id === chatSessionsState.activeId ? "active" : ""}`}
                   onClick={() => {
                     if (s.id === chatSessionsState.activeId || isGenerating) return;
                     setChatSessionsState((st) => ({ ...st, activeId: s.id }));
                     setAssistantBuffer("");
                     assistantBufferRef.current = "";
-                    orchRef.current = null;
+                    setArtifactOpen(false);
+                    setSidebarOpen(false);
                   }}
                   disabled={isGenerating}
                 >
@@ -2350,167 +1510,258 @@ function App() {
                 </button>
               ))}
             </div>
+            <div className="user-foot">
+              <div className="avatar" aria-hidden="true" />
+              <span>אורח</span>
+              <button
+                type="button"
+                className="sb-settings-btn"
+                title="הגדרות Gemma"
+                aria-label="פתח הגדרות"
+                onClick={() => {
+                  setSettingsModalKey((k) => k + 1);
+                  setSettingsOpen(true);
+                }}
+              >
+                ⚙
+              </button>
+            </div>
           </aside>
 
-          <section className="chat-panel">
+          {artifactOpen && activeArtifact ? (
+            <aside className="artifact-panel open" aria-label="חלונית קוד">
+              <ArtifactPanel
+                artifact={activeArtifact}
+                streaming={isGenerating && !!assistantBuffer}
+                onClose={() => setArtifactOpen(false)}
+              />
+            </aside>
+          ) : null}
+
+          <section className="chat-area">
             <header className="chat-header">
-              <div className="chat-header-row">
-                <div>
-                  <h2>{conversationTitle}</h2>
-                  <p className="top-status">{status}</p>
-                </div>
-                <div className="header-actions">
-                  <button
-                    type="button"
-                    className="icon-gear"
-                    title="Model settings"
-                    aria-label="Open settings"
-                    onClick={() => {
-                      setSettingsModalKey((k) => k + 1);
-                      setSettingsOpen(true);
-                    }}
-                  >
-                    ⚙
-                  </button>
-                </div>
-              </div>
+              <button
+                type="button"
+                className="sidebar-toggle"
+                aria-label={sidebarOpen ? "סגור היסטוריה" : "פתח היסטוריה"}
+                aria-expanded={sidebarOpen}
+                onClick={() => setSidebarOpen((v) => !v)}
+              >
+                <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              </button>
+              <div className="model-badge">{modelLabel.toUpperCase()}</div>
+              {activeArtifact && !artifactOpen ? (
+                <button
+                  type="button"
+                  className="artifact-reopen-btn"
+                  onClick={() => setArtifactOpen(true)}
+                >
+                  פתח {activeArtifact.kind === "html" ? "HTML" : "קוד"}
+                </button>
+              ) : (
+                <div className="chat-header-spacer" aria-hidden="true" />
+              )}
             </header>
 
-            <div className="messages">
+            <div className="msg-list messages" ref={messagesListRef}>
               {messages.length === 0 && !assistantBuffer && (
                 <div className="empty-state">
-                  <h3>שיחה חדשה</h3>
-                  <p>
-                    כתוב בעברית או באנגלית. צרף תמונה לתיאור. בקש קוד או &quot;צור תמונה&quot; — המערכת תבחר את המודל המתאים ותחזיר תשובה אחת ברורה.
-                  </p>
+                  <div className="msg">
+                    <div className="msg-icon ai">AI</div>
+                    <div className="msg-txt">
+                      היי! המודל Gemma 4 E2B מוכן לעבודה. מה אפשר לעזור לך ליצור היום?
+                    </div>
+                  </div>
                 </div>
               )}
               {messages.map((msg) => (
-                <article key={msg.id} className={`bubble ${msg.role}`} dir={isRtlText(msg.content) ? "rtl" : "ltr"}>
-                  <strong>{msg.role === "user" ? "You" : msg.modelLabel ?? "Assistant"}</strong>
-                  {msg.role === "user" && msg.imageDataUrl ? (
-                    <div className="bubble-user-image">
-                      <img src={msg.imageDataUrl} alt="" />
-                    </div>
-                  ) : null}
-                  <MessageBody content={msg.content} />
+                <article
+                  key={msg.id}
+                  className="msg"
+                  dir={isRtlText(msg.content) ? "rtl" : "ltr"}
+                >
+                  <div className={`msg-icon ${msg.role === "user" ? "user" : "ai"}`}>
+                    {msg.role === "user" ? "א" : "AI"}
+                  </div>
+                  <div className="msg-txt">
+                    {msg.images?.length ? <UserAttachedImages images={msg.images} /> : null}
+                    {msg.artifact ? (
+                      <ArtifactChip
+                        kind={msg.artifact.kind}
+                        label={msg.artifact.kind === "html" ? "HTML" : msg.artifact.title}
+                        onOpen={() => openArtifact(msg.artifact!)}
+                      />
+                    ) : null}
+                    <MessageBody content={msg.content} onOpenArtifact={openArtifact} />
+                  </div>
                 </article>
               ))}
               {assistantBuffer && (
-                <article className="bubble assistant">
-                  <strong>{shortLabelForTextModel(modelId)}</strong>
-                  <MessageBody content={assistantBuffer} />
+                <article className="msg">
+                  <div className="msg-icon ai">AI</div>
+                  <div className="msg-txt">
+                    <MessageBody
+                      content={assistantBuffer}
+                      onOpenArtifact={openArtifact}
+                      showThinking={thinkingMode}
+                    />
+                  </div>
                 </article>
               )}
             </div>
 
-            <form
-              className="composer chatgpt-composer compact-composer composer-modern"
-              onSubmit={sendPrompt}
-              onDragEnter={onComposerDragEnter}
-              onDragLeave={onComposerDragLeave}
-              onDragOver={onComposerDragOver}
-              onDrop={onComposerDrop}
-            >
-              <div className={`composer-card ${composerDragOver ? "composer-card--dropping" : ""}`}>
-                <textarea
-                  ref={textareaRef}
-                  className="composer-body-input"
-                  dir="auto"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={placeholder}
-                  rows={2}
-                  disabled={!isLoaded || isGenerating}
+            <div className="composer-modes">
+              <label className="composer-mode-pill" title="מפעיל חשיבה native של Gemma 4 (<|think|>) — תהליך החשיבה יוצג לפני התשובה.">
+                <input
+                  type="checkbox"
+                  checked={thinkingMode}
+                  onChange={(e) => setThinkingMode(e.target.checked)}
+                  disabled={isGenerating}
                 />
-                {imageDataUrl ? (
-                  <div className="composer-attached-strip">
-                    <img src={imageDataUrl} alt="" />
-                    <button
-                      type="button"
-                      className="composer-attached-strip-remove"
-                      onClick={() => setImageDataUrl(null)}
-                      disabled={isGenerating}
-                      aria-label="Remove image"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : null}
-                <div className="composer-card-footer">
-                  <div className="composer-footer-left">
-                    <label
-                      className="composer-mode-pill"
-                      title='מוסיף הנחיה למודל לחשוב לפני התשובה. אין תצוגת "מחשבות" — רק הטקסט הסופי.'
-                    >
-                      <input
-                        type="checkbox"
-                        checked={thinkingMode}
-                        onChange={(e) => setThinkingMode(e.target.checked)}
-                        disabled={isGenerating}
-                      />
-                      <span>Think</span>
-                    </label>
-                    <label
-                      className="composer-mode-pill"
-                      title="מושך קטעים מוויקיפדיה (עברית/אנגלית) ומחיפוש מאגרים ב-GitHub. לא מנוע חיפוש מלא ולא גישה לכל האינטרנט."
-                    >
-                      <input
-                        type="checkbox"
-                        checked={webSearchMode}
-                        onChange={(e) => setWebSearchMode(e.target.checked)}
-                        disabled={isGenerating}
-                      />
-                      <span>Search</span>
-                    </label>
-                  </div>
-                  <div className="composer-footer-right">
-                    <button
-                      type="button"
-                      className="composer-clip-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      aria-label="Attach image"
-                      title="Attach image"
-                      disabled={!isLoaded || isGenerating}
-                    >
-                      📎
-                    </button>
-                    <button
-                      type="submit"
-                      className="composer-send-inner"
-                      disabled={!isLoaded || isGenerating}
-                      aria-label="Send"
-                      title="Send"
-                    >
-                      {isGenerating ? "…" : "↑"}
-                    </button>
-                  </div>
-                </div>
-              </div>
+                <span>Think</span>
+              </label>
+              <label
+                className="composer-mode-pill"
+                title="מושך קטעים מוויקיפדיה ומחיפוש מאגרים ב-GitHub."
+              >
+                <input
+                  type="checkbox"
+                  checked={webSearchMode}
+                  onChange={(e) => setWebSearchMode(e.target.checked)}
+                  disabled={isGenerating}
+                />
+                <span>Search</span>
+              </label>
+              {status && status !== "Not loaded" ? (
+                <span className="composer-status-hint">{status}</span>
+              ) : null}
+            </div>
 
+            <form
+              className={`input-zone ${isDragOver ? "input-zone--drag" : ""}`}
+              onSubmit={sendPrompt}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragOver(true);
+              }}
+              onDragLeave={(e) => {
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                setIsDragOver(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                if (e.dataTransfer.files?.length) void addFilesAsAttachments(e.dataTransfer.files);
+              }}
+            >
+              {pendingAttachments.length > 0 ? (
+                <div className="composer-attachments">
+                  {pendingAttachments.map((p) => (
+                    <div key={p.id} className="composer-attachment">
+                      <img src={p.previewUrl} alt="" className="composer-attachment-thumb" />
+                      <button
+                        type="button"
+                        className="composer-attachment-remove"
+                        onClick={() => removePendingAttachment(p.id)}
+                        aria-label="הסר תמונה"
+                        disabled={isGenerating}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {attachError ? (
+                <p className="composer-attach-error" role="alert">
+                  {attachError}
+                </p>
+              ) : null}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
-                className="hidden-file-input"
-                onChange={(event) => {
-                  ingestImageFile(event.target.files?.[0]);
-                  event.target.value = "";
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.length) void addFilesAsAttachments(e.target.files);
+                  e.target.value = "";
                 }}
               />
+              <div className="in-box">
+                <button
+                  type="button"
+                  className="in-act in-attach"
+                  disabled={!isLoaded || isGenerating || pendingAttachments.length >= MAX_ATTACHMENTS}
+                  aria-label="צרף תמונה"
+                  title="צרף תמונה (או הדבק Ctrl+V)"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="M21 15l-5-5L5 21" />
+                  </svg>
+                </button>
+                <textarea
+                  ref={textareaRef}
+                  id="user-in"
+                  dir="auto"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onPaste={(e) => {
+                    const items = e.clipboardData?.items;
+                    if (!items) return;
+                    const imageFiles: File[] = [];
+                    for (const item of items) {
+                      if (item.type.startsWith("image/")) {
+                        const f = item.getAsFile();
+                        if (f) imageFiles.push(f);
+                      }
+                    }
+                    if (imageFiles.length) {
+                      e.preventDefault();
+                      void addFilesAsAttachments(imageFiles);
+                    }
+                  }}
+                  placeholder={pendingAttachments.length ? "שאל על התמונה…" : "הקלד הודעה או צרף תמונה…"}
+                  rows={1}
+                  disabled={!isLoaded || isGenerating}
+                />
+                {isGenerating ? (
+                  <button
+                    type="button"
+                    className="in-act in-stop"
+                    onClick={stopGeneration}
+                    aria-label="עצור"
+                    title="עצור יצירה"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    className={`in-act in-send ${sendActive ? "in-send--active" : ""}`}
+                    disabled={!isLoaded || !sendActive}
+                    aria-label="שלח"
+                    title="שלח"
+                  >
+                    <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </form>
-            <div className="composer-footer-tools">
-              <button
-                type="button"
-                className="text-btn"
-                onClick={clearModelCache}
-                disabled={isGenerating || isLoading}
-              >
-                Clear model cache
-              </button>
-            </div>
           </section>
-        </section>
+        </div>
       )}
     </main>
   );

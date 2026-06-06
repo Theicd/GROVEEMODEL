@@ -1,6 +1,18 @@
 /// <reference lib="webworker" />
 
-import { TextStreamer, env, pipeline } from "@huggingface/transformers";
+import {
+  AutoProcessor,
+  Gemma4ForConditionalGeneration,
+  InterruptableStoppingCriteria,
+  RawImage,
+  TextStreamer,
+  env,
+} from "@huggingface/transformers";
+
+type Gemma4Processor = Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>;
+type Gemma4Model = InstanceType<typeof Gemma4ForConditionalGeneration>;
+
+export const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 
 type InferenceBackend = "auto" | "webgpu" | "wasm";
 
@@ -10,11 +22,24 @@ type LoadMessage = {
   dtype: "q4" | "q8" | "fp16" | "fp32";
 };
 
+export type WorkerImagePayload = {
+  bytes: ArrayBuffer;
+  mime: string;
+};
+
+export type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
+  images?: WorkerImagePayload[];
+};
+
 type GenerateMessage = {
   type: "generate";
   modelId: string;
   prompt: string;
   systemPrompt: string;
+  history: ChatTurn[];
+  images: WorkerImagePayload[];
   maxNewTokens: number;
   temperature: number;
   repetitionPenalty: number;
@@ -23,45 +48,19 @@ type GenerateMessage = {
   webContext: string;
 };
 
-type CaptionMessage = {
-  type: "caption";
-  imageDataUrl: string;
-  prompt?: string;
-  modelId: string;
-  maxNewTokens?: number;
-};
-
-type PreloadCaptionMessage = {
-  type: "preload_caption";
-  modelId: string;
-};
-
-type PreloadAllMessage = {
-  type: "preload_all";
-  textModelIds: string[];
-  captionModelIds: string[];
-  dtype: "q4" | "q8" | "fp16" | "fp32";
-};
-
-type WarmupAllMessage = {
-  type: "warmup_all";
-  textModelIds: string[];
-  captionModelIds: string[];
-  dtype: "q4" | "q8" | "fp16" | "fp32";
-};
-
 type ClearRuntimeCacheMessage = {
   type: "clear_runtime_cache";
 };
 
-/** Point Transformers.js at a Hugging Face mirror when huggingface.co is unreachable (e.g. regional block). */
+type AbortMessage = {
+  type: "abort";
+};
+
 type ConfigureHubMessage = {
   type: "configure_hub";
-  /** Empty string restores default https://huggingface.co/ */
   remoteHost: string;
 };
 
-/** How to run ONNX: auto tries WebGPU then WASM; wasm works on all machines; webgpu may fail on some drivers. */
 type ConfigureInferenceMessage = {
   type: "configure_inference";
   backend: InferenceBackend;
@@ -72,55 +71,37 @@ type WorkerInput =
   | ConfigureInferenceMessage
   | LoadMessage
   | GenerateMessage
-  | CaptionMessage
-  | PreloadCaptionMessage
-  | PreloadAllMessage
-  | WarmupAllMessage
-  | ClearRuntimeCacheMessage;
+  | ClearRuntimeCacheMessage
+  | AbortMessage;
 
-type TextGenerator = ((
-  input: string,
-  options: Record<string, unknown>,
-) => Promise<unknown>) & { tokenizer: unknown };
-
-/** Must match App.tsx `CODE_MODEL` — used to pick a separate in-memory slot so code LLM never evicts chat Gemma. */
-const CODE_MODEL_ID = "onnx-community/Qwen2.5-Coder-0.5B-Instruct";
-
-type TextGenSlot = {
-  generator: TextGenerator | null;
+type ModelSlot = {
+  model: Gemma4Model | null;
+  processor: Gemma4Processor | null;
   modelId: string;
   device: string;
 };
 
-const chatSlot: TextGenSlot = { generator: null, modelId: "", device: "unknown" };
-const codeSlot: TextGenSlot = { generator: null, modelId: "", device: "unknown" };
+const chatSlot: ModelSlot = { model: null, processor: null, modelId: "", device: "unknown" };
 
-const textGenSlotForModelId = (modelId: string): TextGenSlot =>
-  modelId === CODE_MODEL_ID ? codeSlot : chatSlot;
-
-const clearTextGenSlots = () => {
-  chatSlot.generator = null;
+const clearModelSlots = () => {
+  chatSlot.model = null;
+  chatSlot.processor = null;
   chatSlot.modelId = "";
   chatSlot.device = "unknown";
-  codeSlot.generator = null;
-  codeSlot.modelId = "";
-  codeSlot.device = "unknown";
 };
 
-const textGeneratorCache = new Map<string, { generator: TextGenerator; device: "webgpu" | "wasm" }>();
-const captionerCache = new Map<
-  string,
-  (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>
->();
-let busy = false;
+type CachedModel = {
+  model: Gemma4Model;
+  processor: Gemma4Processor;
+  device: "webgpu" | "wasm";
+};
 
-/** Last preference from the UI — affects text + vision pipelines across GPUs. */
+const modelCache = new Map<string, CachedModel>();
+let busy = false;
+let abortRequested = false;
+let activeInterrupt: InterruptableStoppingCriteria | null = null;
 let inferenceBackend: InferenceBackend = "auto";
 
-/**
- * `navigator.gpu` can exist while `requestAdapter()` returns null (Linux Mint without Vulkan, bad drivers, etc.).
- * Skipping WebGPU avoids ORT "No available adapters" and hard failures so chat can load on WASM/CPU.
- */
 let webGpuAdapterProbe: boolean | null = null;
 
 const resetWebGpuProbe = () => {
@@ -152,7 +133,6 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 
 const DEFAULT_REMOTE_HOST = "https://huggingface.co/";
-/** When the official hub is blocked, retry once with a public mirror (session-only until user saves Settings). */
 const PUBLIC_FALLBACK_MIRROR = "https://hf-mirror.com";
 
 const normalizedRemoteHost = (): string => {
@@ -191,22 +171,19 @@ const formatHubLoadError = (err: unknown): string => {
   return raw;
 };
 
-/** Apply mirror host; clears in-memory model handles when the host changes. */
 const applyHubRemoteHost = (remoteHost: string) => {
   const trimmed = remoteHost.trim();
   const next = trimmed === "" ? DEFAULT_REMOTE_HOST : trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
   if (env.remoteHost === next) return;
   env.remoteHost = next;
-  textGeneratorCache.clear();
-  captionerCache.clear();
-  clearTextGenSlots();
+  modelCache.clear();
+  clearModelSlots();
 };
 
 const post = (msg: unknown) => {
   self.postMessage(msg);
 };
 
-/** Same failure sometimes surfaces both as await throw and as an extra unhandled rejection inside Transformers.js. */
 let lastWorkerErrorPostedAt = 0;
 const postLoadFailureOnce = (err: unknown) => {
   const now = Date.now();
@@ -215,7 +192,6 @@ const postLoadFailureOnce = (err: unknown) => {
   post({ type: "error", error: formatHubLoadError(err) });
 };
 
-/** Transformers.js sometimes rejects parallel fetches without tying them to pipeline()'s await — surface that to the UI. */
 self.onunhandledrejection = (ev: PromiseRejectionEvent) => {
   console.error("[GROVEE worker] unhandledrejection:", ev.reason);
   try {
@@ -227,41 +203,16 @@ self.onunhandledrejection = (ev: PromiseRejectionEvent) => {
   postLoadFailureOnce(ev.reason);
 };
 
-const fmtBytes = (bytes: number) => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let idx = 0;
-  while (value >= 1024 && idx < units.length - 1) {
-    value /= 1024;
-    idx += 1;
-  }
-  return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
-};
-
-const clampPercent = (raw: unknown) => {
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
-  const pct = raw <= 1 ? raw * 100 : raw;
-  return Math.max(0, Math.min(100, Math.round(pct)));
-};
-
 const clampProgress = (value: number) => {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
 };
 
-/** Room left on the bar until pipeline() resolves (ONNX/WebGPU init after bytes finish). */
-const PROGRESS_CAP_UNTIL_PIPELINE_DONE = 96;
-
-const normalizeProgressStatus = (status?: string) => {
-  const raw = (status ?? "").trim().toLowerCase();
-  if (raw === "done" || raw === "complete" || raw === "completed") {
-    return "Loading…";
-  }
-  if (!raw || raw === "progress") {
-    return "Loading model (weights + runtime)…";
-  }
-  return status ?? "Loading…";
+const shortFileName = (path: string) => {
+  const t = path.trim();
+  if (!t) return "";
+  const parts = t.split(/[/\\]/);
+  return parts[parts.length - 1] ?? t;
 };
 
 type HfProgress = {
@@ -271,59 +222,97 @@ type HfProgress = {
   total?: number;
   file?: string;
   name?: string;
+  files?: Record<string, { loaded: number; total: number }>;
 };
 
-/**
- * Transformers.js reports progress per shard/file; each new file resets % and byte counters.
- * Keep a monotonic bar (never jumps backward) and label bytes as "this file only".
- */
-const createMonotonicProgressBridge = (startedAt: number) => {
-  let highWaterPct = 0;
-  /** If % drops by more than this vs the peak, treat as a new file starting. */
-  const NEW_FILE_DROP = 15;
-  let lastLoaded = 0;
-  let lastTs = startedAt;
+/** Gemma 4 E2B q4 multimodal pack (text + vision + audio encoders) — ~3.9 GB. */
+const GEMMA_Q4_MULTIMODAL_PACK_BYTES = 3_900_000_000;
 
-  return (progressData: HfProgress) => {
-    const rawPct = clampPercent(progressData.progress);
-    if (rawPct + NEW_FILE_DROP < highWaterPct) {
-      // New ONNX shard — hold the bar steady (library resets % per file)
-    } else {
-      highWaterPct = Math.max(highWaterPct, rawPct);
-    }
-    /**
-     * Cap during fetch phase so the bar never sits at 100% while ONNX/WebGPU still initializes.
-     * Jumps to 100 only when loadWithDevice posts progress after pipeline() resolves.
-     */
-    const barPct = Math.min(PROGRESS_CAP_UNTIL_PIPELINE_DONE, highWaterPct);
+const pickActiveDownloadFile = (
+  files: Record<string, { loaded: number; total: number }> | undefined,
+): string => {
+  if (!files) return "";
+  for (const [path, st] of Object.entries(files)) {
+    if (st.total > 0 && st.loaded < st.total * 0.995) return path;
+  }
+  return "";
+};
 
-    const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
-    const total = typeof progressData.total === "number" ? progressData.total : 0;
-    const now = Date.now();
-    const dt = Math.max(1, (now - lastTs) / 1000);
-    const speed = loaded > 0 && loaded >= lastLoaded ? (loaded - lastLoaded) / dt : 0;
-    lastLoaded = loaded;
-    lastTs = now;
-    const elapsed = Math.max(1, (now - startedAt) / 1000);
-    const speedText = speed > 0 ? `${fmtBytes(speed)}/s` : "…";
-    const fname = (progressData.file ?? progressData.name ?? "").trim();
+const createDownloadProgressBridge = (startedAt: number) => {
+  let overallLoaded = 0;
+  let overallTotal = 0;
+  let overallPct = 0;
+  let activeFile = "";
+  let speedEma = 0;
+  let speedLastLoaded = 0;
+  let speedLastTs = startedAt;
 
-    const fileFraction =
-      loaded > 0 && total > 0 ? `${Math.min(100, Math.round((loaded / total) * 100))}% of this file` : null;
-    const detailText =
-      loaded > 0 && total > 0
-        ? `This shard: ${fmtBytes(loaded)} / ${fmtBytes(total)} (${fileFraction}) · ~${speedText}${fname ? ` · ${fname}` : ""}`
-        : `${elapsed.toFixed(0)}s · ${fname || "preparing…"}`;
-
-    const statusText = normalizeProgressStatus(progressData.status);
-
+  const emitOverall = () => {
+    const label = shortFileName(activeFile);
     post({
       type: "progress",
-      text: statusText,
-      progress: clampProgress(barPct),
-      detail: detailText,
-      file: fname,
+      text: label ? `מוריד: ${label}` : "מוריד מודל…",
+      progress: overallPct,
+      phase: "download",
+      loaded: overallLoaded,
+      total: overallTotal,
+      speedBps: Math.round(speedEma),
+      detail: "",
+      file: activeFile,
     });
+  };
+
+  const updateSpeed = (loaded: number) => {
+    const now = Date.now();
+    const dt = Math.max(0.25, (now - speedLastTs) / 1000);
+    if (loaded > speedLastLoaded) {
+      const instant = (loaded - speedLastLoaded) / dt;
+      speedEma = speedEma > 0 ? speedEma * 0.75 + instant * 0.25 : instant;
+      speedLastLoaded = loaded;
+      speedLastTs = now;
+    }
+  };
+
+  return (progressData: HfProgress) => {
+    const status = progressData.status ?? "";
+
+    if (status === "progress_total") {
+      const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
+      const total = typeof progressData.total === "number" ? progressData.total : 0;
+      if (loaded <= 0 && total <= 0) return;
+
+      overallLoaded = Math.max(overallLoaded, loaded);
+      overallTotal = Math.max(overallTotal, total || GEMMA_Q4_MULTIMODAL_PACK_BYTES);
+      const pct =
+        typeof progressData.progress === "number" && progressData.progress > 0
+          ? progressData.progress
+          : overallTotal > 0
+            ? (overallLoaded / overallTotal) * 100
+            : 0;
+      overallPct = Math.max(overallPct, clampProgress(pct));
+
+      const fromMap = pickActiveDownloadFile(progressData.files);
+      if (fromMap) activeFile = fromMap;
+
+      updateSpeed(overallLoaded);
+      emitOverall();
+      return;
+    }
+
+    if (status === "progress" && progressData.file) {
+      activeFile = progressData.file;
+      const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
+      const total = typeof progressData.total === "number" ? progressData.total : 0;
+      if (overallTotal <= 0 && (loaded > 0 || total > 0)) {
+        overallLoaded = Math.max(overallLoaded, loaded);
+        overallTotal = Math.max(overallTotal, total);
+        if (overallTotal > 0) {
+          overallPct = Math.max(overallPct, clampProgress((overallLoaded / overallTotal) * 100));
+        }
+        updateSpeed(overallLoaded);
+        emitOverall();
+      }
+    }
   };
 };
 
@@ -332,29 +321,32 @@ const loadWithDevice = async (
   dtype: LoadMessage["dtype"],
   device: "webgpu" | "wasm",
 ) => {
-  const runPipeline = async () => {
-    post({ type: "status", text: `Loading ${modelId} on ${device}...` });
+  const runLoad = async () => {
+    post({ type: "status", text: `Loading ${modelId} (vision + text) on ${device}...` });
     const startedAt = Date.now();
-    const onProgress = createMonotonicProgressBridge(startedAt);
-    const pipe = (await pipeline("text-generation", modelId, {
-      device,
-      dtype,
-      progress_callback: onProgress,
-    })) as TextGenerator;
+    const onProgress = createDownloadProgressBridge(startedAt);
+
+    const loadOpts = { device, dtype, progress_callback: onProgress };
+
+    const processor = (await AutoProcessor.from_pretrained(modelId, loadOpts)) as Gemma4Processor;
+    const model = (await Gemma4ForConditionalGeneration.from_pretrained(modelId, loadOpts)) as Gemma4Model;
 
     post({
       type: "progress",
-      text: "Loading…",
+      text: "מאתחל מודל (ONNX / WebGPU)…",
       progress: 100,
-      detail: "",
+      phase: "init",
+      loaded: 0,
+      total: 0,
+      detail: "הקבצים הורדו — טוען לזיכרון",
       file: "",
     });
 
-    return pipe;
+    return { model, processor };
   };
 
   try {
-    return await runPipeline();
+    return await runLoad();
   } catch (e) {
     if (isLikelyHubNetworkFailure(e) && isUsingOfficialHubOnly()) {
       post({
@@ -362,77 +354,45 @@ const loadWithDevice = async (
         text: `Cannot reach huggingface.co — retrying once via ${PUBLIC_FALLBACK_MIRROR} …`,
       });
       applyHubRemoteHost(PUBLIC_FALLBACK_MIRROR);
-      return await runPipeline();
+      return await runLoad();
     }
     throw e;
   }
 };
 
-const loadCaptioner = async (modelId: string, device: "webgpu" | "wasm") => {
-  const visionModel = modelId;
-  const runPipeline = async () => {
-    post({ type: "status", text: `Loading ${visionModel} on ${device}...` });
-    const startedAt = Date.now();
-    const onProgress = createMonotonicProgressBridge(startedAt);
-    const pipe = (await pipeline("image-to-text", visionModel, {
-      device,
-      dtype: "q8",
-      progress_callback: onProgress,
-    })) as (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
-    post({
-      type: "progress",
-      text: "Loading…",
-      progress: 100,
-      detail: "",
-      file: "",
-    });
-    return pipe;
-  };
-
-  try {
-    return await runPipeline();
-  } catch (e) {
-    if (isLikelyHubNetworkFailure(e) && isUsingOfficialHubOnly()) {
-      post({
-        type: "status",
-        text: `Cannot reach huggingface.co — retrying vision download via ${PUBLIC_FALLBACK_MIRROR} …`,
-      });
-      applyHubRemoteHost(PUBLIC_FALLBACK_MIRROR);
-      return await runPipeline();
-    }
-    throw e;
+const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"]) => {
+  if (modelId !== GEMMA_MODEL_ID) {
+    throw new Error(`Only ${GEMMA_MODEL_ID} is supported.`);
   }
-};
 
-const loadTextGenerator = async (modelId: string, dtype: LoadMessage["dtype"]) => {
   const pref = inferenceBackend;
 
   const tryWasm = async () => {
     const loaded = await loadWithDevice(modelId, dtype, "wasm");
-    const entry = { generator: loaded, device: "wasm" as const };
-    textGeneratorCache.set(modelId, entry);
+    const entry: CachedModel = { ...loaded, device: "wasm" };
+    modelCache.set(modelId, entry);
     return entry;
   };
 
   const tryWebGpu = async () => {
     const loaded = await loadWithDevice(modelId, dtype, "webgpu");
-    const entry = { generator: loaded, device: "webgpu" as const };
-    textGeneratorCache.set(modelId, entry);
+    const entry: CachedModel = { ...loaded, device: "webgpu" };
+    modelCache.set(modelId, entry);
     return entry;
   };
 
-  const cached = textGeneratorCache.get(modelId);
+  const cached = modelCache.get(modelId);
   if (cached) {
     if (pref === "auto") return cached;
     if (pref === "webgpu" && cached.device === "webgpu") return cached;
     if (pref === "wasm" && cached.device === "wasm") return cached;
-    textGeneratorCache.delete(modelId);
+    modelCache.delete(modelId);
   }
 
   if (pref === "wasm") {
     post({
       type: "status",
-      text: `Loading ${modelId} on WASM (CPU — works on all systems; slower than WebGPU)…`,
+      text: `Loading ${modelId} on WASM (CPU — slower; vision works best with WebGPU)…`,
     });
     return await tryWasm();
   }
@@ -454,98 +414,88 @@ const loadTextGenerator = async (modelId: string, dtype: LoadMessage["dtype"]) =
     return await tryWasm();
   }
 
-  // auto: WebGPU only when adapter exists; else WASM (Linux-friendly)
   if (await hasRunnableWebGpuAdapter()) {
     try {
       return await tryWebGpu();
     } catch {
-      post({
-        type: "status",
-        text: `WebGPU failed for ${modelId}. Using WASM (CPU) — slower but compatible.`,
-      });
+      post({ type: "status", text: `WebGPU error — using WASM (CPU) for ${modelId}.` });
       return await tryWasm();
     }
   }
-  post({
-    type: "status",
-    text: `No WebGPU adapter — using WASM (CPU) for ${modelId} (try Chromium + GPU drivers on Linux).`,
-  });
+
+  post({ type: "status", text: `No WebGPU adapter — loading ${modelId} on WASM (CPU).` });
   return await tryWasm();
 };
 
-type CaptionFn = (image: string, options?: Record<string, unknown>) => Promise<Array<{ generated_text: string }>>;
+const DEFAULT_VISION_PROMPT =
+  "Describe this image in detail. Answer in the same language as the user's message.";
 
-/** Vision pipeline: same backend rules as text (consistent across Intel / AMD / NVIDIA / no GPU). */
-const loadCaptionerPreferred = async (
-  modelId: string,
-): Promise<{ captioner: CaptionFn; device: "webgpu" | "wasm" }> => {
-  const pref = inferenceBackend;
-
-  if (pref === "wasm") {
-    const captioner = await loadCaptioner(modelId, "wasm");
-    return { captioner, device: "wasm" };
+const toRawImages = async (payloads: WorkerImagePayload[]): Promise<RawImage[]> => {
+  const out: RawImage[] = [];
+  for (const p of payloads) {
+    const blob = new Blob([p.bytes], { type: p.mime || "image/jpeg" });
+    out.push(await RawImage.fromBlob(blob));
   }
-  if (pref === "webgpu") {
-    if (await hasRunnableWebGpuAdapter()) {
-      try {
-        const captioner = await loadCaptioner(modelId, "webgpu");
-        return { captioner, device: "webgpu" };
-      } catch {
-        const captioner = await loadCaptioner(modelId, "wasm");
-        return { captioner, device: "wasm" };
-      }
-    }
-    const captioner = await loadCaptioner(modelId, "wasm");
-    return { captioner, device: "wasm" };
-  }
-  if (await hasRunnableWebGpuAdapter()) {
-    try {
-      const captioner = await loadCaptioner(modelId, "webgpu");
-      return { captioner, device: "webgpu" };
-    } catch {
-      const captioner = await loadCaptioner(modelId, "wasm");
-      return { captioner, device: "wasm" };
-    }
-  }
-  const captioner = await loadCaptioner(modelId, "wasm");
-  return { captioner, device: "wasm" };
+  return out;
 };
 
-const normalizePrompt = (message: GenerateMessage) => {
-  const webBlock = message.webContext?.trim()
-    ? `\n\nWeb context:\n${message.webContext.trim()}\nUse it only if relevant.\n`
-    : "";
-  const thinkingBlock = message.thinkingMode
-    ? "\nThink carefully before answering, but output only the final answer."
-    : "";
-  return `${message.systemPrompt}${thinkingBlock}${webBlock}\n\nQuestion:\n${message.prompt}\n\nAnswer:`;
-};
-
-const buildPrompt = (model: TextGenerator, message: GenerateMessage) => {
-  const tokenizer = (model as { tokenizer?: unknown }).tokenizer as
-    | { apply_chat_template?: (messages: unknown, opts: unknown) => string }
-    | undefined;
-
-  if (tokenizer?.apply_chat_template) {
-    const messages = [
-      { role: "system", content: message.systemPrompt },
-      ...(message.webContext?.trim()
-        ? [{ role: "system", content: `Web context:\n${message.webContext.trim()}` }]
-        : []),
-      { role: "user", content: message.prompt },
-    ];
-
-    try {
-      return tokenizer.apply_chat_template(messages, {
-        tokenize: false,
-        add_generation_prompt: true,
-      });
-    } catch {
-      return normalizePrompt(message);
+const collectImagesInOrder = (message: GenerateMessage): WorkerImagePayload[] => {
+  const ordered: WorkerImagePayload[] = [];
+  for (const turn of message.history) {
+    if (turn.role === "user" && turn.images?.length) {
+      ordered.push(...turn.images);
     }
   }
+  if (message.images.length) ordered.push(...message.images);
+  return ordered;
+};
 
-  return normalizePrompt(message);
+const buildTurnContent = (role: "user" | "assistant", text: string, imageCount: number) => {
+  if (role !== "user" || imageCount <= 0) return text;
+  const parts: Array<{ type: string; text?: string }> = [];
+  for (let i = 0; i < imageCount; i++) parts.push({ type: "image" });
+  parts.push({ type: "text", text: text.trim() || DEFAULT_VISION_PROMPT });
+  return parts;
+};
+
+const buildInputs = async (processor: Gemma4Processor, message: GenerateMessage) => {
+  type ChatContent = string | Array<{ type: string; text?: string }>;
+  type ChatMsg = { role: string; content: ChatContent };
+
+  const chatMessages: ChatMsg[] = [{ role: "system", content: message.systemPrompt }];
+
+  if (message.webContext?.trim()) {
+    chatMessages.push({ role: "system", content: `Web context:\n${message.webContext.trim()}` });
+  }
+
+  for (const turn of message.history) {
+    const imgCount = turn.role === "user" ? (turn.images?.length ?? 0) : 0;
+    chatMessages.push({
+      role: turn.role,
+      content: buildTurnContent(turn.role, turn.content, imgCount),
+    });
+  }
+
+  const currentImages = message.images.length;
+  chatMessages.push({
+    role: "user",
+    content: buildTurnContent("user", message.prompt, currentImages),
+  });
+
+  const promptText = processor.apply_chat_template(chatMessages, {
+    tokenize: false,
+    add_generation_prompt: true,
+    ...(message.thinkingMode ? { enable_thinking: true } : {}),
+  } as Parameters<Gemma4Processor["apply_chat_template"]>[1]) as string;
+
+  const allPayloads = collectImagesInOrder(message);
+  let imagesArg: RawImage | RawImage[] | null = null;
+  if (allPayloads.length > 0) {
+    const raw = await toRawImages(allPayloads);
+    imagesArg = raw.length === 1 ? raw[0] : raw;
+  }
+
+  return processor(promptText, imagesArg, null, { add_special_tokens: false });
 };
 
 self.onmessage = async (event: MessageEvent<WorkerInput>) => {
@@ -562,9 +512,8 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       if (next !== inferenceBackend) {
         inferenceBackend = next;
         resetWebGpuProbe();
-        textGeneratorCache.clear();
-        captionerCache.clear();
-        clearTextGenSlots();
+        modelCache.clear();
+        clearModelSlots();
       }
       return;
     }
@@ -575,153 +524,32 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
 
-      if (chatSlot.generator && message.modelId === chatSlot.modelId) {
+      if (chatSlot.model && message.modelId === chatSlot.modelId) {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
       }
-      const loaded = await loadTextGenerator(message.modelId, message.dtype);
-      chatSlot.generator = loaded.generator;
+      const loaded = await loadMultimodalModel(message.modelId, message.dtype);
+      chatSlot.model = loaded.model;
+      chatSlot.processor = loaded.processor;
       chatSlot.device = loaded.device;
       chatSlot.modelId = message.modelId;
       post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
       return;
     }
 
-    if (message.type === "preload_all") {
-      if (busy) {
-        post({ type: "error", error: "Another task is in progress. Please wait." });
-        return;
-      }
-      const total = message.textModelIds.length + message.captionModelIds.length;
-      let completed = 0;
-      post({
-        type: "progress",
-        text: "Starting full local model download...",
-        progress: 0,
-        detail: `0 / ${total} models ready`,
-        file: "",
-      });
-      const failedTextModelIds: string[] = [];
-      const failedCaptionModelIds: string[] = [];
-      for (const textModelId of message.textModelIds) {
-        post({ type: "status", text: `Preparing text model ${completed + 1}/${total}: ${textModelId}` });
-        try {
-          if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGenerator(textModelId, message.dtype);
-          }
-        } catch (e) {
-          const err = e instanceof Error ? e.message : String(e);
-          failedTextModelIds.push(textModelId);
-          post({ type: "status", text: `Could not load ${textModelId}: ${err}` });
-        }
-        completed += 1;
-        post({
-          type: "progress",
-          text: "Downloaded local models",
-          progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} models ready`,
-          file: textModelId,
-        });
-      }
-      for (const captionModelId of message.captionModelIds) {
-        post({ type: "status", text: `Preparing vision model ${completed + 1}/${total}: ${captionModelId}` });
-        if (!captionerCache.has(captionModelId)) {
-          try {
-            const { captioner } = await loadCaptionerPreferred(captionModelId);
-            captionerCache.set(captionModelId, captioner);
-          } catch (e) {
-            const err = e instanceof Error ? e.message : String(e);
-            failedCaptionModelIds.push(captionModelId);
-            post({ type: "status", text: `Could not load vision ${captionModelId}: ${err}` });
-          }
-        }
-        completed += 1;
-        post({
-          type: "progress",
-          text: "Downloaded local models",
-          progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} models ready`,
-          file: captionModelId,
-        });
-      }
-      post({
-        type: "preload_all_done",
-        textModels: message.textModelIds.length,
-        captionModels: message.captionModelIds.length,
-        ...(failedTextModelIds.length ? { failedTextModelIds } : {}),
-        ...(failedCaptionModelIds.length ? { failedCaptionModelIds } : {}),
-      });
-      return;
-    }
-
-    if (message.type === "warmup_all") {
-      if (busy) {
-        post({ type: "error", error: "Another task is in progress. Please wait." });
-        return;
-      }
-      const total = message.textModelIds.length + message.captionModelIds.length;
-      let completed = 0;
-      post({
-        type: "status",
-        text: "Gemma is ready. Downloading additional models in background...",
-      });
-      const failedTextModelIds: string[] = [];
-      const failedCaptionModelIds: string[] = [];
-      for (const textModelId of message.textModelIds) {
-        try {
-          if (!textGeneratorCache.has(textModelId)) {
-            await loadTextGenerator(textModelId, message.dtype);
-          }
-        } catch (e) {
-          const err = e instanceof Error ? e.message : String(e);
-          failedTextModelIds.push(textModelId);
-          post({ type: "status", text: `Warmup failed for ${textModelId}: ${err}` });
-        }
-        completed += 1;
-        post({
-          type: "progress",
-          text: "Background model warmup",
-          progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} background models ready`,
-          file: textModelId,
-        });
-      }
-      for (const captionModelId of message.captionModelIds) {
-        if (!captionerCache.has(captionModelId)) {
-          try {
-            const { captioner } = await loadCaptionerPreferred(captionModelId);
-            captionerCache.set(captionModelId, captioner);
-          } catch (e) {
-            const err = e instanceof Error ? e.message : String(e);
-            failedCaptionModelIds.push(captionModelId);
-            post({ type: "status", text: `Vision warmup failed for ${captionModelId}: ${err}` });
-          }
-        }
-        completed += 1;
-        post({
-          type: "progress",
-          text: "Background model warmup",
-          progress: clampProgress((completed / total) * 100),
-          detail: `${completed} / ${total} background models ready`,
-          file: captionModelId,
-        });
-      }
-      post({
-        type: "preload_all_done",
-        textModels: message.textModelIds.length,
-        captionModels: message.captionModelIds.length,
-        ...(failedTextModelIds.length ? { failedTextModelIds } : {}),
-        ...(failedCaptionModelIds.length ? { failedCaptionModelIds } : {}),
-      });
-      return;
-    }
-
     if (message.type === "clear_runtime_cache") {
-      clearTextGenSlots();
-      textGeneratorCache.clear();
-      captionerCache.clear();
+      clearModelSlots();
+      modelCache.clear();
       busy = false;
+      abortRequested = false;
+      activeInterrupt = null;
       post({ type: "status", text: "Runtime model cache cleared." });
+      return;
+    }
+
+    if (message.type === "abort") {
+      abortRequested = true;
+      activeInterrupt?.interrupt();
       return;
     }
 
@@ -731,23 +559,43 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
 
-      const slot = textGenSlotForModelId(message.modelId);
-      if (!slot.generator || slot.modelId !== message.modelId) {
-        const switched = await loadTextGenerator(message.modelId, "q4");
-        slot.generator = switched.generator;
-        slot.modelId = message.modelId;
-        slot.device = switched.device;
+      if (message.modelId !== GEMMA_MODEL_ID) {
+        post({ type: "error", error: `Only ${GEMMA_MODEL_ID} is supported.` });
+        return;
       }
 
-      const gen = slot.generator;
-      if (!gen) {
+      if (!chatSlot.model || !chatSlot.processor || chatSlot.modelId !== message.modelId) {
+        const switched = await loadMultimodalModel(message.modelId, "q4");
+        chatSlot.model = switched.model;
+        chatSlot.processor = switched.processor;
+        chatSlot.modelId = message.modelId;
+        chatSlot.device = switched.device;
+      }
+
+      const model = chatSlot.model;
+      const processor = chatSlot.processor;
+      if (!model || !processor) {
         post({ type: "error", error: "Model is not loaded yet." });
         return;
       }
 
       busy = true;
-      const finalPrompt = buildPrompt(gen, message);
-      const streamer = new TextStreamer(gen.tokenizer as never, {
+      abortRequested = false;
+      const interrupt = new InterruptableStoppingCriteria();
+      activeInterrupt = interrupt;
+
+      post({ type: "status", text: message.images.length ? "מעבד תמונה…" : "Generating…" });
+
+      const inputs = await buildInputs(processor, message);
+
+      if (abortRequested || interrupt.interrupted) {
+        post({ type: "aborted" });
+        busy = false;
+        activeInterrupt = null;
+        return;
+      }
+
+      const streamer = new TextStreamer(processor.tokenizer as never, {
         skip_prompt: true,
         callback_function: (text: string) => {
           post({ type: "token", text });
@@ -755,64 +603,25 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       });
 
       const temperature = message.temperature;
-      await gen(finalPrompt, {
+      await model.generate({
+        ...inputs,
         max_new_tokens: message.maxNewTokens,
         temperature,
         do_sample: temperature > 0.01,
         repetition_penalty: message.repetitionPenalty,
         top_p: message.topP,
-        no_repeat_ngram_size: 3,
-        return_full_text: false,
         streamer,
+        stopping_criteria: interrupt,
       });
 
-      post({ type: "done" });
+      post({ type: interrupt.interrupted || abortRequested ? "aborted" : "done" });
       busy = false;
+      activeInterrupt = null;
       return;
-    }
-
-    if (message.type === "caption") {
-      if (busy) {
-        post({ type: "error", error: "Another task is in progress. Please wait." });
-        return;
-      }
-
-      busy = true;
-      let captioner = captionerCache.get(message.modelId) ?? null;
-      if (!captioner) {
-        const loadedCap = await loadCaptionerPreferred(message.modelId);
-        captioner = loadedCap.captioner;
-        captionerCache.set(message.modelId, captioner);
-      }
-
-      const result = await captioner(message.imageDataUrl, {
-        max_new_tokens: message.maxNewTokens ?? 80,
-      });
-      const captionText = result?.[0]?.generated_text?.trim() || "Could not generate image description.";
-      const prefix = message.prompt?.trim() ? `${message.prompt.trim()}\n` : "";
-      post({ type: "caption_done", text: `${prefix}${captionText}` });
-      busy = false;
-      return;
-    }
-
-    if (message.type === "preload_caption") {
-      if (busy) {
-        post({ type: "error", error: "Another task is in progress. Please wait." });
-        return;
-      }
-
-      const existing = captionerCache.get(message.modelId);
-      if (existing) {
-        post({ type: "caption_model_loaded", modelId: message.modelId, device: "cache" });
-        return;
-      }
-
-      const { captioner, device } = await loadCaptionerPreferred(message.modelId);
-      captionerCache.set(message.modelId, captioner);
-      post({ type: "caption_model_loaded", modelId: message.modelId, device });
     }
   } catch (error) {
     busy = false;
+    activeInterrupt = null;
     postLoadFailureOnce(error);
   }
 };
