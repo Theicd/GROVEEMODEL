@@ -13,6 +13,30 @@ dist
 dist-ssr
 *.local
 
+# Not part of GROVEE web UI deploy
+ar_game/
+
+# Built by GitHub Actions (sync-docs-folder.yml)
+docs/
+
+# Local push / debug artifacts
+push-all-result.txt
+push-grovee-ui-result.txt
+_npm_*.exit
+_*.txt
+_*.json
+_readlines.js
+
+# Legacy image-gen (removed from GROVEE app; keep out of repo)
+app/src/cloudImage.ts
+app/src/cloudImage.test.ts
+app/src/localImageGen.ts
+app/src/localImageGen.test.ts
+app/src/offlinePack.ts
+app/src/offlinePack.test.ts
+app/src/storageAudit.ts
+app/src/storageAudit.test.ts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
