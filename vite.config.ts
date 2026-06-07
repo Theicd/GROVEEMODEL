@@ -1,0 +1,31 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// https://vite.dev/config/
+export default defineConfig({
+  root: path.join(__dirname, "app"),
+  publicDir: path.join(__dirname, "public"),
+  // Default ./ for local & docs/ — set VITE_BASE=/GROVEEMODEL/ when building for github.io/GROVEEMODEL/
+  base: process.env.VITE_BASE ?? "./",
+  plugins: [react()],
+  build: {
+    outDir: path.join(__dirname, "dist"),
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("@tensorflow-models/pose-detection/dist/movenet")) return "movenet";
+          if (id.includes("@tensorflow-models/pose-detection")) return "pose-detection";
+          if (id.includes("@tensorflow-models/coco-ssd")) return "coco-ssd";
+          if (id.includes("onnxruntime-web")) return "onnxruntime";
+          if (id.includes("@mediapipe/tasks-vision")) return "mediapipe-vision";
+          if (id.includes("face-api")) return "face-api";
+        },
+      },
+    },
+  },
+});
