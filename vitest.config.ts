@@ -5,6 +5,5 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["app/src/**/*.test.ts"],
-    exclude: ["app/src/localImageGen.test.ts"],
   },
 });

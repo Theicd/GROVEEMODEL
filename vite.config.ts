@@ -15,5 +15,14 @@ export default defineConfig({
   build: {
     outDir: path.join(__dirname, "dist"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("@tensorflow-models/pose-detection/dist/movenet")) return "movenet";
+          if (id.includes("@tensorflow-models/pose-detection")) return "pose-detection";
+          if (id.includes("@tensorflow-models/coco-ssd")) return "coco-ssd";
+        },
+      },
+    },
   },
 });

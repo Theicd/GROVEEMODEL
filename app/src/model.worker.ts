@@ -8,6 +8,11 @@ import {
   TextStreamer,
   env,
 } from "@huggingface/transformers";
+import {
+  SCENE_ANALYSIS_SYSTEM_PROMPT,
+  buildSceneAnalysisUserPrompt,
+} from "./cameraPrompts";
+import { parseSceneAnalysisJson } from "./worldMemory";
 
 type Gemma4Processor = Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>;
 type Gemma4Model = InstanceType<typeof Gemma4ForConditionalGeneration>;
@@ -66,11 +71,31 @@ type ConfigureInferenceMessage = {
   backend: InferenceBackend;
 };
 
+type AnalyzeSceneMessage = {
+  type: "analyze_scene";
+  requestId: string;
+  modelId: string;
+  images: WorkerImagePayload[];
+  previousSummary?: string;
+  sensorBlock?: string;
+};
+
+type CharacterUtteranceMessage = {
+  type: "character_utterance";
+  requestId: string;
+  modelId: string;
+  systemPrompt: string;
+  userPrompt: string;
+  maxNewTokens?: number;
+};
+
 type WorkerInput =
   | ConfigureHubMessage
   | ConfigureInferenceMessage
   | LoadMessage
   | GenerateMessage
+  | AnalyzeSceneMessage
+  | CharacterUtteranceMessage
   | ClearRuntimeCacheMessage
   | AbortMessage;
 
@@ -97,10 +122,32 @@ type CachedModel = {
 };
 
 const modelCache = new Map<string, CachedModel>();
-let busy = false;
+let chatBusy = false;
+let sceneBusy = false;
 let abortRequested = false;
 let activeInterrupt: InterruptableStoppingCriteria | null = null;
 let inferenceBackend: InferenceBackend = "auto";
+
+const isWorkerBusy = () => chatBusy || sceneBusy;
+
+const isWebGpuRuntimeError = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /webgpu|OrtRun|GPUBuffer|mapAsync|external Instance/i.test(msg);
+};
+
+const forceReloadWasm = async (modelId: string): Promise<CachedModel> => {
+  modelCache.delete(modelId);
+  inferenceBackend = "wasm";
+  return loadMultimodalModel(modelId, "q4");
+};
+
+const waitForSceneIdle = async (maxMs = 180_000): Promise<boolean> => {
+  const start = Date.now();
+  while (sceneBusy && Date.now() - start < maxMs) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+  }
+  return !sceneBusy;
+};
 
 let webGpuAdapterProbe: boolean | null = null;
 
@@ -199,7 +246,8 @@ self.onunhandledrejection = (ev: PromiseRejectionEvent) => {
   } catch {
     /* ignore */
   }
-  busy = false;
+  chatBusy = false;
+  sceneBusy = false;
   postLoadFailureOnce(ev.reason);
 };
 
@@ -498,6 +546,53 @@ const buildInputs = async (processor: Gemma4Processor, message: GenerateMessage)
   return processor(promptText, imagesArg, null, { add_special_tokens: false });
 };
 
+const buildSceneAnalysisInputs = async (
+  processor: Gemma4Processor,
+  message: AnalyzeSceneMessage,
+) => {
+  type ChatMsg = {
+    role: string;
+    content: string | Array<{ type: string; text?: string }>;
+  };
+
+  const userText = buildSceneAnalysisUserPrompt(message.previousSummary, message.sensorBlock);
+  const chatMessages: ChatMsg[] = [
+    { role: "system", content: SCENE_ANALYSIS_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: [
+        { type: "image" },
+        { type: "text", text: userText },
+      ],
+    },
+  ];
+
+  const promptText = processor.apply_chat_template(chatMessages, {
+    tokenize: false,
+    add_generation_prompt: true,
+  } as Parameters<Gemma4Processor["apply_chat_template"]>[1]) as string;
+
+  const raw = await toRawImages(message.images);
+  const imagesArg = raw.length === 1 ? raw[0] : raw;
+  return processor(promptText, imagesArg, null, { add_special_tokens: false });
+};
+
+const buildCharacterUtteranceInputs = async (
+  processor: Gemma4Processor,
+  message: CharacterUtteranceMessage,
+) => {
+  type ChatMsg = { role: string; content: string };
+  const chatMessages: ChatMsg[] = [
+    { role: "system", content: message.systemPrompt },
+    { role: "user", content: message.userPrompt },
+  ];
+  const promptText = processor.apply_chat_template(chatMessages, {
+    tokenize: false,
+    add_generation_prompt: true,
+  } as Parameters<Gemma4Processor["apply_chat_template"]>[1]) as string;
+  return processor(promptText, null, null, { add_special_tokens: false });
+};
+
 self.onmessage = async (event: MessageEvent<WorkerInput>) => {
   const message = event.data;
 
@@ -519,7 +614,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
     }
 
     if (message.type === "load") {
-      if (busy) {
+      if (isWorkerBusy()) {
         post({ type: "error", error: "Generation in progress. Please wait." });
         return;
       }
@@ -540,7 +635,8 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
     if (message.type === "clear_runtime_cache") {
       clearModelSlots();
       modelCache.clear();
-      busy = false;
+      chatBusy = false;
+      sceneBusy = false;
       abortRequested = false;
       activeInterrupt = null;
       post({ type: "status", text: "Runtime model cache cleared." });
@@ -554,13 +650,22 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
     }
 
     if (message.type === "generate") {
-      if (busy) {
-        post({ type: "error", error: "Generation already in progress." });
+      if (chatBusy) {
+        post({ type: "error", error: "Generation already in progress.", scope: "chat" });
+        return;
+      }
+
+      if (!(await waitForSceneIdle())) {
+        post({
+          type: "error",
+          error: "Camera analysis is still running. Please wait a moment and try again.",
+          scope: "chat",
+        });
         return;
       }
 
       if (message.modelId !== GEMMA_MODEL_ID) {
-        post({ type: "error", error: `Only ${GEMMA_MODEL_ID} is supported.` });
+        post({ type: "error", error: `Only ${GEMMA_MODEL_ID} is supported.`, scope: "chat" });
         return;
       }
 
@@ -575,11 +680,11 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const model = chatSlot.model;
       const processor = chatSlot.processor;
       if (!model || !processor) {
-        post({ type: "error", error: "Model is not loaded yet." });
+        post({ type: "error", error: "Model is not loaded yet.", scope: "chat" });
         return;
       }
 
-      busy = true;
+      chatBusy = true;
       abortRequested = false;
       const interrupt = new InterruptableStoppingCriteria();
       activeInterrupt = interrupt;
@@ -590,7 +695,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
 
       if (abortRequested || interrupt.interrupted) {
         post({ type: "aborted" });
-        busy = false;
+        chatBusy = false;
         activeInterrupt = null;
         return;
       }
@@ -603,24 +708,253 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       });
 
       const temperature = message.temperature;
-      await model.generate({
-        ...inputs,
-        max_new_tokens: message.maxNewTokens,
-        temperature,
-        do_sample: temperature > 0.01,
-        repetition_penalty: message.repetitionPenalty,
-        top_p: message.topP,
-        streamer,
-        stopping_criteria: interrupt,
-      });
+      const runGenerate = async (activeModel: Gemma4Model) =>
+        activeModel.generate({
+          ...inputs,
+          max_new_tokens: message.maxNewTokens,
+          temperature,
+          do_sample: temperature > 0.01,
+          repetition_penalty: message.repetitionPenalty,
+          top_p: message.topP,
+          streamer,
+          stopping_criteria: interrupt,
+        });
 
-      post({ type: interrupt.interrupted || abortRequested ? "aborted" : "done" });
-      busy = false;
-      activeInterrupt = null;
+      try {
+        await runGenerate(model);
+        post({ type: interrupt.interrupted || abortRequested ? "aborted" : "done" });
+      } catch (err) {
+        if (chatSlot.device === "webgpu" && isWebGpuRuntimeError(err)) {
+          post({
+            type: "status",
+            text: "WebGPU נכשל (התנגשות GPU) — עובר ל-WASM ומנסה שוב…",
+          });
+          try {
+            const switched = await forceReloadWasm(message.modelId);
+            chatSlot.model = switched.model;
+            chatSlot.processor = switched.processor;
+            chatSlot.modelId = message.modelId;
+            chatSlot.device = switched.device;
+            await runGenerate(switched.model);
+            post({ type: interrupt.interrupted || abortRequested ? "aborted" : "done" });
+          } catch (retryErr) {
+            post({
+              type: "error",
+              error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+              scope: "chat",
+            });
+          }
+        } else {
+          post({
+            type: "error",
+            error: err instanceof Error ? err.message : String(err),
+            scope: "chat",
+          });
+        }
+      } finally {
+        chatBusy = false;
+        activeInterrupt = null;
+      }
+      return;
+    }
+
+    if (message.type === "analyze_scene") {
+      if (chatBusy) {
+        post({
+          type: "scene_analysis",
+          requestId: message.requestId,
+          ok: false,
+          error: "chat_active",
+        });
+        return;
+      }
+
+      if (sceneBusy) {
+        post({
+          type: "scene_analysis",
+          requestId: message.requestId,
+          ok: false,
+          error: "scene_busy",
+        });
+        return;
+      }
+
+      if (message.modelId !== GEMMA_MODEL_ID) {
+        post({
+          type: "scene_analysis",
+          requestId: message.requestId,
+          ok: false,
+          error: `Only ${GEMMA_MODEL_ID} is supported.`,
+        });
+        return;
+      }
+
+      if (!chatSlot.model || !chatSlot.processor || chatSlot.modelId !== message.modelId) {
+        const switched = await loadMultimodalModel(message.modelId, "q4");
+        chatSlot.model = switched.model;
+        chatSlot.processor = switched.processor;
+        chatSlot.modelId = message.modelId;
+        chatSlot.device = switched.device;
+      }
+
+      const model = chatSlot.model;
+      const processor = chatSlot.processor;
+      if (!model || !processor || !message.images.length) {
+        post({
+          type: "scene_analysis",
+          requestId: message.requestId,
+          ok: false,
+          error: "Model or image not ready.",
+        });
+        return;
+      }
+
+      sceneBusy = true;
+      let fullText = "";
+      try {
+        const inputs = await buildSceneAnalysisInputs(processor, message);
+        const streamer = new TextStreamer(processor.tokenizer as never, {
+          skip_prompt: true,
+          callback_function: (text: string) => {
+            fullText += text;
+          },
+        });
+
+        await model.generate({
+          ...inputs,
+          max_new_tokens: 280,
+          temperature: 0.1,
+          do_sample: false,
+          repetition_penalty: 1.05,
+          top_p: 0.9,
+          streamer,
+        });
+
+        const parsed = parseSceneAnalysisJson(fullText);
+        if (parsed) {
+          post({
+            type: "scene_analysis",
+            requestId: message.requestId,
+            ok: true,
+            objects: parsed.objects ?? parsed.current ?? [],
+            people: parsed.people ?? [],
+            current: parsed.current ?? parsed.objects ?? [],
+            events: parsed.events ?? [],
+            interesting: parsed.interesting ?? false,
+            summary: parsed.summary ?? "",
+            raw: fullText.trim(),
+          });
+        } else {
+          post({
+            type: "scene_analysis",
+            requestId: message.requestId,
+            ok: true,
+            current: [],
+            events: [],
+            interesting: false,
+            summary: fullText.trim().slice(0, 400),
+            raw: fullText.trim(),
+          });
+        }
+      } catch (error) {
+        post({
+          type: "scene_analysis",
+          requestId: message.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        sceneBusy = false;
+      }
+      return;
+    }
+
+    if (message.type === "character_utterance") {
+      if (chatBusy) {
+        post({
+          type: "character_utterance",
+          requestId: message.requestId,
+          ok: false,
+          error: "chat_active",
+        });
+        return;
+      }
+      if (sceneBusy) {
+        post({
+          type: "character_utterance",
+          requestId: message.requestId,
+          ok: false,
+          error: "scene_busy",
+        });
+        return;
+      }
+      if (message.modelId !== GEMMA_MODEL_ID) {
+        post({
+          type: "character_utterance",
+          requestId: message.requestId,
+          ok: false,
+          error: `Only ${GEMMA_MODEL_ID} is supported.`,
+        });
+        return;
+      }
+      if (!chatSlot.model || !chatSlot.processor || chatSlot.modelId !== message.modelId) {
+        const switched = await loadMultimodalModel(message.modelId, "q4");
+        chatSlot.model = switched.model;
+        chatSlot.processor = switched.processor;
+        chatSlot.modelId = message.modelId;
+        chatSlot.device = switched.device;
+      }
+      const model = chatSlot.model;
+      const processor = chatSlot.processor;
+      if (!model || !processor) {
+        post({
+          type: "character_utterance",
+          requestId: message.requestId,
+          ok: false,
+          error: "Model not ready.",
+        });
+        return;
+      }
+      sceneBusy = true;
+      let fullText = "";
+      try {
+        const inputs = await buildCharacterUtteranceInputs(processor, message);
+        const streamer = new TextStreamer(processor.tokenizer as never, {
+          skip_prompt: true,
+          callback_function: (text: string) => {
+            fullText += text;
+          },
+        });
+        await model.generate({
+          ...inputs,
+          max_new_tokens: message.maxNewTokens ?? 80,
+          temperature: 0.45,
+          do_sample: true,
+          repetition_penalty: 1.08,
+          top_p: 0.9,
+          streamer,
+        });
+        post({
+          type: "character_utterance",
+          requestId: message.requestId,
+          ok: true,
+          text: fullText.trim(),
+        });
+      } catch (error) {
+        post({
+          type: "character_utterance",
+          requestId: message.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        sceneBusy = false;
+      }
       return;
     }
   } catch (error) {
-    busy = false;
+    chatBusy = false;
+    sceneBusy = false;
     activeInterrupt = null;
     postLoadFailureOnce(error);
   }

@@ -7,10 +7,21 @@ import {
   isCodeGenerationRequest,
   isRtlText,
   isSimpleGreeting,
+  isPersonActivityQuestion,
+  isPersonVisibilityQuestion,
+  isCurrentPersonStateQuestion,
+  needsPersonFocusRefresh,
+  isSceneInterpretationQuestion,
+  isVisualDetailQuestion,
+  needsCameraVisionEscalation,
   shouldContinueCode,
   getArtifactScanContent,
   splitAssistantStream,
   trimHistoryForContext,
+  classifyChatTopic,
+  isTopicShift,
+  topicShiftHint,
+  type ChatTopic,
   type ChatTurn,
 } from "./chatIntents";
 import {
@@ -28,6 +39,44 @@ import {
   extractRichParts,
 } from "./artifacts";
 import { formatBytes, requestPersistentStorage } from "./storageReport";
+import {
+  SCENE_ANALYSIS_SYSTEM_PROMPT,
+  buildSceneAnalysisUserPrompt,
+} from "./cameraPrompts";
+import {
+  CAMERA_ANTI_DEFLECT_APPEND,
+  CAMERA_CHAT_WORLD_HINT,
+  CHARACTER_ACTIVITY_APPEND,
+  CHARACTER_INTERPRETATION_APPEND,
+  CHARACTER_MODE_CHAT_APPEND,
+  CURRENT_PERSON_STATE_APPEND,
+  GREETING_CAMERA_STARTING_APPEND,
+  GREETING_WITH_CAMERA_APPEND,
+  PERSON_VISIBILITY_CHAT_APPEND,
+  PROACTIVE_UTTERANCE_SYSTEM,
+  buildProactiveUserPrompt,
+  TOPIC_SHIFT_CHAT_APPEND,
+  VISION_ESCALATION_CHAT_APPEND,
+} from "./characterPrompts";
+import { buildProactiveSensorBlock, poseFromWorld } from "./sensorBlock";
+import { pauseTfVision, resumeTfVision } from "./visionCoordination";
+import { formatFreshPersonBlock } from "./personFocus";
+import {
+  attachStreamToVideo,
+  requestCameraStream,
+  type CameraStreamHandle,
+} from "./cameraMode";
+import { checkBrowserVisionSupport } from "./browserVision";
+import { CharacterBrain, moodLabelHe, type CharacterMood } from "./characterBrain";
+import { WorldMemory } from "./worldMemory";
+import {
+  CameraVisionLoop,
+  type CharacterDecision,
+  type SceneAnalysisResult,
+} from "./cameraVisionLoop";
+import { CameraPreview } from "./CameraPreview";
+import { ModelActivityPanel } from "./ModelActivityPanel";
+import { appendModelActivity, type ModelActivityEntry } from "./modelActivityLog";
 
 type Role = "user" | "assistant";
 
@@ -61,7 +110,27 @@ type WorkerOutMessage =
   | { type: "token"; text: string }
   | { type: "done" }
   | { type: "aborted" }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string; scope?: "chat" | "boot" }
+  | {
+      type: "scene_analysis";
+      requestId: string;
+      ok: boolean;
+      objects?: string[];
+      people?: string[];
+      current?: string[];
+      events?: string[];
+      interesting?: boolean;
+      summary?: string;
+      raw?: string;
+      error?: string;
+    }
+  | {
+      type: "character_utterance";
+      requestId: string;
+      ok: boolean;
+      text?: string;
+      error?: string;
+    };
 
 const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
@@ -209,10 +278,6 @@ const saveChatSessionsState = (state: ChatSessionsState) => {
           messages: s.messages.map((m) => ({
             ...m,
             content: m.content.length > 12_000 ? `${m.content.slice(0, 12_000)}…` : m.content,
-            thought:
-              m.thought && m.thought.length > 24_000
-                ? `${m.thought.slice(0, 24_000)}…`
-                : m.thought,
             artifact:
               m.artifact && m.artifact.content.length > 500_000
                 ? { ...m.artifact, content: `${m.artifact.content.slice(0, 500_000)}…` }
@@ -636,6 +701,18 @@ function App() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageBytesCacheRef = useRef<Map<string, { bytes: ArrayBuffer; mime: string }>>(new Map());
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<CameraStreamHandle | null>(null);
+  const cameraLoopRef = useRef<CameraVisionLoop | null>(null);
+  const worldMemoryRef = useRef(new WorldMemory());
+  const characterBrainRef = useRef(new CharacterBrain());
+  const chatTopicRef = useRef<ChatTopic | null>(null);
+  const sceneAnalysisResolversRef = useRef(
+    new Map<string, (result: SceneAnalysisResult | null) => void>(),
+  );
+  const characterUtteranceResolversRef = useRef(new Map<string, (text: string | null) => void>());
+  const workerInferenceBusyRef = useRef(false);
+  const sceneAnalysisMetaRef = useRef(new Map<string, { reason?: string }>());
 
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -659,6 +736,14 @@ function App() {
   const [assistantBuffer, setAssistantBuffer] = useState("");
   const [thinkingMode, setThinkingMode] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
+  const [cameraMode, setCameraMode] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraObserving, setCameraObserving] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState("");
+  const [characterMood, setCharacterMood] = useState<CharacterMood>("observing");
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [activityLog, setActivityLog] = useState<ModelActivityEntry[]>([]);
   const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
@@ -667,7 +752,9 @@ function App() {
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const webSearchRef = useRef(webSearchMode);
+  const cameraModeRef = useRef(cameraMode);
   const isLoadingRef = useRef(isLoading);
+  const isGeneratingRef = useRef(isGenerating);
   const messagesListRef = useRef<HTMLDivElement | null>(null);
   const continueModeRef = useRef(false);
   const loadingFileRef = useRef("");
@@ -682,8 +769,14 @@ function App() {
     webSearchRef.current = webSearchMode;
   }, [webSearchMode]);
   useEffect(() => {
+    cameraModeRef.current = cameraMode;
+  }, [cameraMode]);
+  useEffect(() => {
     isLoadingRef.current = isLoading;
   }, [isLoading]);
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
 
   useEffect(() => {
     saveChatSessionsState(chatSessionsState);
@@ -799,13 +892,330 @@ function App() {
     });
   }, []);
 
+  const pushActivity = useCallback((entry: Omit<ModelActivityEntry, "id" | "ts">) => {
+    setActivityLog((prev) => appendModelActivity(prev, entry));
+  }, []);
+
   const openArtifact = useCallback((artifact: Artifact) => {
     setActiveArtifact(artifact);
     setArtifactOpen(true);
   }, []);
 
+  const requestSceneAnalysis = useCallback(
+    (
+      bytes: ArrayBuffer,
+      previousSummary: string,
+      reason = "scheduled",
+      sensorBlock = "",
+    ): Promise<SceneAnalysisResult | null> => {
+      return new Promise((resolve) => {
+        if (!workerRef.current) {
+          resolve(null);
+          return;
+        }
+        const requestId = crypto.randomUUID();
+        const payload = bytes.slice(0);
+        const userPrompt = buildSceneAnalysisUserPrompt(previousSummary, sensorBlock);
+        sceneAnalysisMetaRef.current.set(requestId, { reason });
+        sceneAnalysisResolversRef.current.set(requestId, resolve);
+        workerInferenceBusyRef.current = true;
+        pushActivity({
+          direction: "out",
+          kind: "analyze_scene",
+          title: "ניתוח סצנה (Camera)",
+          detail: `SYSTEM:\n${SCENE_ANALYSIS_SYSTEM_PROMPT}\n\nUSER:\n${userPrompt}`,
+          meta: {
+            requestId: requestId.slice(0, 8),
+            reason,
+            imageKB: Math.round(payload.byteLength / 1024),
+            previousSummary: previousSummary ? "yes" : "no",
+          },
+        });
+        workerRef.current.postMessage(
+          {
+            type: "analyze_scene",
+            requestId,
+            modelId: GEMMA_MODEL_ID,
+            images: [{ bytes: payload, mime: "image/jpeg" }],
+            previousSummary,
+            sensorBlock,
+          },
+          [payload],
+        );
+        window.setTimeout(() => {
+          if (sceneAnalysisResolversRef.current.has(requestId)) {
+            sceneAnalysisResolversRef.current.delete(requestId);
+            sceneAnalysisMetaRef.current.delete(requestId);
+            workerInferenceBusyRef.current = false;
+            pushActivity({
+              direction: "system",
+              kind: "analyze_scene",
+              title: "Timeout",
+              detail: "scene_analysis did not return within 120s",
+            });
+            resolve(null);
+          }
+        }, 120_000);
+      });
+    },
+    [pushActivity],
+  );
+
+  const requestCharacterUtterance = useCallback(
+    (decision: CharacterDecision): Promise<string | null> => {
+      return new Promise((resolve) => {
+        if (!workerRef.current || isGeneratingRef.current) {
+          resolve(null);
+          return;
+        }
+        const requestId = crypto.randomUUID();
+        const brain = characterBrainRef.current;
+        const world = worldMemoryRef.current;
+        const sensorBlock = buildProactiveSensorBlock(world, poseFromWorld(world), {
+          reason: decision.reason,
+          topic: decision.topic,
+          fallbackHint: decision.message,
+        });
+        const userPrompt = buildProactiveUserPrompt({
+          mood: decision.mood,
+          reason: decision.reason,
+          topic: decision.topic,
+          curiosity: brain.curiosity,
+          boredom: brain.boredom,
+          sensorBlock,
+          fallbackHint: decision.message,
+        });
+        characterUtteranceResolversRef.current.set(requestId, resolve);
+        workerInferenceBusyRef.current = true;
+        pushActivity({
+          direction: "out",
+          kind: "character_utterance",
+          title: `Character · ${decision.mood} (Gemma)`,
+          detail: `SYSTEM:\n${PROACTIVE_UTTERANCE_SYSTEM}\n\nUSER:\n${userPrompt}`,
+          meta: { reason: decision.reason, topic: decision.topic },
+        });
+        workerRef.current.postMessage({
+          type: "character_utterance",
+          requestId,
+          modelId: GEMMA_MODEL_ID,
+          systemPrompt: PROACTIVE_UTTERANCE_SYSTEM,
+          userPrompt,
+          maxNewTokens: 80,
+        });
+        window.setTimeout(() => {
+          if (characterUtteranceResolversRef.current.has(requestId)) {
+            characterUtteranceResolversRef.current.delete(requestId);
+            workerInferenceBusyRef.current = false;
+            resolve(null);
+          }
+        }, 30_000);
+      });
+    },
+    [pushActivity],
+  );
+
+  const stopCameraMode = useCallback(() => {
+    cameraLoopRef.current?.stop();
+    cameraLoopRef.current = null;
+    cameraStreamRef.current?.stop();
+    cameraStreamRef.current = null;
+    setCameraStream(null);
+    worldMemoryRef.current.reset();
+    characterBrainRef.current.reset();
+    setCharacterMood("observing");
+    setCameraMode(false);
+    setCameraObserving(false);
+    setCameraError(null);
+    setCameraStatus("");
+    sceneAnalysisResolversRef.current.forEach((resolve) => resolve(null));
+    sceneAnalysisResolversRef.current.clear();
+    characterUtteranceResolversRef.current.forEach((resolve) => resolve(null));
+    characterUtteranceResolversRef.current.clear();
+  }, []);
+
+  const toggleCameraMode = useCallback(async () => {
+    if (cameraMode) {
+      stopCameraMode();
+      return;
+    }
+    if (!isLoaded || isGenerating) return;
+    setCameraError(null);
+    const support = checkBrowserVisionSupport();
+    if (!support.ok) {
+      setCameraError(support.message ?? "מצב מצלמה לא נתמך בדפדפן זה");
+      return;
+    }
+    try {
+      const handle = await requestCameraStream();
+      cameraStreamRef.current = handle;
+      setCameraStream(handle.stream);
+      setCameraMode(true);
+    } catch (err) {
+      setCameraError(err instanceof Error ? err.message : String(err));
+      setCameraMode(false);
+      setCameraStream(null);
+    }
+  }, [cameraMode, isGenerating, isLoaded, stopCameraMode]);
+
+  useEffect(() => {
+    if (!cameraMode || !cameraStream || !isLoaded) return;
+    const video = cameraVideoRef.current;
+    if (!video) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        await attachStreamToVideo(video, cameraStream);
+        if (cancelled) return;
+
+        cameraLoopRef.current?.stop();
+        worldMemoryRef.current.reset();
+        characterBrainRef.current.reset();
+        chatTopicRef.current = null;
+        cameraLoopRef.current = new CameraVisionLoop(
+          video,
+          worldMemoryRef.current,
+          characterBrainRef.current,
+          {
+          requestAnalysis: async (req) =>
+            requestSceneAnalysis(req.bytes, req.previousSummary, req.reason, req.sensorBlock ?? ""),
+          resolveUtterance: async (decision) => {
+            const llm = await requestCharacterUtterance(decision);
+            if (llm?.trim()) return { ...decision, message: llm.trim() };
+            return decision;
+          },
+          isWorkerBusy: () => isGeneratingRef.current || workerInferenceBusyRef.current,
+          onCameraStatus: setCameraStatus,
+          onMoodChange: setCharacterMood,
+          onAnalysisScheduled: (reason, stage) => {
+            pushActivity({
+              direction: "system",
+              kind: "camera_loop",
+              title: stage === "light" ? "Stage 2 · COCO-SSD" : "Stage 3 · Gemma",
+              detail: `Snapshot scheduled. Reason: ${reason}${stage ? ` (${stage})` : ""}`,
+            });
+          },
+          onCharacterSpeak: (decision: CharacterDecision) => {
+            pushActivity({
+              direction: "in",
+              kind: "character_speak",
+              title: `Character · ${decision.mood}`,
+              detail: `${decision.reason}\n\n${decision.message}`,
+              meta: { topic: decision.topic, mood: decision.mood },
+            });
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: decision.message,
+                modelLabel: `HAL · ${moodLabelHe(decision.mood)}`,
+              },
+            ]);
+          },
+          onObservingChange: setCameraObserving,
+          onLightDetection: (payload) => {
+            const evLines = payload.worldUpdate.newEvents.map(
+              (e) => `[${e.type}] ${e.text}${e.subject ? ` (${e.subject})` : ""}`,
+            );
+            pushActivity({
+              direction: "system",
+              kind: "light_detect",
+              title: "Stage 2 · תוצאת COCO-SSD",
+              detail: [
+                `objects: ${payload.objects.join(", ") || "(none)"}`,
+                `personCount(raw): ${payload.rawPeople}`,
+                `people(debounced): ${payload.debouncedPeople.join(", ") || "(none)"}`,
+                payload.personJustConfirmed ? "person debounce: CONFIRMED in frame" : "",
+                payload.personJustLeft ? "person debounce: LEFT frame" : "",
+                payload.worldUpdate.isBaselineCapture ? "baseline capture (no events)" : "",
+                payload.worldUpdate.suppressedAsChurn ? "suppressed: camera churn" : "",
+                evLines.length ? `events:\n${evLines.join("\n")}` : "",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+              meta: {
+                personCount: payload.rawPeople,
+                personConfirmed: payload.debouncedPeople.length > 0,
+                eventCount: payload.worldUpdate.newEvents.length,
+              },
+            });
+          },
+          onMotionUpdate: (payload) => {
+            if (payload.newEvents.length === 0 && payload.motionLevel < 0.08) return;
+            pushActivity({
+              direction: "system",
+              kind: "motion_detect",
+              title: "Stage 1 · Motion",
+              detail: [
+                `motionLevel: ${payload.motionLevel.toFixed(3)}`,
+                `upper: ${payload.upperMotion.toFixed(3)}`,
+                `arm: ${payload.armMovement}`,
+                `wave: ${payload.waveLike}`,
+                `person: ${payload.personPresent}`,
+                payload.newEvents.length
+                  ? `events: ${payload.newEvents.map((e) => e.subject ?? e.type).join(", ")}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            });
+          },
+          onSituationUpdate: (payload) => {
+            pushActivity({
+              direction: "system",
+              kind: "situation",
+              title: "Stage 2b · Pose + Situation",
+              detail: [
+                `source: ${payload.poseSource}`,
+                payload.poseConfidence !== undefined
+                  ? `confidence: ${payload.poseConfidence.toFixed(2)}`
+                  : "",
+                `pose: ${payload.poseState}`,
+                payload.gestures.length ? `gestures: ${payload.gestures.join(", ")}` : "",
+                payload.holding.length ? `holding: ${payload.holding.join(", ")}` : "",
+                payload.focusHint ? `focus: ${payload.focusHint}` : "",
+                payload.newEvents.length
+                  ? `events: ${payload.newEvents.map((e) => e.subject ?? e.type).join(", ")}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            });
+          },
+        },
+        );
+        cameraLoopRef.current.start();
+        setCameraStatus("👁 Character · מתחיל…");
+      } catch (err) {
+        if (!cancelled) {
+          setCameraError(err instanceof Error ? err.message : String(err));
+          stopCameraMode();
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cameraMode, cameraStream, isLoaded, requestSceneAnalysis, requestCharacterUtterance, setMessages, stopCameraMode, pushActivity]);
+
+  useEffect(() => {
+    return () => {
+      cameraLoopRef.current?.stop();
+      cameraStreamRef.current?.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "ready" && cameraMode) stopCameraMode();
+  }, [phase, cameraMode, stopCameraMode]);
+
   const finalizeAssistantReply = useCallback(
     (stopped: boolean) => {
+      resumeTfVision();
+      isGeneratingRef.current = false;
       setIsGenerating(false);
       const raw = assistantBufferRef.current;
       const { content, artifact, thought } = raw.trim()
@@ -817,6 +1227,7 @@ function App() {
         assistantBufferRef.current = "";
         setStatus(stopped ? "התשובה נעצרה" : "Ready");
         continueModeRef.current = false;
+        cameraLoopRef.current?.releaseAfterChat();
         return;
       }
 
@@ -842,7 +1253,7 @@ function App() {
               role: "assistant" as const,
               content,
               artifact: artifact ?? undefined,
-              thought: thought ?? undefined,
+              thought,
               modelLabel: "Gemma 4",
             },
           ];
@@ -855,7 +1266,7 @@ function App() {
             role: "assistant",
             content,
             artifact: artifact ?? undefined,
-            thought: thought ?? undefined,
+            thought,
             modelLabel: "Gemma 4",
           },
         ]);
@@ -868,6 +1279,7 @@ function App() {
       setAssistantBuffer("");
       assistantBufferRef.current = "";
       setStatus(stopped ? "התשובה נעצרה" : "Ready");
+      cameraLoopRef.current?.releaseAfterChat();
     },
     [setMessages],
   );
@@ -951,6 +1363,22 @@ function App() {
       },
       transferables,
     );
+
+    pushActivity({
+      direction: "out",
+      kind: "generate",
+      title: "יצירת תשובה (Chat)",
+      detail: `SYSTEM:\n${systemPrompt}\n\nUSER:\n${promptText}${webContext ? `\n\nWEB CONTEXT:\n${webContext}` : ""}`,
+      meta: {
+        maxNewTokens,
+        temperature,
+        topP,
+        repetitionPenalty,
+        thinking: thinkingRef.current,
+        images: imagePayloads.length,
+        historyTurns: history.length,
+      },
+    });
   };
 
   useEffect(() => {
@@ -1015,15 +1443,112 @@ function App() {
           return next;
         });
       } else if (msg.type === "done") {
+        pushActivity({
+          direction: "in",
+          kind: "generate",
+          title: "תשובת צ'אט הושלמה",
+          detail: assistantBufferRef.current || "(empty)",
+          meta: { chars: assistantBufferRef.current.length },
+        });
         finalizeAssistantReply(false);
       } else if (msg.type === "aborted") {
+        pushActivity({
+          direction: "in",
+          kind: "generate",
+          title: "יצירה נעצרה",
+          detail: assistantBufferRef.current || "(empty)",
+        });
         finalizeAssistantReply(true);
       } else if (msg.type === "error") {
-        setIsGenerating(false);
-        setIsLoading(false);
-        setProgress(0);
-        setStatus(`Error: ${msg.error}`);
-        setWorkerBootError(msg.error);
+        pushActivity({
+          direction: "in",
+          kind: "error",
+          title: "שגיאת worker",
+          detail: msg.error,
+        });
+        const isChatError = msg.scope === "chat" || isGeneratingRef.current;
+        if (isChatError) {
+          resumeTfVision();
+          isGeneratingRef.current = false;
+          setIsGenerating(false);
+          setStatus(`שגיאה: ${msg.error}`);
+          cameraLoopRef.current?.releaseAfterChat();
+        } else {
+          setIsLoading(false);
+          setProgress(0);
+          setStatus(`Error: ${msg.error}`);
+          setWorkerBootError(msg.error);
+        }
+      } else if (msg.type === "scene_analysis") {
+        workerInferenceBusyRef.current = false;
+        const meta = sceneAnalysisMetaRef.current.get(msg.requestId);
+        sceneAnalysisMetaRef.current.delete(msg.requestId);
+        const resolve = sceneAnalysisResolversRef.current.get(msg.requestId);
+        if (resolve) {
+          sceneAnalysisResolversRef.current.delete(msg.requestId);
+          if (msg.ok && msg.summary !== undefined) {
+            pushActivity({
+              direction: "in",
+              kind: "analyze_scene",
+              title: "תוצאת ניתוח סצנה",
+              detail:
+                msg.raw ??
+                JSON.stringify(
+                  {
+                    summary: msg.summary,
+                    current: msg.current,
+                    events: msg.events,
+                    interesting: msg.interesting,
+                  },
+                  null,
+                  2,
+                ),
+              meta: {
+                interesting: msg.interesting ?? false,
+                events: msg.events?.length ?? 0,
+                reason: meta?.reason ?? "?",
+              },
+            });
+            resolve({
+              objects: msg.objects ?? msg.current ?? [],
+              people: msg.people ?? [],
+              current: msg.current ?? msg.objects ?? [],
+              events: msg.events ?? [],
+              interesting: msg.interesting ?? false,
+              summary: msg.summary ?? "",
+            });
+          } else {
+            const skipped = msg.error === "chat_active" || msg.error === "scene_busy" || msg.error === "busy";
+            if (!skipped) {
+              pushActivity({
+                direction: "in",
+                kind: "analyze_scene",
+                title: "ניתוח סצנה נכשל",
+                detail: msg.error ?? "unknown error",
+                meta: { reason: meta?.reason ?? "?" },
+              });
+            }
+            resolve(null);
+          }
+        }
+      } else if (msg.type === "character_utterance") {
+        workerInferenceBusyRef.current = false;
+        const resolveUtterance = characterUtteranceResolversRef.current.get(msg.requestId);
+        if (resolveUtterance) {
+          characterUtteranceResolversRef.current.delete(msg.requestId);
+          if (msg.ok && msg.text?.trim()) {
+            pushActivity({
+              direction: "in",
+              kind: "character_utterance",
+              title: "דיבור יזום (Gemma)",
+              detail: msg.text.trim(),
+              meta: { chars: msg.text.trim().length },
+            });
+            resolveUtterance(msg.text.trim());
+          } else {
+            resolveUtterance(null);
+          }
+        }
       }
     };
 
@@ -1044,7 +1569,7 @@ function App() {
       worker.terminate();
       workerRef.current = null;
     };
-  }, [finalizeAssistantReply, setMessages, workerReloadKey]);
+  }, [finalizeAssistantReply, setMessages, workerReloadKey, pushActivity]);
 
   useEffect(() => {
     workerRef.current?.postMessage({
@@ -1215,6 +1740,15 @@ function App() {
     const hasImages = pendingAttachments.length > 0;
     if (!trimmed && !hasImages) return;
 
+    cameraLoopRef.current?.holdForChat();
+    pauseTfVision("chat");
+    characterBrainRef.current.recordUserInteraction();
+
+    const prevChatTopic = chatTopicRef.current;
+    const chatTopic = classifyChatTopic(trimmed);
+    const topicShifted = isTopicShift(prevChatTopic, chatTopic);
+    chatTopicRef.current = chatTopic;
+
     const effectivePrompt =
       trimmed || defaultVisionPrompt(trimmed ? isRtlText(trimmed) : true);
 
@@ -1261,10 +1795,24 @@ function App() {
       assistantBufferRef.current = "";
     }
 
+    isGeneratingRef.current = true;
     setIsGenerating(true);
 
     const g = appSettings.gemma;
     const greeting = isSimpleGreeting(effectivePrompt) && !hasImages;
+    const cameraActive = cameraModeRef.current;
+    const hasWorldData = worldMemoryRef.current.hasData();
+    const greetingWithCamera = greeting && cameraActive && hasWorldData;
+    const greetingCameraStarting = greeting && cameraActive && !hasWorldData;
+    const visionEscalation = needsCameraVisionEscalation(trimmed);
+    const visualDetailQuestion = isVisualDetailQuestion(trimmed);
+    const personVisibilityQuestion = isPersonVisibilityQuestion(trimmed);
+    const personActivityQuestion = isPersonActivityQuestion(trimmed);
+    const personStateQuestion = isCurrentPersonStateQuestion(trimmed);
+    const personFocusRefresh = needsPersonFocusRefresh(trimmed);
+    const sceneInterpretation = isSceneInterpretationQuestion(trimmed);
+    const cameraChatVision =
+      visionEscalation || greetingCameraStarting || (personFocusRefresh && cameraActive);
     let webContext = "";
     let searchHint = "";
     if (webSearchMode && !hasImages) {
@@ -1282,34 +1830,172 @@ function App() {
       continueCode ||
       isCodeGenerationRequest(effectivePrompt) ||
       isCodeGenerationRequest(priorTurns.at(-1)?.content ?? "");
-    const tokenBudget = greeting
-      ? 40
-      : hasImages
-        ? Math.min(1024, g.maxNewTokens)
-        : wantsLongOutput
-          ? Math.min(CODE_TOKEN_CAP, Math.max(g.maxNewTokens, CODE_TOKEN_FLOOR))
-          : g.maxNewTokens;
+    let cameraImageBuffers: ArrayBuffer[] = [];
+    let freshPersonBlock = "";
+    if (cameraActive && cameraLoopRef.current && (cameraChatVision || personFocusRefresh)) {
+      try {
+        const waitDeadline = Date.now() + 30_000;
+        while (
+          (workerInferenceBusyRef.current || isGeneratingRef.current) &&
+          Date.now() < waitDeadline
+        ) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (personFocusRefresh) {
+          const focus = await cameraLoopRef.current.refreshPersonFocus();
+          if (focus) {
+            freshPersonBlock = formatFreshPersonBlock(focus);
+            pushActivity({
+              direction: "system",
+              kind: "person_focus",
+              title: "Focus On Person · Vision Refresh",
+              detail: [
+                freshPersonBlock,
+                focus.poseState !== "unknown"
+                  ? `pose_change check: ${worldMemoryRef.current.lastChanges
+                      .filter((e) => (e.subject ?? "").startsWith("pose_change"))
+                      .slice(0, 2)
+                      .map((e) => e.subject ?? e.text)
+                      .join(" | ") || "none recent"}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            });
+          }
+        }
+        const fresh = await cameraLoopRef.current.captureFreshSnapshot();
+        cameraImageBuffers = [fresh];
+        const title = personStateQuestion
+          ? "שאלת מצב נוכחי — snapshot + pose refresh"
+          : visualDetailQuestion
+            ? "Smart Vision Escalation"
+            : personVisibilityQuestion
+              ? "זיהוי נוכחות — snapshot"
+              : greetingCameraStarting
+                ? "ברכה + snapshot סצנה"
+                : "צילום מצלמה לצ'אט";
+        pushActivity({
+          direction: "system",
+          kind: "vision_escalation",
+          title,
+          detail: personStateQuestion
+            ? `שאלת תנוחה/מצב — refresh + snapshot: "${trimmed}"`
+            : personVisibilityQuestion
+              ? `שאלת נראות — snapshot + people=${worldMemoryRef.current.people.join(",") || "none"}: "${trimmed}"`
+              : greetingCameraStarting
+                ? `ברכה עם מצלמה — snapshot: "${trimmed}"`
+                : visualDetailQuestion
+                  ? `שאלת פרט חזותי — snapshot חדש: "${trimmed}"`
+                  : `שאלת הקשר מצלמה — snapshot חדש: "${trimmed}"`,
+        });
+      } catch {
+        /* camera not ready */
+      }
+    }
+    const hasVisionInput = hasImages || cameraImageBuffers.length > 0;
+    const interpretiveCameraReply =
+      cameraActive &&
+      hasVisionInput &&
+      !visualDetailQuestion &&
+      (sceneInterpretation || personActivityQuestion || personVisibilityQuestion || personStateQuestion || greetingWithCamera || greetingCameraStarting);
+    const tokenBudget =
+      greetingWithCamera || greetingCameraStarting
+        ? 100
+        : interpretiveCameraReply
+          ? Math.min(360, g.maxNewTokens)
+          : greeting
+            ? 40
+            : hasVisionInput
+              ? Math.min(1024, g.maxNewTokens)
+              : wantsLongOutput
+                ? Math.min(CODE_TOKEN_CAP, Math.max(g.maxNewTokens, CODE_TOKEN_FLOOR))
+                : g.maxNewTokens;
 
-    let systemPrompt = greeting
-      ? `${g.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
-      : g.systemPrompt;
+    let systemPrompt = greetingWithCamera
+      ? `${g.systemPrompt}\n\n${CHARACTER_MODE_CHAT_APPEND}\n\n${GREETING_WITH_CAMERA_APPEND}`
+      : greetingCameraStarting
+        ? `${g.systemPrompt}\n\n${CHARACTER_MODE_CHAT_APPEND}\n\n${GREETING_CAMERA_STARTING_APPEND}`
+        : greeting
+          ? `${g.systemPrompt} If the user sends only a greeting, reply with one short friendly sentence only.`
+          : g.systemPrompt;
+    if (cameraActive && !greetingWithCamera && !greetingCameraStarting) {
+      systemPrompt = `${systemPrompt}\n\n${CHARACTER_MODE_CHAT_APPEND}`;
+    }
+    if (cameraActive) {
+      systemPrompt = `${systemPrompt}\n\n${CAMERA_ANTI_DEFLECT_APPEND}`;
+    }
+    if (topicShifted && prevChatTopic) {
+      systemPrompt = `${systemPrompt}\n\n${TOPIC_SHIFT_CHAT_APPEND}\n\n${topicShiftHint(prevChatTopic, chatTopic)}`;
+      pushActivity({
+        direction: "system",
+        kind: "topic_shift",
+        title: "שינוי נושא בצ'אט",
+        detail: `${prevChatTopic} → ${chatTopic}: "${trimmed}"`,
+      });
+    }
+    if (cameraActive && worldMemoryRef.current.hasData()) {
+      const cameraBlock = freshPersonBlock
+        ? worldMemoryRef.current.toCharacterAtmosphereBlock()
+        : worldMemoryRef.current.toCharacterChatBlock();
+      const characterCtx = characterBrainRef.current;
+      const characterBlock = `Character state: mood=${characterCtx.mood}, curiosity=${characterCtx.curiosity.toFixed(2)}, boredom=${characterCtx.boredom.toFixed(2)}`;
+      systemPrompt = `${systemPrompt}\n\n${CAMERA_CHAT_WORLD_HINT}\n\n${cameraBlock}\n\n${characterBlock}`;
+      if (freshPersonBlock) {
+        systemPrompt = `${systemPrompt}\n\n${CURRENT_PERSON_STATE_APPEND}\n\n${freshPersonBlock}`;
+      }
+      pushActivity({
+        direction: "system",
+        kind: "camera_context",
+        title: greetingWithCamera ? "ברכה + הקשר סצנה" : "הקשר Character (interpretation)",
+        detail: `${cameraBlock}\n\n${characterBlock}`,
+      });
+    }
     if (hasImages) {
       systemPrompt = `${systemPrompt} When the user sends an image, describe what you see accurately and answer their question in the same language as the user (Hebrew if they write in Hebrew).`;
+    } else if (cameraImageBuffers.length && visualDetailQuestion) {
+      systemPrompt = `${systemPrompt}\n\n${VISION_ESCALATION_CHAT_APPEND}`;
+    } else if (cameraImageBuffers.length && personStateQuestion) {
+      systemPrompt = `${systemPrompt}\n\n${CHARACTER_INTERPRETATION_APPEND}`;
+    } else if (cameraImageBuffers.length && personActivityQuestion) {
+      systemPrompt = `${systemPrompt}\n\n${CHARACTER_ACTIVITY_APPEND}\n\n${CHARACTER_INTERPRETATION_APPEND}`;
+    } else if (cameraImageBuffers.length && personVisibilityQuestion) {
+      systemPrompt = `${systemPrompt}\n\n${PERSON_VISIBILITY_CHAT_APPEND}\n\n${CHARACTER_INTERPRETATION_APPEND}`;
+    } else if (cameraImageBuffers.length && (sceneInterpretation || greetingCameraStarting || greetingWithCamera)) {
+      systemPrompt = `${systemPrompt}\n\n${CHARACTER_INTERPRETATION_APPEND}`;
+    } else if (cameraImageBuffers.length && cameraActive) {
+      systemPrompt = `${systemPrompt}\n\n${CHARACTER_INTERPRETATION_APPEND}`;
+    } else if (personActivityQuestion && cameraActive) {
+      systemPrompt = `${systemPrompt}\n\n${CHARACTER_ACTIVITY_APPEND}`;
+    } else if (personVisibilityQuestion && cameraActive && hasWorldData) {
+      const peopleState = worldMemoryRef.current.people.length
+        ? worldMemoryRef.current.people.join(", ")
+        : "none — user not in frame";
+      systemPrompt = `${systemPrompt}\n\n${PERSON_VISIBILITY_CHAT_APPEND}\nPeople in memory: ${peopleState}.`;
     }
     if (continueCode) {
       systemPrompt = `${systemPrompt}\n\n${CONTINUE_CODE_SYSTEM_HINT}`;
       setStatus("ממשיך כתיבת קוד…");
-    } else if (hasImages) {
-      setStatus("מנתח תמונה…");
+    } else if (hasImages || (cameraActive && cameraImageBuffers.length)) {
+      setStatus(cameraActive ? "מנתח מצלמה…" : "מנתח תמונה…");
     } else {
       setStatus(`Generating…${searchHint}`);
     }
 
     const historyForWorker = trimHistoryForContext(priorTurns, 32_000, continueCode);
 
-    const currentImageBuffers = storedImages
-      .map((img) => imageBytesCacheRef.current.get(img.id)?.bytes)
-      .filter((b): b is ArrayBuffer => !!b);
+    const currentImageBuffers = [
+      ...storedImages
+        .map((img) => imageBytesCacheRef.current.get(img.id)?.bytes)
+        .filter((b): b is ArrayBuffer => !!b),
+      ...cameraImageBuffers,
+    ];
+
+    const waitDeadline = Date.now() + 180_000;
+    while (workerInferenceBusyRef.current && Date.now() < waitDeadline) {
+      setStatus("ממתין לסיום ניתוח מצלמה…");
+      await new Promise((r) => setTimeout(r, 250));
+    }
 
     runGemmaGenerate(
       effectivePrompt,
@@ -1351,6 +2037,13 @@ function App() {
         onSave={persistSettings}
         onClearCache={() => void clearModelCache()}
         cacheClearing={cacheClearing}
+      />
+
+      <ModelActivityPanel
+        open={activityLogOpen}
+        onClose={() => setActivityLogOpen(false)}
+        entries={activityLog}
+        onClear={() => setActivityLog([])}
       />
 
       {infoModalOpen ? (
@@ -1561,17 +2254,28 @@ function App() {
                 </svg>
               </button>
               <div className="model-badge">{modelLabel.toUpperCase()}</div>
-              {activeArtifact && !artifactOpen ? (
+              <div className="chat-header-actions">
+                {activeArtifact && !artifactOpen ? (
+                  <button
+                    type="button"
+                    className="artifact-reopen-btn"
+                    onClick={() => setArtifactOpen(true)}
+                  >
+                    פתח {activeArtifact.kind === "html" ? "HTML" : "קוד"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="artifact-reopen-btn"
-                  onClick={() => setArtifactOpen(true)}
+                  className="activity-log-btn"
+                  onClick={() => setActivityLogOpen(true)}
+                  title="הצג את כל פעילות המודל — הנחיות, בקשות ותשובות"
                 >
-                  פתח {activeArtifact.kind === "html" ? "HTML" : "קוד"}
+                  📋 פעילות
+                  {activityLog.length ? (
+                    <span className="activity-log-count">{activityLog.length}</span>
+                  ) : null}
                 </button>
-              ) : (
-                <div className="chat-header-spacer" aria-hidden="true" />
-              )}
+              </div>
             </header>
 
             <div className="msg-list messages" ref={messagesListRef}>
@@ -1596,12 +2300,14 @@ function App() {
                   </div>
                   <div className="msg-txt">
                     {msg.images?.length ? <UserAttachedImages images={msg.images} /> : null}
-                    <MessageBody
-                      content={msg.content}
-                      onOpenArtifact={openArtifact}
-                      savedThought={msg.thought}
-                      savedArtifact={msg.artifact}
-                    />
+                    {msg.artifact ? (
+                      <ArtifactChip
+                        kind={msg.artifact.kind}
+                        label={msg.artifact.kind === "html" ? "HTML" : msg.artifact.title}
+                        onOpen={() => openArtifact(msg.artifact!)}
+                      />
+                    ) : null}
+                    <MessageBody content={msg.content} onOpenArtifact={openArtifact} />
                   </div>
                 </article>
               ))}
@@ -1641,7 +2347,31 @@ function App() {
                 />
                 <span>Search</span>
               </label>
-              {status && status !== "Not loaded" ? (
+              <label
+                className={`composer-mode-pill ${cameraMode ? "composer-mode-pill--active" : ""}`}
+                title="מצב מצלמה חי — snapshots תקופתיים, זיכרון סביבה, תגובות על שינויים."
+              >
+                <input
+                  type="checkbox"
+                  checked={cameraMode}
+                  onChange={() => void toggleCameraMode()}
+                  disabled={isGenerating || !isLoaded}
+                />
+                <span>🎥 Camera</span>
+              </label>
+              {cameraMode ? (
+                <CameraPreview
+                  ref={cameraVideoRef}
+                  active={cameraMode}
+                  observing={cameraObserving}
+                  mood={characterMood}
+                  error={cameraError}
+                />
+              ) : null}
+              {cameraStatus ? (
+                <span className="composer-status-hint composer-status-hint--camera">{cameraStatus}</span>
+              ) : null}
+              {status && status !== "Not loaded" && status !== "Ready" ? (
                 <span className="composer-status-hint">{status}</span>
               ) : null}
             </div>
@@ -1732,6 +2462,11 @@ function App() {
                       e.preventDefault();
                       void addFilesAsAttachments(imageFiles);
                     }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                    e.preventDefault();
+                    e.currentTarget.form?.requestSubmit();
                   }}
                   placeholder={pendingAttachments.length ? "שאל על התמונה…" : "הקלד הודעה או צרף תמונה…"}
                   rows={1}

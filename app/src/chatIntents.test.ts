@@ -1,15 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   hasUnclosedCodeFence,
+  isCameraContextQuestion,
   isContinueRequest,
   isRtlText,
   isSimpleGreeting,
+  isPersonActivityQuestion,
+  isPersonVisibilityQuestion,
+  isCurrentPersonStateQuestion,
+  needsPersonFocusRefresh,
+  isSceneInterpretationQuestion,
+  isVisualDetailQuestion,
+  needsCameraVisionEscalation,
   parseGemmaThinkingOutput,
   getArtifactScanContent,
   splitAssistantStream,
   shouldContinueCode,
   stripGemmaControlTokens,
   trimHistoryForContext,
+  classifyChatTopic,
+  isTopicShift,
+  topicShiftHint,
 } from "./chatIntents";
 
 describe("chatIntents", () => {
@@ -22,6 +33,30 @@ describe("chatIntents", () => {
     expect(isSimpleGreeting("היי")).toBe(true);
     expect(isSimpleGreeting("hello")).toBe(true);
     expect(isSimpleGreeting("צור תמונה")).toBe(false);
+  });
+
+  it("camera context questions", () => {
+    expect(isCameraContextQuestion("מה אתה רואה?")).toBe(true);
+    expect(isCameraContextQuestion("what do you see")).toBe(true);
+    expect(isCameraContextQuestion("כתוב html")).toBe(false);
+  });
+
+  it("visual detail questions trigger vision escalation", () => {
+    expect(isVisualDetailQuestion("אתה רואה מה השעה בשעון?")).toBe(true);
+    expect(isVisualDetailQuestion("מה כתוב על המסך?")).toBe(true);
+    expect(isVisualDetailQuestion("איזה צבע החולצה?")).toBe(true);
+    expect(isVisualDetailQuestion("what time is on the clock")).toBe(true);
+    expect(isVisualDetailQuestion("שלום")).toBe(false);
+    expect(needsCameraVisionEscalation("מה השעה בשעון?")).toBe(true);
+    expect(needsCameraVisionEscalation("מה אתה רואה?")).toBe(true);
+    expect(isPersonVisibilityQuestion("אתה רואה אותי?")).toBe(true);
+    expect(needsCameraVisionEscalation("אתה רואה אותי?")).toBe(true);
+    expect(isPersonActivityQuestion("מה האדם עושה עכשיו")).toBe(true);
+    expect(isCurrentPersonStateQuestion("האדם עומד או יושב?")).toBe(true);
+    expect(needsPersonFocusRefresh("האדם עומד או יושב?")).toBe(true);
+    expect(needsCameraVisionEscalation("האדם עומד או יושב?")).toBe(true);
+    expect(isSceneInterpretationQuestion("מה אתה רואה?")).toBe(true);
+    expect(isSceneInterpretationQuestion("מה השעה בשעון?")).toBe(false);
   });
 
   it("continue requests", () => {
@@ -85,5 +120,17 @@ Thinking Process:
   it("getArtifactScanContent empty while thinking in progress", () => {
     const raw = "thought\nStill planning, no code yet.";
     expect(getArtifactScanContent(raw, true)).toBe("");
+  });
+
+  it("classifies chat topics", () => {
+    expect(classifyChatTopic("משהו מינימליסטי יהיה הכיוון")).toBe("design");
+    expect(classifyChatTopic("משעמם לי מה אתה מציע שנשחק?")).toBe("bored_play");
+    expect(classifyChatTopic("מה אתה רואה?")).toBe("camera");
+  });
+
+  it("detects topic shift design to bored_play", () => {
+    expect(isTopicShift("design", "bored_play")).toBe(true);
+    expect(isTopicShift("design", "design")).toBe(false);
+    expect(topicShiftHint("design", "bored_play")).toMatch(/Do NOT continue/);
   });
 });
