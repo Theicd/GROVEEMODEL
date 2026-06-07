@@ -1,9 +1,18 @@
-import { forwardRef, useCallback, useRef } from "react";
+import { forwardRef, useCallback, useRef, type MutableRefObject, type Ref } from "react";
 import { moodLabelHe, type CharacterMood } from "./characterBrain";
-import { mergeRefs } from "./mergeRefs";
 import { VisionDetectionOverlay } from "./VisionDetectionOverlay";
 import { CameraVisionHud } from "./CameraVisionHud";
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
+
+function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): (value: T | null) => void {
+  return (value) => {
+    for (const ref of refs) {
+      if (!ref) continue;
+      if (typeof ref === "function") ref(value);
+      else (ref as MutableRefObject<T | null>).current = value;
+    }
+  };
+}
 
 type CameraPreviewProps = {
   active: boolean;
