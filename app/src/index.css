@@ -1803,6 +1803,11 @@ button:disabled {
   overflow: hidden;
 }
 
+/* Mirror selfie preview: flip stage so video + overlay stay aligned (YOLOEYE pattern). */
+.camera-preview-stage.mirror {
+  transform: scaleX(-1);
+}
+
 .camera-preview-wrap--active .camera-preview-video {
   display: block;
 }
@@ -1816,10 +1821,6 @@ button:disabled {
   object-fit: contain;
   background: #000;
   z-index: 1;
-}
-
-.camera-preview-video.mirror {
-  transform: scaleX(-1);
 }
 
 .vision-detection-overlay {
@@ -2294,6 +2295,10 @@ button:disabled {
   height: min(220px, 28vh);
   max-height: 220px;
   width: 100%;
+}
+
+.vision-inspector-video-wrap.mirror {
+  transform: scaleX(-1);
 }
 
 .vision-inspector-main {

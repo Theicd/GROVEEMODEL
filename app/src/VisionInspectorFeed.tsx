@@ -4,8 +4,6 @@ import { HAND_CONNECTIONS, POSE_CONNECTIONS } from "./vision-lab/core/types";
 
 const COLORS = ["#22d3ee", "#34d399", "#a78bfa", "#f472b6", "#fbbf24"];
 
-const flipX = (x: number, width: number): number => 1 - x - width;
-
 export function VisionInspectorFeed({
   videoRef,
   result,
@@ -38,16 +36,12 @@ export function VisionInspectorFeed({
         canvas.height = vh;
       }
 
-      ctx.save();
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      ctx.restore();
 
       for (let i = 0; i < r.objects.length; i++) {
         const obj = r.objects[i];
         const color = COLORS[i % COLORS.length];
-        const x = flipX(obj.bbox.x, obj.bbox.width) * canvas.width;
+        const x = obj.bbox.x * canvas.width;
         const y = obj.bbox.y * canvas.height;
         const w = obj.bbox.width * canvas.width;
         const h = obj.bbox.height * canvas.height;
@@ -67,8 +61,8 @@ export function VisionInspectorFeed({
           const p2 = r.poseLandmarks[b];
           if (!p1 || !p2) continue;
           ctx.beginPath();
-          ctx.moveTo(flipX(p1.x, 0) * canvas.width, p1.y * canvas.height);
-          ctx.lineTo(flipX(p2.x, 0) * canvas.width, p2.y * canvas.height);
+          ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+          ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
           ctx.stroke();
         }
       }
@@ -80,8 +74,8 @@ export function VisionInspectorFeed({
           const p1 = hand.landmarks[a];
           const p2 = hand.landmarks[b];
           ctx.beginPath();
-          ctx.moveTo(flipX(p1.x, 0) * canvas.width, p1.y * canvas.height);
-          ctx.lineTo(flipX(p2.x, 0) * canvas.width, p2.y * canvas.height);
+          ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
+          ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
           ctx.stroke();
         }
       }

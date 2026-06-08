@@ -5,7 +5,10 @@ import { HAND_CONNECTIONS, POSE_CONNECTIONS } from "./vision-lab/core/types";
 
 const COLORS = ["#22d3ee", "#34d399", "#a78bfa", "#f472b6", "#fbbf24"];
 
-/** Flip normalized x for selfie-mirrored video display. */
+/**
+ * Flip normalized x when mirroring in canvas (legacy).
+ * Prefer CSS `transform: scaleX(-1)` on the parent stage — video + overlay flip together.
+ */
 const flipX = (x: number, width: number, mirrored: boolean): number =>
   mirrored ? 1 - x - width : x;
 

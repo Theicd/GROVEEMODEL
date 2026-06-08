@@ -81,10 +81,10 @@ export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
           </p>
         ) : (
           <div className="camera-preview-column">
-            <div className="camera-preview-stage">
+            <div className="camera-preview-stage mirror">
               <video
                 ref={handleVideoRef}
-                className="camera-preview-video mirror"
+                className="camera-preview-video"
                 aria-hidden="true"
                 playsInline
                 muted
@@ -94,7 +94,6 @@ export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
                   videoRef={videoRef}
                   result={visionResult!}
                   compact
-                  mirrored
                 />
               ) : null}
             </div>
