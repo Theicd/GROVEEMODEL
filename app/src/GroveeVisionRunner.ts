@@ -435,7 +435,7 @@ export class GroveeVisionRunner {
 
     this.analyzing = true;
     this.pipeline.setHeavyPaused(true);
-    this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}…`);
+    this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}… (face/hands still active)`);
 
     try {
       const bytes = await captureVideoFrame(this.requireVideo(), GROVEE_VISION_LOOP_CONFIG.analysisMaxWidth);

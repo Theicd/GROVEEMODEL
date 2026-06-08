@@ -60,8 +60,8 @@ export function ensureVisionLabConfig(
       ...intervals,
       hands: Math.min(intervals.hands, mode === 'lite' ? 150 : 100),
       pose: Math.min(intervals.pose, mode === 'lite' ? 3000 : 500),
-      face: Math.min(intervals.face, mode === 'lite' ? 5000 : 2000),
-      emotion: Math.min(intervals.emotion, mode === 'lite' ? 5000 : 2000),
+      face: Math.min(intervals.face, mode === 'lite' ? 5000 : 1000),
+      emotion: Math.min(intervals.emotion, mode === 'lite' ? 5000 : 1000),
     },
   };
 }
