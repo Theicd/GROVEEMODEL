@@ -79,6 +79,7 @@ import {
 } from "./GroveeVisionRunner";
 import { mountGroveeVisionProbe } from "./visionQaProbe";
 import { CameraPreview } from "./CameraPreview";
+import { ChatLandingHeadline, ChatLandingSuggestions, useLandingContent } from "./ChatLandingHero";
 import { ModelActivityPanel } from "./ModelActivityPanel";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
 import { SituationSettingsPanel } from "./SituationSettingsPanel";
@@ -262,38 +263,40 @@ const sessionTitleFromMessages = (sessionMessages: ChatMessage[]): string => {
 const newChatSessionId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-const defaultChatSessionsState = (): ChatSessionsState => {
-  const id = newChatSessionId();
-  return {
-    activeId: id,
-    sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }],
-  };
-};
-
 const loadChatSessionsState = (): ChatSessionsState => {
+  const freshId = newChatSessionId();
+  const freshSession: ChatSession = {
+    id: freshId,
+    title: "שיחה חדשה",
+    updatedAt: Date.now(),
+    messages: [],
+  };
+
   try {
     const raw = localStorage.getItem(CHATS_STORAGE_KEY);
-    if (!raw) return defaultChatSessionsState();
+    if (!raw) return { activeId: freshId, sessions: [freshSession] };
     const parsed = JSON.parse(raw) as { activeId?: string; sessions?: ChatSession[] };
     if (!parsed.sessions || !Array.isArray(parsed.sessions) || parsed.sessions.length === 0) {
-      return defaultChatSessionsState();
+      return { activeId: freshId, sessions: [freshSession] };
     }
-    const sessions = parsed.sessions.map((s) => ({
-      id: typeof s.id === "string" ? s.id : newChatSessionId(),
-      title: typeof s.title === "string" ? s.title : "שיחה",
-      updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
-      messages: Array.isArray(s.messages) ? s.messages : [],
-    }));
-    const activeId =
-      parsed.activeId && sessions.some((x) => x.id === parsed.activeId) ? parsed.activeId : sessions[0].id;
-    return { activeId, sessions };
+    const history = parsed.sessions
+      .map((s) => ({
+        id: typeof s.id === "string" ? s.id : newChatSessionId(),
+        title: typeof s.title === "string" ? s.title : "שיחה",
+        updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
+        messages: Array.isArray(s.messages) ? s.messages : [],
+      }))
+      .filter((s) => s.messages.length > 0)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    return { activeId: freshId, sessions: [freshSession, ...history] };
   } catch {
-    return defaultChatSessionsState();
+    return { activeId: freshId, sessions: [freshSession] };
   }
 };
 
 const saveChatSessionsState = (state: ChatSessionsState) => {
-  const serializable = { activeId: state.activeId, sessions: state.sessions };
+  const sessions = state.sessions.filter((s) => s.messages.length > 0 || s.id === state.activeId);
+  const serializable = { activeId: state.activeId, sessions };
   try {
     localStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(serializable));
   } catch {
@@ -759,6 +762,7 @@ function SettingsModal({
 function App() {
   const workerRef = useRef<Worker | null>(null);
   const assistantBufferRef = useRef("");
+  const streamTokenCountRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageBytesCacheRef = useRef<Map<string, { bytes: ArrayBuffer; mime: string }>>(new Map());
@@ -797,6 +801,7 @@ function App() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [chatSessionsState, setChatSessionsState] = useState<ChatSessionsState>(() => loadChatSessionsState());
   const [assistantBuffer, setAssistantBuffer] = useState("");
+  const [streamTokenCount, setStreamTokenCount] = useState(0);
   const [thinkingMode, setThinkingMode] = useState(false);
   const [webSearchMode, setWebSearchMode] = useState(false);
   const [cameraMode, setCameraMode] = useState(false);
@@ -845,6 +850,17 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
+  const [desktopLayout, setDesktopLayout] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 769px)").matches,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 769px)");
+    const sync = () => setDesktopLayout(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
@@ -891,6 +907,33 @@ function App() {
     [chatSessionsState.sessions],
   );
 
+  const deleteChatSession = useCallback(
+    (sessionId: string) => {
+      if (isGenerating) return;
+      setChatSessionsState((st) => {
+        const remaining = st.sessions.filter((s) => s.id !== sessionId);
+        if (remaining.length === 0) {
+          const id = newChatSessionId();
+          return {
+            activeId: id,
+            sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }],
+          };
+        }
+        const switching = st.activeId === sessionId;
+        if (switching) {
+          setAssistantBuffer("");
+          assistantBufferRef.current = "";
+          setArtifactOpen(false);
+        }
+        return {
+          activeId: switching ? remaining[0].id : st.activeId,
+          sessions: remaining,
+        };
+      });
+    },
+    [isGenerating],
+  );
+
   const setMessages = useCallback((updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
     setChatSessionsState((st) => {
       const sessions = st.sessions.map((s) => {
@@ -909,8 +952,8 @@ function App() {
   }, []);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
-  const modelLabel = "Gemma 4 E2B";
-
+  const showLanding = phase === "ready" && messages.length === 0 && !assistantBuffer;
+  const landingContent = useLandingContent();
   const loadingByteLine = useMemo(() => {
     if (loadingPhase === "init" || loadingBytes.total <= 0) return "";
     const speed =
@@ -1374,6 +1417,30 @@ function App() {
     }
   }, [cameraMode, isGenerating, syncVisionBusy]);
 
+  const onCameraPipelineConfigChange = useCallback((partial: Partial<PipelineConfig>) => {
+    setVisionPipelineConfig((prev) => {
+      const next = {
+        ...prev,
+        ...partial,
+        toggles: { ...prev.toggles, ...partial.toggles },
+        sampleIntervals: { ...prev.sampleIntervals, ...partial.sampleIntervals },
+      };
+      cameraLoopRef.current?.applyPipelineConfig(next);
+      savePipelineConfig(next);
+      return next;
+    });
+  }, []);
+
+  const showArtifactPanel = artifactOpen && !!activeArtifact;
+  const showCameraSidePanel = cameraMode && desktopLayout && !showArtifactPanel;
+  const showCameraInline = cameraMode && !desktopLayout;
+  const rightPanelOpen = showArtifactPanel || showCameraSidePanel;
+
+  const applyLandingSuggestion = useCallback((text: string) => {
+    setPrompt(text);
+    queueMicrotask(() => textareaRef.current?.focus());
+  }, []);
+
   const finalizeAssistantReply = useCallback(
     (stopped: boolean) => {
       isGeneratingRef.current = false;
@@ -1599,6 +1666,8 @@ function App() {
         setProgress(100);
         setStatus(`Gemma ready on ${formatInferenceDevice(msg.device)}`);
       } else if (msg.type === "token") {
+        streamTokenCountRef.current += 1;
+        setStreamTokenCount(streamTokenCountRef.current);
         setAssistantBuffer((prev) => {
           const next = prev + msg.text;
           assistantBufferRef.current = next;
@@ -1959,6 +2028,8 @@ function App() {
       setAssistantBuffer("");
       assistantBufferRef.current = "";
     }
+    streamTokenCountRef.current = 0;
+    setStreamTokenCount(0);
 
     isGeneratingRef.current = true;
     setIsGenerating(true);
@@ -2226,7 +2297,7 @@ function App() {
         onClear={() => setActivityLog([])}
       />
 
-      {QA_VISION_MODE ? (
+      {QA_VISION_MODE && !cameraMode ? (
         <video
           ref={cameraVideoRef}
           className="qa-vision-video"
@@ -2378,7 +2449,7 @@ function App() {
       {phase === "ready" && (
         <div
           id="app-container"
-          className={`app-container app-container--visible ${artifactOpen ? "app-container--artifact-open" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
+          className={`app-container app-container--visible ${rightPanelOpen ? "app-container--artifact-open" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
         >
           <div
             className={`sb-overlay ${sidebarOpen ? "active" : ""}`}
@@ -2427,22 +2498,40 @@ function App() {
             </button>
             <div className="history chat-list">
               {sortedSessions.map((s) => (
-                <button
+                <div
                   key={s.id}
-                  type="button"
-                  className={`hist-item chat-item ${s.id === chatSessionsState.activeId ? "active" : ""}`}
-                  onClick={() => {
-                    if (s.id === chatSessionsState.activeId || isGenerating) return;
-                    setChatSessionsState((st) => ({ ...st, activeId: s.id }));
-                    setAssistantBuffer("");
-                    assistantBufferRef.current = "";
-                    setArtifactOpen(false);
-                    setSidebarOpen(false);
-                  }}
-                  disabled={isGenerating}
+                  className={`hist-row ${s.id === chatSessionsState.activeId ? "active" : ""}`}
                 >
-                  {s.title}
-                </button>
+                  <button
+                    type="button"
+                    className="hist-item chat-item"
+                    title={s.title}
+                    onClick={() => {
+                      if (s.id === chatSessionsState.activeId || isGenerating) return;
+                      setChatSessionsState((st) => ({ ...st, activeId: s.id }));
+                      setAssistantBuffer("");
+                      assistantBufferRef.current = "";
+                      setArtifactOpen(false);
+                      setSidebarOpen(false);
+                    }}
+                    disabled={isGenerating}
+                  >
+                    {s.title}
+                  </button>
+                  <button
+                    type="button"
+                    className="hist-delete-btn"
+                    aria-label={`מחק שיחה: ${s.title}`}
+                    title="מחק שיחה"
+                    disabled={isGenerating}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteChatSession(s.id);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
             <div className="user-foot">
@@ -2463,32 +2552,54 @@ function App() {
             </div>
           </aside>
 
-          {artifactOpen && activeArtifact ? (
-            <aside className="artifact-panel open" aria-label="חלונית קוד">
-              <ArtifactPanel
-                artifact={activeArtifact}
-                streaming={isGenerating && !!assistantBuffer}
-                onClose={() => setArtifactOpen(false)}
-              />
+          {rightPanelOpen ? (
+            <aside
+              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}`}
+              aria-label={showArtifactPanel ? "חלונית קוד" : "מצלמה חיה"}
+            >
+              {showArtifactPanel ? (
+                <ArtifactPanel
+                  artifact={activeArtifact!}
+                  streaming={isGenerating && !!assistantBuffer}
+                  streamTokenCount={streamTokenCount}
+                  onClose={() => setArtifactOpen(false)}
+                />
+              ) : (
+                <CameraPreview
+                  ref={cameraVideoRef}
+                  variant="panel"
+                  active={cameraMode}
+                  observing={cameraObserving}
+                  mood={characterMood}
+                  error={cameraError}
+                  visionResult={visionResult}
+                  pipelineConfig={visionPipelineConfig}
+                  pipelineProgress={visionPipelineProgress}
+                  visionPaused={isGenerating}
+                  onVideoReady={(video) => void startVisionPipeline(video)}
+                  onPipelineConfigChange={onCameraPipelineConfigChange}
+                />
+              )}
             </aside>
           ) : null}
 
-          <section className="chat-area">
+          <section className={`chat-area ${showLanding ? "chat-area--landing" : ""}`}>
             <header className="chat-header">
-              <button
-                type="button"
-                className="sidebar-toggle"
-                aria-label={sidebarOpen ? "סגור היסטוריה" : "פתח היסטוריה"}
-                aria-expanded={sidebarOpen}
-                onClick={() => setSidebarOpen((v) => !v)}
-              >
-                <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <line x1="3" y1="12" x2="21" y2="12" />
-                  <line x1="3" y1="6" x2="21" y2="6" />
-                  <line x1="3" y1="18" x2="21" y2="18" />
-                </svg>
-              </button>
-              <div className="model-badge">{modelLabel.toUpperCase()}</div>
+              {!sidebarOpen ? (
+                <button
+                  type="button"
+                  className="sidebar-toggle"
+                  aria-label="פתח היסטוריה"
+                  aria-expanded={false}
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <line x1="3" y1="12" x2="21" y2="12" />
+                    <line x1="3" y1="6" x2="21" y2="6" />
+                    <line x1="3" y1="18" x2="21" y2="18" />
+                  </svg>
+                </button>
+              ) : null}
               <div className="chat-header-actions">
                 {activeArtifact && !artifactOpen ? (
                   <button
@@ -2522,54 +2633,52 @@ function App() {
               </div>
             </header>
 
-            <div className="msg-list messages" ref={messagesListRef}>
-              {messages.length === 0 && !assistantBuffer && (
-                <div className="empty-state">
-                  <div className="msg">
-                    <div className="msg-icon ai">AI</div>
-                    <div className="msg-txt">
-                      היי! המודל Gemma 4 E2B מוכן לעבודה. מה אפשר לעזור לך ליצור היום?
-                    </div>
-                  </div>
+            <div className="chat-body">
+              {!showLanding ? (
+                <div className="msg-list messages" ref={messagesListRef}>
+                  {messages.map((msg) => (
+                    <article
+                      key={msg.id}
+                      className="msg"
+                      dir={isRtlText(msg.content) ? "rtl" : "ltr"}
+                    >
+                      <div className={`msg-icon ${msg.role === "user" ? "user" : "ai"}`}>
+                        {msg.role === "user" ? "א" : "AI"}
+                      </div>
+                      <div className="msg-txt">
+                        {msg.images?.length ? <UserAttachedImages images={msg.images} /> : null}
+                        {msg.artifact ? (
+                          <ArtifactChip
+                            kind={msg.artifact.kind}
+                            label={msg.artifact.kind === "html" ? "HTML" : msg.artifact.title}
+                            onOpen={() => openArtifact(msg.artifact!)}
+                          />
+                        ) : null}
+                        <MessageBody content={msg.content} onOpenArtifact={openArtifact} />
+                      </div>
+                    </article>
+                  ))}
+                  {assistantBuffer && (
+                    <article className="msg">
+                      <div className="msg-icon ai">AI</div>
+                      <div className="msg-txt">
+                        <MessageBody
+                          content={assistantBuffer}
+                          onOpenArtifact={openArtifact}
+                          showThinking={thinkingMode}
+                        />
+                      </div>
+                    </article>
+                  )}
                 </div>
+              ) : (
+                <div className="chat-landing-spacer" aria-hidden="true" />
               )}
-              {messages.map((msg) => (
-                <article
-                  key={msg.id}
-                  className="msg"
-                  dir={isRtlText(msg.content) ? "rtl" : "ltr"}
-                >
-                  <div className={`msg-icon ${msg.role === "user" ? "user" : "ai"}`}>
-                    {msg.role === "user" ? "א" : "AI"}
-                  </div>
-                  <div className="msg-txt">
-                    {msg.images?.length ? <UserAttachedImages images={msg.images} /> : null}
-                    {msg.artifact ? (
-                      <ArtifactChip
-                        kind={msg.artifact.kind}
-                        label={msg.artifact.kind === "html" ? "HTML" : msg.artifact.title}
-                        onOpen={() => openArtifact(msg.artifact!)}
-                      />
-                    ) : null}
-                    <MessageBody content={msg.content} onOpenArtifact={openArtifact} />
-                  </div>
-                </article>
-              ))}
-              {assistantBuffer && (
-                <article className="msg">
-                  <div className="msg-icon ai">AI</div>
-                  <div className="msg-txt">
-                    <MessageBody
-                      content={assistantBuffer}
-                      onOpenArtifact={openArtifact}
-                      showThinking={thinkingMode}
-                    />
-                  </div>
-                </article>
-              )}
-            </div>
 
-            <div className="composer-modes">
+              <div className="chat-composer-stack">
+                {showLanding ? <ChatLandingHeadline text={landingContent.headline} /> : null}
+
+                <div className="composer-modes">
               <label className="composer-mode-pill" title="מפעיל חשיבה native של Gemma 4 (<|think|>) — תהליך החשיבה יוצג לפני התשובה.">
                 <input
                   type="checkbox"
@@ -2603,7 +2712,7 @@ function App() {
                 />
                 <span>🎥 Camera</span>
               </label>
-              {cameraMode ? (
+              {showCameraInline ? (
                 <CameraPreview
                   ref={cameraVideoRef}
                   active={cameraMode}
@@ -2615,31 +2724,19 @@ function App() {
                   pipelineProgress={visionPipelineProgress}
                   visionPaused={isGenerating}
                   onVideoReady={(video) => void startVisionPipeline(video)}
-                  onPipelineConfigChange={(partial) => {
-                    setVisionPipelineConfig((prev) => {
-                      const next = {
-                        ...prev,
-                        ...partial,
-                        toggles: { ...prev.toggles, ...partial.toggles },
-                        sampleIntervals: { ...prev.sampleIntervals, ...partial.sampleIntervals },
-                      };
-                      cameraLoopRef.current?.applyPipelineConfig(next);
-                      savePipelineConfig(next);
-                      return next;
-                    });
-                  }}
+                  onPipelineConfigChange={onCameraPipelineConfigChange}
                 />
               ) : null}
-              {cameraStatus ? (
+              {cameraStatus && !showLanding ? (
                 <span className="composer-status-hint composer-status-hint--camera">{cameraStatus}</span>
               ) : null}
-              {status && status !== "Not loaded" && status !== "Ready" ? (
+              {!showLanding && status && status !== "Not loaded" && status !== "Ready" ? (
                 <span className="composer-status-hint">{status}</span>
               ) : null}
             </div>
 
             <form
-              className={`input-zone ${isDragOver ? "input-zone--drag" : ""}`}
+              className={`input-zone ${isDragOver ? "input-zone--drag" : ""} ${showLanding ? "input-zone--landing" : ""}`}
               onSubmit={sendPrompt}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -2762,6 +2859,15 @@ function App() {
                 )}
               </div>
             </form>
+
+                {showLanding ? (
+                  <ChatLandingSuggestions
+                    suggestions={landingContent.suggestions}
+                    onSuggestionClick={applyLandingSuggestion}
+                  />
+                ) : null}
+              </div>
+            </div>
           </section>
         </div>
       )}

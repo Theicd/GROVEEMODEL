@@ -25,6 +25,8 @@ type CameraPreviewProps = {
   visionPaused?: boolean;
   onVideoReady?: (video: HTMLVideoElement) => void;
   onPipelineConfigChange?: (partial: Partial<PipelineConfig>) => void;
+  /** Desktop right panel vs inline above composer (mobile). */
+  variant?: "inline" | "panel";
 };
 
 export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
@@ -40,6 +42,7 @@ export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
       visionPaused = false,
       onVideoReady,
       onPipelineConfigChange,
+      variant = "inline",
     },
     ref,
   ) {
@@ -74,7 +77,9 @@ export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
     const showHud = showOverlay && !!pipelineConfig;
 
     return (
-      <div className={`camera-preview-wrap ${active ? "camera-preview-wrap--active" : ""}`}>
+      <div
+        className={`camera-preview-wrap ${active ? "camera-preview-wrap--active" : ""} ${variant === "panel" ? "camera-preview-wrap--panel" : ""}`}
+      >
         {error ? (
           <p className="camera-preview-error" role="alert">
             {error}

@@ -8,7 +8,7 @@ type Particle = {
   s: number;
 };
 
-export function IntroCanvas() {
+export function IntroCanvas({ contained = false }: { contained?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -22,14 +22,19 @@ export function IntroCanvas() {
     let raf = 0;
     const particles: Particle[] = [];
 
-    const resize = () => {
-      w = canvas.width = window.innerWidth;
-      h = canvas.height = window.innerHeight;
+    const measure = () => {
+      if (contained) {
+        const parent = canvas.parentElement;
+        if (!parent) return { width: 0, height: 0 };
+        return { width: parent.clientWidth, height: parent.clientHeight };
+      }
+      return { width: window.innerWidth, height: window.innerHeight };
     };
 
     const seed = () => {
       particles.length = 0;
-      for (let i = 0; i < 50; i++) {
+      const count = Math.max(18, Math.min(50, Math.floor((w * h) / 12000)));
+      for (let i = 0; i < count; i++) {
         particles.push({
           x: Math.random() * w,
           y: Math.random() * h,
@@ -38,6 +43,15 @@ export function IntroCanvas() {
           s: Math.random() * 2,
         });
       }
+    };
+
+    const resize = () => {
+      const { width, height } = measure();
+      if (width <= 0 || height <= 0) return;
+      const changed = width !== w || height !== h;
+      w = canvas.width = width;
+      h = canvas.height = height;
+      if (changed) seed();
     };
 
     const draw = () => {
@@ -72,18 +86,26 @@ export function IntroCanvas() {
     };
 
     resize();
-    seed();
+    if (w > 0 && h > 0) seed();
     draw();
-    window.addEventListener("resize", () => {
-      resize();
-      seed();
-    });
+
+    let ro: ResizeObserver | undefined;
+    if (contained) {
+      const parent = canvas.parentElement;
+      if (parent) {
+        ro = new ResizeObserver(resize);
+        ro.observe(parent);
+      }
+    } else {
+      window.addEventListener("resize", resize);
+    }
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
+      ro?.disconnect();
+      if (!contained) window.removeEventListener("resize", resize);
     };
-  }, []);
+  }, [contained]);
 
   return <canvas ref={canvasRef} className="bg-canvas" aria-hidden="true" />;
 }

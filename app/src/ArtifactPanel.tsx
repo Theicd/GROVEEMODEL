@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ArtifactGeneratingSplash } from "./ArtifactGeneratingSplash";
 
 export type Artifact = {
   kind: "code" | "html";
@@ -26,10 +27,12 @@ export function ArtifactPanel({
   artifact,
   onClose,
   streaming,
+  streamTokenCount = 0,
 }: {
   artifact: Artifact;
   onClose: () => void;
   streaming?: boolean;
+  streamTokenCount?: number;
 }) {
   const [tab, setTab] = useState<"preview" | "source">("preview");
   const srcDoc = useMemo(
@@ -84,12 +87,16 @@ export function ArtifactPanel({
           </div>
           <div className="artifact-panel-body">
             {tab === "preview" ? (
-              <iframe
-                className="artifact-html-frame"
-                title="HTML preview"
-                sandbox="allow-scripts allow-forms"
-                srcDoc={srcDoc}
-              />
+              streaming ? (
+                <ArtifactGeneratingSplash tokenCount={streamTokenCount} />
+              ) : (
+                <iframe
+                  className="artifact-html-frame"
+                  title="HTML preview"
+                  sandbox="allow-scripts allow-forms"
+                  srcDoc={srcDoc}
+                />
+              )
             ) : (
               <pre className="artifact-code-scroll">
                 <code>{artifact.content}</code>
@@ -110,9 +117,13 @@ export function ArtifactPanel({
             </button>
           </div>
           <div className="artifact-panel-body">
-            <pre className="artifact-code-scroll">
-              <code className={artifact.lang ? `lang-${artifact.lang}` : undefined}>{artifact.content}</code>
-            </pre>
+            {streaming ? (
+              <ArtifactGeneratingSplash tokenCount={streamTokenCount} />
+            ) : (
+              <pre className="artifact-code-scroll">
+                <code className={artifact.lang ? `lang-${artifact.lang}` : undefined}>{artifact.content}</code>
+              </pre>
+            )}
           </div>
         </>
       )}
