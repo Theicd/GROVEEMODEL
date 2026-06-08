@@ -2433,3 +2433,296 @@ button:disabled {
     max-height: 42vh;
   }
 }
+
+/* Settings tabs — Gemma vs Vision */
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 22px 12px;
+  border-bottom: 1px solid #2a3348;
+}
+
+.settings-tab {
+  border: 1px solid #2a3348;
+  background: #121826;
+  color: #9aa8c4;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.settings-tab.active {
+  border-color: #0d9488;
+  color: #5eead4;
+  background: #042f2e;
+}
+
+.situation-settings {
+  padding: 0 22px 8px;
+  max-height: min(62vh, 640px);
+  overflow-y: auto;
+}
+
+.situation-settings-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.situation-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: #c8d4ea;
+  cursor: pointer;
+}
+
+.situation-toggle input {
+  margin-top: 3px;
+}
+
+.situation-perf-row {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.situation-settings-hint,
+.situation-settings-foot {
+  font-size: 0.82rem;
+  color: #888;
+  margin: 0 0 10px;
+}
+
+.situation-rules-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 12px;
+}
+
+.situation-rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.situation-rules-table th,
+.situation-rules-table td {
+  border-bottom: 1px solid #2a3348;
+  padding: 6px 8px;
+  text-align: right;
+}
+
+.situation-rules-table th {
+  color: #5eead4;
+  font-weight: 600;
+}
+
+.situation-rule-label {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.situation-rule-sub {
+  color: #888;
+  font-size: 0.72rem;
+}
+
+.situation-rule-off {
+  opacity: 0.45;
+}
+
+.situation-cooldown-input {
+  width: 72px;
+  background: #0a0e17;
+  border: 1px solid #2a3348;
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.situation-rules-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.situation-utterance-field {
+  margin-top: 8px;
+}
+
+/* Vision Inspector — detection cards grid */
+.vision-inspector-panel--wide.modal-box {
+  max-width: min(1280px, 98vw);
+  width: min(1280px, 98vw);
+}
+
+.vision-inspector-body--wide {
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 300px);
+}
+
+.vision-inspector-cards {
+  margin-top: 10px;
+  max-height: 42vh;
+  overflow-y: auto;
+  border: 1px solid #2a3348;
+  border-radius: 10px;
+  padding: 10px;
+  background: #0a0e17;
+}
+
+.vision-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.vision-dash-card {
+  border: 1px solid #2a3348;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #121826;
+}
+
+.vision-dash-card-title {
+  margin: 0 0 6px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #5eead4;
+}
+
+.vision-dash-card-body {
+  font-size: 0.74rem;
+  color: #b8c4dc;
+}
+
+.vision-dash-empty {
+  margin: 0;
+  color: #666;
+  font-size: 0.72rem;
+}
+
+.vision-dash-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.vision-dash-value {
+  color: #67e8f9;
+}
+
+.vision-dash-value.pose {
+  color: #6ee7b7;
+}
+
+.vision-dash-value.motion {
+  color: #c4b5fd;
+}
+
+.vision-dash-value.sign {
+  color: #a5b4fc;
+}
+
+.vision-dash-value.event {
+  color: #fcd34d;
+}
+
+.vision-dash-value.emotion {
+  color: #fda4af;
+}
+
+.vision-dash-hand-block {
+  margin-bottom: 6px;
+}
+
+.vision-dash-hand-title {
+  color: #67e8f9;
+  margin-bottom: 2px;
+}
+
+.vision-dash-fingers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  font-size: 0.68rem;
+  color: #888;
+}
+
+.vision-dash-gesture-static {
+  color: #c4b5fd;
+  margin-top: 4px;
+}
+
+.vision-dash-cue {
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #0a0e17;
+}
+
+.vision-dash-cue-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.vision-dash-cat {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+}
+
+.vision-dash-cat--sign {
+  color: #67e8f9;
+}
+
+.vision-dash-cat--motion {
+  color: #c4b5fd;
+}
+
+.vision-dash-cat--posture {
+  color: #fcd34d;
+}
+
+.vision-dash-cat--self-touch {
+  color: #fda4af;
+}
+
+.vision-dash-cue-meaning {
+  color: #6ee7b7;
+  margin-top: 2px;
+}
+
+.vision-dash-cue-conf {
+  text-align: right;
+  color: #666;
+  font-size: 0.65rem;
+}
+
+.vision-dash-face-block {
+  margin-top: 4px;
+  padding: 4px;
+  background: #0a0e17;
+  border-radius: 4px;
+  font-size: 0.68rem;
+}
+
+.vision-dash-env {
+  color: #fcd34d;
+}
+
+.vision-dash-scene {
+  margin: 0;
+  line-height: 1.4;
+  font-size: 0.72rem;
+}
+
+.vision-dash-scene--vlm {
+  color: #c4b5fd;
+  margin-top: 6px;
+}

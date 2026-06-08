@@ -46,6 +46,7 @@ export type GroveeVisionCallbacks = {
   requestAnalysis: (req: SceneAnalysisRequest) => Promise<SceneAnalysisResult | null>;
   resolveUtterance?: (decision: CharacterDecision) => Promise<CharacterDecision>;
   useLlmProactiveUtterance?: () => boolean;
+  useBootDeepSnapshot?: () => boolean;
   isWorkerBusy: () => boolean;
   onCameraStatus?: (text: string) => void;
   onCharacterSpeak?: (decision: CharacterDecision) => void;
@@ -323,7 +324,9 @@ export class GroveeVisionRunner {
     if (sync.worldUpdate.isBaselineCapture && !this.deepBaselineDone) {
       this.character.noteBaselineScene();
       this.callbacks.onMoodChange?.("observing");
-      if (this.budget.useLlmDeepVision) {
+      const wantBoot =
+        (this.callbacks.useBootDeepSnapshot?.() ?? true) && this.budget.useLlmDeepVision;
+      if (wantBoot) {
         void this.runDeepVision("first_deep_summary");
       } else {
         this.finishSensorOnlyBaseline(result);

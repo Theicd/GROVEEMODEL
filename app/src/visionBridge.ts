@@ -91,6 +91,14 @@ export const buildRichSensorBlock = (world: WorldMemory, result?: VisionResult |
     lines.push(`${EMOTION_DISCLAIMER} ${world.emotionEstimate.trim()}`);
   }
 
+  if (!result && world.fingerStates.length) {
+    const counts = world.fingerStates.map((f) => `${f.hand}:${f.count}`).join(", ");
+    lines.push(`Finger counts (cached): ${counts}`);
+  }
+  if (!result && world.faceSummary.trim()) {
+    lines.push(`Face (cached estimate): ${world.faceSummary.trim()}`);
+  }
+
   return lines.join("\n");
 };
 

@@ -80,11 +80,18 @@ import {
 import { CameraPreview } from "./CameraPreview";
 import { ModelActivityPanel } from "./ModelActivityPanel";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
+import { SituationSettingsPanel } from "./SituationSettingsPanel";
+import {
+  DEFAULT_VISION_SETTINGS,
+  mergeVisionSettings,
+  type VisionBehaviorSettings,
+} from "./visionSettings";
 import {
   ensureVisionLabConfig,
   loadPipelineConfig,
   savePipelineConfig,
 } from "./vision-lab/core/configStorage";
+import { intervalsFromMode } from "./vision-lab/core/schedule";
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
 import { appendModelActivity, type ModelActivityEntry } from "./modelActivityLog";
 
@@ -192,6 +199,7 @@ type AppSettings = {
   hfRemoteHost: string;
   inferenceBackend: InferenceBackendPreference;
   gemma: TunableModelSettings;
+  vision: VisionBehaviorSettings;
 };
 
 const defaultGemmaSettings: TunableModelSettings = {
@@ -207,6 +215,7 @@ const defaultAppSettings = (): AppSettings => ({
   hfRemoteHost: "",
   inferenceBackend: "auto",
   gemma: { ...defaultGemmaSettings },
+  vision: { ...DEFAULT_VISION_SETTINGS },
 });
 
 const loadSettings = (): AppSettings => {
@@ -222,6 +231,7 @@ const loadSettings = (): AppSettings => {
           ? parsed.inferenceBackend
           : "auto",
       gemma: { ...defaultGemmaSettings, ...parsed.gemma },
+      vision: mergeVisionSettings(parsed.vision),
     };
   } catch {
     return defaultAppSettings();
@@ -547,11 +557,16 @@ function SettingsModal({
   cacheClearing: boolean;
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
+  const [settingsTab, setSettingsTab] = useState<"gemma" | "vision">("gemma");
 
   if (!open) return null;
 
   const setBackend = (inferenceBackend: InferenceBackendPreference) => {
     setDraft((d) => ({ ...d, inferenceBackend }));
+  };
+
+  const patchVision = (partial: Partial<VisionBehaviorSettings>) => {
+    setDraft((d) => ({ ...d, vision: { ...d.vision, ...partial } }));
   };
 
   const backendOptions: { id: InferenceBackendPreference; label: string; hint: string }[] = [
@@ -584,6 +599,33 @@ function SettingsModal({
           </button>
         </div>
 
+        <div className="settings-tabs" role="tablist" aria-label="קטגוריות הגדרות">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={settingsTab === "gemma"}
+            className={`settings-tab ${settingsTab === "gemma" ? "active" : ""}`}
+            onClick={() => setSettingsTab("gemma")}
+          >
+            Gemma
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={settingsTab === "vision"}
+            className={`settings-tab ${settingsTab === "vision" ? "active" : ""}`}
+            onClick={() => setSettingsTab("vision")}
+          >
+            עיניים ואסיטואציות
+          </button>
+        </div>
+
+        {settingsTab === "vision" ? (
+          <SituationSettingsPanel vision={draft.vision} onVisionChange={patchVision} />
+        ) : null}
+
+        {settingsTab === "gemma" ? (
+        <>
         <section className="settings-card">
           <h3 className="settings-card-title">
             <span className="settings-card-dot" aria-hidden="true" />
@@ -684,6 +726,8 @@ function SettingsModal({
             {cacheClearing ? "מנקה מטמון…" : "נקה מטמון מודל"}
           </button>
         </section>
+        </>
+        ) : null}
 
         <div className="settings-footer">
           <button type="button" className="settings-btn-ghost" onClick={() => setDraft(defaultAppSettings())}>
@@ -778,6 +822,9 @@ function App() {
   }));
   const [visionPipelineConfig, setVisionPipelineConfig] = useState<PipelineConfig>(() =>
     loadPipelineConfig(),
+  );
+  const [worldMemorySnapshot, setWorldMemorySnapshot] = useState(() =>
+    worldMemoryRef.current.toInspectorSnapshot(),
   );
   const [activityLog, setActivityLog] = useState<ModelActivityEntry[]>([]);
   const [infoModalOpen, setInfoModalOpen] = useState(false);
@@ -1117,10 +1164,22 @@ function App() {
         characterBrainRef.current.reset();
         chatTopicRef.current = null;
 
-        const visionBudget = detectVisionBudget();
+        const visionBehavior = appSettingsRef.current.vision;
+        const visionBudget = {
+          ...detectVisionBudget(),
+          useLlmDeepVision:
+            visionBehavior.useLlmDeepVision && detectVisionBudget().useLlmDeepVision,
+          useLlmProactiveUtterance:
+            visionBehavior.useLlmProactiveUtterance && detectVisionBudget().tier === "normal",
+        };
         cameraVisionBudgetRef.current = visionBudget;
+        const perfMode = visionBehavior.performanceMode;
         const labConfig = ensureVisionLabConfig(
-          visionPipelineConfig,
+          {
+            ...visionPipelineConfig,
+            performanceMode: perfMode,
+            sampleIntervals: intervalsFromMode(perfMode),
+          },
           visionBudget.tier === "low" ? "low" : "normal",
         );
         setVisionPipelineConfig(labConfig);
@@ -1140,10 +1199,12 @@ function App() {
               requestSceneAnalysis(req.bytes, req.previousSummary, req.reason, req.sensorBlock ?? ""),
             useLlmProactiveUtterance: () => {
               const b = cameraVisionBudgetRef.current;
+              if (!appSettingsRef.current.vision.useLlmProactiveUtterance) return false;
               if (!b.useLlmProactiveUtterance) return false;
               if (cameraLoopRef.current?.isDeepVisionDegraded()) return false;
               return true;
             },
+            useBootDeepSnapshot: () => appSettingsRef.current.vision.useBootDeepSnapshot,
             resolveUtterance: async (decision) => {
               const llm = await requestCharacterUtterance(decision);
               if (llm?.trim()) return { ...decision, message: llm.trim() };
@@ -1153,7 +1214,10 @@ function App() {
             onCameraStatus: setCameraStatus,
             onMoodChange: setCharacterMood,
             onPipelineProgress: setVisionPipelineProgress,
-            onVisionResult: (result) => setVisionResult({ ...result }),
+            onVisionResult: (result) => {
+              setVisionResult({ ...result });
+              setWorldMemorySnapshot(worldMemoryRef.current.toInspectorSnapshot());
+            },
             onCharacterSpeak: (decision: CharacterDecision) => {
               pushActivity({
                 direction: "in",
@@ -1174,6 +1238,7 @@ function App() {
             },
             onObservingChange: setCameraObserving,
             onLightDetection: (payload) => {
+              if (!appSettingsRef.current.vision.logVisionToActivity) return;
               const evLines = payload.worldUpdate.newEvents.map(
                 (e) => `[${e.type}] ${e.text}${e.subject ? ` (${e.subject})` : ""}`,
               );
@@ -2150,11 +2215,23 @@ function App() {
             };
             cameraLoopRef.current?.getPipeline().setConfig(next);
             savePipelineConfig(next);
+            if (partial.performanceMode) {
+              setAppSettings((s) => {
+                const next = {
+                  ...s,
+                  vision: { ...s.vision, performanceMode: partial.performanceMode! },
+                };
+                saveSettings(next);
+                return next;
+              });
+            }
             return next;
           });
         }}
         progress={visionPipelineProgress}
         cameraActive={cameraMode}
+        showDetectionCards={appSettings.vision.showDetectionCards}
+        worldMemory={worldMemorySnapshot}
       />
 
       {infoModalOpen ? (

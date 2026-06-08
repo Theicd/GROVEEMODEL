@@ -22,6 +22,19 @@ export type SemanticEvent = {
   significant: boolean;
 };
 
+export type WorldInspectorSnapshot = {
+  objects: string[];
+  personPresent: boolean;
+  poseState: string;
+  gestures: string[];
+  holding: string[];
+  fingerStates: WorldMemory["fingerStates"];
+  faceSummary: string;
+  emotionEstimate: string;
+  lastVisionFrameAt: number;
+  memoryAgeSec: number;
+};
+
 export type VisionPayload = {
   objects?: string[];
   people?: string[];
@@ -214,10 +227,41 @@ export class WorldMemory {
   labBodyLanguage: string[] = [];
   /** Tentative emotion estimate — HAL must not state as fact. */
   emotionEstimate = "";
+  /** Latest finger counts per hand from vision-lab. */
+  fingerStates: Array<{
+    hand: "Left" | "Right";
+    count: number;
+    thumb: string;
+    index: string;
+    middle: string;
+    ring: string;
+    pinky: string;
+  }> = [];
+  /** Short face summary for chat context (estimate only). */
+  faceSummary = "";
+  /** Timestamp of last vision-lab frame synced into memory. */
+  lastVisionFrameAt = 0;
 
   get sceneAgeSec(): number {
     if (!this.sceneStartedAt) return 0;
     return Math.floor((Date.now() - this.sceneStartedAt) / 1000);
+  }
+
+  toInspectorSnapshot(): WorldInspectorSnapshot {
+    return {
+      objects: [...this.objects],
+      personPresent: this.personPresent,
+      poseState: this.poseState,
+      gestures: [...this.gestures],
+      holding: [...this.holding],
+      fingerStates: this.fingerStates.map((f) => ({ ...f })),
+      faceSummary: this.faceSummary,
+      emotionEstimate: this.emotionEstimate,
+      lastVisionFrameAt: this.lastVisionFrameAt,
+      memoryAgeSec: this.lastVisionFrameAt
+        ? Math.max(0, Math.floor((Date.now() - this.lastVisionFrameAt) / 1000))
+        : 0,
+    };
   }
 
   reset(): void {
@@ -251,6 +295,9 @@ export class WorldMemory {
     this.environment = "";
     this.labBodyLanguage = [];
     this.emotionEstimate = "";
+    this.fingerStates = [];
+    this.faceSummary = "";
+    this.lastVisionFrameAt = 0;
   }
 
   /** Append semantic events from vision-lab rule engine. */
@@ -325,6 +372,8 @@ export class WorldMemory {
     this.gestures = [];
     this.holding = [];
     this.focusHint = "";
+    this.fingerStates = [];
+    this.faceSummary = "";
   }
 
   /** When Gemma deep vision is skipped/failed — lightweight HAL still gets a summary line. */

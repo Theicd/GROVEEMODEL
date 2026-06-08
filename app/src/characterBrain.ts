@@ -6,6 +6,7 @@ import {
   pickPrimaryEvent,
   topicKeyFromEvent,
 } from "./eventDetector";
+import { findSituationUtterance, loadSituationRegistry } from "./situationRegistry";
 import type { SemanticEvent, WorldMemory } from "./worldMemory";
 
 export type CharacterMood = "observing" | "curious" | "bored" | "excited";
@@ -236,8 +237,11 @@ export class CharacterBrain {
 
 function isSituationActivity(subject: string): boolean {
   return (
-    /^(wave|arm_movement|motion_burst|focused_work|pose_change|stood_with_drink)$/.test(subject) ||
+    /^(wave|arm_movement|motion_burst|focused_work|pose_change|stood_with_drink|hands_on_head|hand_on_face|gesture:thumbs_up)$/.test(
+      subject,
+    ) ||
     subject.startsWith("object_held:") ||
+    subject.startsWith("object:") ||
     subject.startsWith("pose_change:")
   );
 }
@@ -255,6 +259,9 @@ function situationTopic(subject: string): string {
 }
 
 function utteranceSituation(subject: string, world: WorldMemory): string | null {
+  const registryLine = findSituationUtterance(loadSituationRegistry(), subject);
+  if (registryLine) return registryLine;
+
   if (subject === "stood_with_drink") {
     const drink = world.holding.find((h) => /cup|bottle/.test(h));
     if (drink === "cup") return "נראה שקמת עם כוס — רגע של קפה?";
@@ -268,6 +275,11 @@ function utteranceSituation(subject: string, world: WorldMemory): string | null 
     if (item === "book") return "עכשיו עם ספר — על מה אתה קורא?";
     if (item === "phone") return "טלפון ביד — משהו דחוף?";
     return `שמתי לב ש-${item} ביד — מעניין.`;
+  }
+  if (subject.startsWith("object:")) {
+    const item = subject.slice("object:".length);
+    if (item === "guitar") return "שמתי לב שיש גיטרה בחדר — אתה מנגן?";
+    return `שמתי לב ל-${item} בסצנה — מעניין.`;
   }
   return utteranceMotion(subject);
 }

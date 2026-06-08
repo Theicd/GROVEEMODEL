@@ -8,6 +8,13 @@ import {
   mapLabHolding,
   mapPoseActionToState,
 } from "./visionBridge";
+import { loadSituationRegistry } from "./situationRegistry";
+import {
+  createSituationTriggerState,
+  evaluateSituationTriggers,
+  registrySubjectFromLabEvent,
+  type SituationTriggerState,
+} from "./situationTriggerEngine";
 import {
   makeSemanticEvent,
   normalizeLabel,
@@ -44,11 +51,13 @@ const labEventToSemantic = (name: string, confidence: number): SemanticEvent | n
 export type GroveeVisionSyncState = {
   personStreak: number;
   lastEventKeys: Set<string>;
+  situationTriggers: SituationTriggerState;
 };
 
 export const createGroveeVisionSyncState = (): GroveeVisionSyncState => ({
   personStreak: 0,
   lastEventKeys: new Set(),
+  situationTriggers: createSituationTriggerState(),
 });
 
 export type GroveeVisionSyncResult = {
@@ -105,6 +114,25 @@ export const syncVisionResultToWorld = (
     ? `${result.emotion.dominant} (~${Math.round(result.emotion.dominantScore * 100)}%)`
     : "";
 
+  world.fingerStates = result.fingerStates.map((f) => ({
+    hand: f.hand,
+    count: f.count,
+    thumb: f.fingers.thumb,
+    index: f.fingers.index,
+    middle: f.fingers.middle,
+    ring: f.fingers.ring,
+    pinky: f.fingers.pinky,
+  }));
+
+  if (result.faces.length) {
+    const f = result.faces[0];
+    world.faceSummary = `age~${Math.round(f.estimatedAge)}, gender est. ${f.estimatedGender}, gaze ${f.gazeDirection}`;
+  } else {
+    world.faceSummary = "";
+  }
+
+  world.lastVisionFrameAt = Date.now();
+
   if (worldUpdate.isBaselineCapture && result.sceneDescription?.trim()) {
     world.lastSummary = result.sceneDescription.trim().slice(0, 320);
     world.baselineEstablished = true;
@@ -112,6 +140,7 @@ export const syncVisionResultToWorld = (
     world.lastSummary = result.sceneDescription.trim().slice(0, 320);
   }
 
+  const situationRules = loadSituationRegistry();
   const labEvents: SemanticEvent[] = [];
   for (const ev of result.events) {
     const key = `${ev.name}:${Math.round(ev.confidence * 100)}`;
@@ -121,11 +150,29 @@ export const syncVisionResultToWorld = (
       const first = syncState.lastEventKeys.values().next().value;
       if (first) syncState.lastEventKeys.delete(first);
     }
-    const sem = labEventToSemantic(ev.name, ev.confidence);
+    const subject =
+      registrySubjectFromLabEvent(ev.name, situationRules) ??
+      labEventToSemantic(ev.name, ev.confidence)?.subject;
+    const sem = subject
+      ? makeSemanticEvent("activity_change", ev.name, subject, true)
+      : labEventToSemantic(ev.name, ev.confidence);
     if (sem) {
       world.lastSituationSubject = sem.subject ?? "";
       world.lastSituationAt = Date.now();
       labEvents.push(sem);
+    }
+  }
+
+  const registryEvents = evaluateSituationTriggers(
+    result,
+    situationRules,
+    syncState.situationTriggers,
+  );
+  for (const ev of registryEvents) {
+    if (!labEvents.some((e) => e.subject === ev.subject)) {
+      world.lastSituationSubject = ev.subject ?? "";
+      world.lastSituationAt = Date.now();
+      labEvents.push(ev);
     }
   }
 

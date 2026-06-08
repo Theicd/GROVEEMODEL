@@ -33,7 +33,7 @@ const NORMAL: VisionBudgetProfile = {
   deepVisionMaxIntervalMs: 300_000,
   preloadPose: true,
   useLlmDeepVision: true,
-  useLlmProactiveUtterance: true,
+  useLlmProactiveUtterance: false,
   maxDeepVisionFailures: 3,
   baseDeepVisionBackoffMs: 90_000,
   minSnapshotBytes: 8000,
