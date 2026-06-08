@@ -114,7 +114,8 @@ export function VisionInspectorFeed({
         ctx.strokeRect(x, y, w, h);
         ctx.fillStyle = "#fbbf24";
         ctx.font = "10px monospace";
-        ctx.fillText(`Face #${face.id}`, x, Math.max(10, y - 2));
+        const emo = r.emotion?.dominant ? ` · ${r.emotion.dominant}` : "";
+        ctx.fillText(`Face #${face.id}${emo}`, x, Math.max(10, y - 2));
       }
 
       raf = requestAnimationFrame(draw);

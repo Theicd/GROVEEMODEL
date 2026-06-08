@@ -12,7 +12,6 @@ import { classifyEnvironment } from '../analyzers/EnvironmentClassifier';
 import { buildRuleBasedDescription } from '../analyzers/SceneDescriptionGenerator';
 import { VlmSceneDescriber } from '../analyzers/VlmSceneDescriber';
 import {
-  getModuleOverdue,
   intervalsFromMode,
   isModuleDue,
   resolveSchedule,
@@ -89,15 +88,13 @@ export class VisionPipeline {
   private onUpdate: ((result: VisionResult) => void) | null = null;
   private onProgress: ((msg: string) => void) | null = null;
   private initialized = false;
-  /** Skip YOLO/VLM only — hands + pose + face keep running (chat / Gemma). */
+  /** Skip YOLO/face/VLM only — hands + pose keep running (chat / Gemma). */
   private heavyPaused = false;
   private yoloBusy = false;
   private faceBusy = false;
   private vlmBusy = false;
   private lastPublishAt = 0;
   private mediaPipeTs = 0;
-  private faceStaleUntil = 0;
-  private emotionStaleUntil = 0;
 
   setConfig(config: Partial<PipelineConfig>): void {
     const nextMode = config.performanceMode ?? this.config.performanceMode;
@@ -131,7 +128,6 @@ export class VisionPipeline {
   }
 
   setHeavyPaused(paused: boolean): void {
-    /** Face/emotion always run — only YOLO/VLM pause for GPU sharing with Gemma. */
     this.heavyPaused = paused;
   }
 
@@ -250,68 +246,18 @@ export class VisionPipeline {
 
     this.publishFrame(now, hands, poseLandmarks);
 
-    void this.maybeRunFaceEmotion(video, now);
-    if (!this.heavyPaused) {
+  if (!this.heavyPaused) {
       void this.maybeRunYolo(video, now);
       void this.maybeRunVlm(video, now);
     }
-  }
-
-  private async maybeRunFaceEmotion(video: HTMLVideoElement, now: number): Promise<void> {
-    const schedule = resolveSchedule(this.config);
-    const { toggles } = this.config;
-    if (!toggles.face && !toggles.emotion) return;
-    if (!this.faceEmotion.isReady()) return;
-    if (this.faceBusy) return;
-
-    const faceOverdue = toggles.face
-      ? getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.face, schedule.face)
-      : 0;
-    const emotionOverdue = toggles.emotion
-      ? getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.emotion, schedule.emotion)
-      : 0;
-    if (faceOverdue <= 0 && emotionOverdue <= 0) return;
-
-    this.faceBusy = true;
-    try {
-      const result = await this.faceEmotion.detect(video, {
-        face: toggles.face,
-        emotion: toggles.emotion,
-      });
-      const ts = performance.now();
-
-      if (toggles.face && faceOverdue > 0) {
-        if (result.faces.length > 0) {
-          this.layers.faces = result.faces;
-          this.faceStaleUntil = ts + 4000;
-        } else if (ts > this.faceStaleUntil) {
-          this.layers.faces = [];
-        }
-        this.lastModuleRun.face = ts;
-      }
-
-      if (toggles.emotion && emotionOverdue > 0) {
-        if (result.emotion) {
-          this.layers.emotion = result.emotion;
-          this.emotionStaleUntil = ts + 4000;
-        } else if (ts > this.emotionStaleUntil) {
-          this.layers.emotion = null;
-        }
-        this.lastModuleRun.emotion = ts;
-      }
-
-      this.publishFrame(ts, this.layers.hands, this.layers.poseLandmarks);
-    } catch (err) {
-      console.warn('[VisionPipeline] face/emotion failed', err);
-    } finally {
-      this.faceBusy = false;
-    }
+    void this.maybeRunFaceEmotion(video, now);
   }
 
   private async maybeRunYolo(video: HTMLVideoElement, now: number): Promise<void> {
-    const schedule = resolveSchedule(this.config);
     const { toggles } = this.config;
     if (!toggles.yolo || this.yoloBusy) return;
+
+    const schedule = resolveSchedule(this.config);
     if (!isModuleDue(now, this.pipelineStart, this.lastModuleRun.yolo, schedule.yolo)) return;
 
     this.yoloBusy = true;
@@ -327,10 +273,44 @@ export class VisionPipeline {
     }
   }
 
-  private async maybeRunVlm(video: HTMLVideoElement, now: number): Promise<void> {
+  private async maybeRunFaceEmotion(video: HTMLVideoElement, now: number): Promise<void> {
+    const { toggles } = this.config;
+    if ((!toggles.face && !toggles.emotion) || this.faceBusy) return;
+
     const schedule = resolveSchedule(this.config);
+    const faceDue = toggles.face
+      && isModuleDue(now, this.pipelineStart, this.lastModuleRun.face, schedule.face);
+    const emotionDue = toggles.emotion
+      && isModuleDue(now, this.pipelineStart, this.lastModuleRun.emotion, schedule.emotion);
+    if (!faceDue && !emotionDue) return;
+
+    this.faceBusy = true;
+    try {
+      const result = await this.faceEmotion.detect(video, {
+        face: toggles.face,
+        emotion: toggles.emotion,
+      });
+      if (faceDue) {
+        this.layers.faces = result.faces;
+        this.lastModuleRun.face = performance.now();
+      }
+      if (emotionDue) {
+        this.layers.emotion = result.emotion;
+        this.lastModuleRun.emotion = performance.now();
+      }
+      this.publishFrame(performance.now(), this.layers.hands, this.layers.poseLandmarks);
+    } catch (err) {
+      console.warn('[VisionPipeline] face/emotion failed', err);
+    } finally {
+      this.faceBusy = false;
+    }
+  }
+
+  private async maybeRunVlm(video: HTMLVideoElement, now: number): Promise<void> {
     const { toggles } = this.config;
     if (!toggles.vlm || this.vlmBusy) return;
+
+    const schedule = resolveSchedule(this.config);
     if (!isModuleDue(now, this.pipelineStart, this.lastModuleRun.vlm, schedule.vlm)) return;
 
     this.vlmBusy = true;

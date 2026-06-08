@@ -45,8 +45,8 @@ export function getSchedule(mode: PerformanceMode): ResolvedSchedule {
         hands: { intervalMs: 100, phaseOffsetMs: 0 },
         pose: { intervalMs: 500, phaseOffsetMs: 0 },
         yolo: { intervalMs: 600, phaseOffsetMs: 0 },
-        face: { intervalMs: 1000, phaseOffsetMs: 0 },
-        emotion: { intervalMs: 1000, phaseOffsetMs: 0 },
+        face: { intervalMs: 800, phaseOffsetMs: 0 },
+        emotion: { intervalMs: 800, phaseOffsetMs: 0 },
         vlm: { intervalMs: 4000, phaseOffsetMs: 0 },
         uiUpdateMs: 100,
       };

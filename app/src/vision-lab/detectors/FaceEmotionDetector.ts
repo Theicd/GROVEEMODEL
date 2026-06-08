@@ -23,16 +23,13 @@ interface FaceExpressionDetection {
 
 export class FaceEmotionDetector {
   private loaded = false;
-  private loadFailed = false;
   private nextId = 1;
   private tracks = new Map<number, DetectedFace>();
-  private lastError = '';
 
   async init(onProgress?: (msg: string) => void): Promise<void> {
-    if (this.loaded || this.loadFailed) return;
+    if (this.loaded) return;
     onProgress?.('Loading face & emotion models...');
     const base = modelUrl('models/face-api');
-
     try {
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(base),
@@ -41,62 +38,44 @@ export class FaceEmotionDetector {
         faceapi.nets.faceExpressionNet.loadFromUri(base),
       ]);
       this.loaded = true;
-      this.lastError = '';
       onProgress?.('Face & emotion models ready');
     } catch (err) {
-      this.loadFailed = true;
-      this.lastError = err instanceof Error ? err.message : String(err);
-      console.error('[FaceEmotionDetector] model load failed', err);
-      onProgress?.(`Face models failed: ${this.lastError}`);
+      console.warn('[FaceEmotionDetector] model load failed', err);
+      onProgress?.('Face models failed to load');
     }
-  }
-
-  isReady(): boolean {
-    return this.loaded;
-  }
-
-  getLastError(): string {
-    return this.lastError;
   }
 
   async detect(
     source: HTMLVideoElement,
     options: { face: boolean; emotion: boolean },
   ): Promise<{ faces: DetectedFace[]; emotion: EmotionScores | null }> {
-    if (!this.loaded || this.loadFailed || (!options.face && !options.emotion)) {
+    if (!this.loaded || (!options.face && !options.emotion)) {
       return { faces: [], emotion: null };
     }
 
-    const vw = source.videoWidth;
-    const vh = source.videoHeight;
-    if (!vw || !vh) {
+    if (source.videoWidth < 32 || source.videoHeight < 32) {
       return { faces: [], emotion: null };
     }
 
     try {
-      const canvas = createOffscreenCanvas(source, 640);
-      const cw = canvas.width;
-      const ch = canvas.height;
-
+      const canvas = createOffscreenCanvas(source, 480);
       const detections = (await faceapi
-        .detectAllFaces(
-          canvas as unknown as HTMLVideoElement,
-          new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.25 }),
-        )
+        .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.3 }))
         .withFaceLandmarks()
         .withAgeAndGender()
         .withFaceExpressions()) as FaceExpressionDetection[];
 
+      const width = canvas.width;
+      const height = canvas.height;
       const faces: DetectedFace[] = [];
 
       if (options.face) {
         for (const det of detections) {
-          const box = det.detection.box;
           const bbox = {
-            x: box.x / cw,
-            y: box.y / ch,
-            width: box.width / cw,
-            height: box.height / ch,
+            x: det.detection.box.x / width,
+            y: det.detection.box.y / height,
+            width: det.detection.box.width / width,
+            height: det.detection.box.height / height,
           };
 
           const landmarks = det.landmarks;
@@ -161,10 +140,8 @@ export class FaceEmotionDetector {
         emotion = scores;
       }
 
-      this.lastError = '';
       return { faces, emotion };
     } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
       console.warn('[FaceEmotionDetector] detect failed', err);
       return { faces: [], emotion: null };
     }
@@ -185,8 +162,6 @@ export class FaceEmotionDetector {
 
   dispose(): void {
     this.loaded = false;
-    this.loadFailed = false;
     this.tracks.clear();
-    this.lastError = '';
   }
 }
