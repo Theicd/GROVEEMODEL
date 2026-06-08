@@ -10,7 +10,8 @@ export type SituationSource =
   | "body_language"
   | "interaction"
   | "event"
-  | "object";
+  | "object"
+  | "finger_count";
 
 export type SituationRule = {
   id: string;
@@ -69,6 +70,58 @@ export const DEFAULT_SITUATION_RULES: SituationRule[] = [
     proactive: true,
   },
   {
+    id: "one_finger",
+    label: "One Finger",
+    labelHe: "אצבע אחת",
+    enabled: true,
+    source: "finger_count",
+    match: "1",
+    tier: "instant",
+    cooldownMs: 10_000,
+    subject: "gesture:one_finger",
+    utteranceHe: "אני רואה אצבע אחת — מה אתה מנסה להגיד?",
+    proactive: true,
+  },
+  {
+    id: "two_fingers",
+    label: "Two Fingers",
+    labelHe: "שתי אצבעות",
+    enabled: true,
+    source: "finger_count",
+    match: "2",
+    tier: "instant",
+    cooldownMs: 10_000,
+    subject: "gesture:two_fingers",
+    utteranceHe: "שתי אצבעות — מקבל את האות.",
+    proactive: true,
+  },
+  {
+    id: "pointing",
+    label: "Pointing",
+    labelHe: "מצביע",
+    enabled: true,
+    source: "static_gesture",
+    match: "pointing",
+    tier: "instant",
+    cooldownMs: 12_000,
+    subject: "gesture:pointing",
+    utteranceHe: "אתה מצביע על משהו — על מה?",
+    proactive: true,
+  },
+  {
+    id: "peace_sign",
+    label: "Peace Sign",
+    labelHe: "סימן שלום",
+    enabled: true,
+    source: "static_gesture",
+    match: "peace sign",
+    tier: "instant",
+    cooldownMs: 15_000,
+    subject: "gesture:peace_sign",
+    utteranceHe: "סימן שלום — שלום!",
+    proactive: true,
+  },
+  {
     id: "hands_on_head",
     label: "Hands on Head",
     labelHe: "ידיים על הראש",
@@ -76,9 +129,22 @@ export const DEFAULT_SITUATION_RULES: SituationRule[] = [
     source: "body_language",
     match: "hands on head",
     tier: "instant",
-    cooldownMs: 25_000,
+    cooldownMs: 18_000,
     subject: "hands_on_head",
     utteranceHe: "נראה שאתה מחזיק את הראש — הכל בסדר?",
+    proactive: true,
+  },
+  {
+    id: "hand_on_head",
+    label: "Hand on Head",
+    labelHe: "יד על הראש",
+    enabled: true,
+    source: "body_language",
+    match: "hand on head",
+    tier: "instant",
+    cooldownMs: 18_000,
+    subject: "hand_on_head",
+    utteranceHe: "נוגע בראש — כואב או סתם מתעצבן?",
     proactive: true,
   },
   {
@@ -162,7 +228,7 @@ export const DEFAULT_SITUATION_RULES: SituationRule[] = [
   },
 ];
 
-const STORAGE_KEY = "grovee-situation-registry-v1";
+const STORAGE_KEY = "grovee-situation-registry-v2";
 
 export const loadSituationRegistry = (): SituationRule[] => {
   try {

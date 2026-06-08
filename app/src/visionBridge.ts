@@ -52,6 +52,13 @@ export const mapLabHolding = (result: VisionResult): string[] => {
 export const buildRichSensorBlock = (world: WorldMemory, result?: VisionResult | null): string => {
   const lines: string[] = [buildSensorBlock(world, poseFromWorld(world))];
 
+  if (world.bootContext.trim()) {
+    lines.push(`Room baseline (boot vision, once): ${world.bootContext.trim()}`);
+  }
+  if (world.liveContext.trim()) {
+    lines.push(`Live state (updated every frame): ${world.liveContext.trim()}`);
+  }
+
   if (result) {
     if (result.sceneDescription?.trim()) {
       lines.push(`Scene (rule-based): ${result.sceneDescription.trim()}`);

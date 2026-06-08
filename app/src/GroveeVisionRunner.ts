@@ -348,8 +348,8 @@ export class GroveeVisionRunner {
   private finishSensorOnlyBaseline(result?: VisionResult | null): void {
     const sensorBlock = buildRichSensorBlock(this.world, result);
     this.world.applySensorBaseline(sensorBlock);
-    if (result?.sceneDescription?.trim()) {
-      this.world.lastSummary = result.sceneDescription.trim().slice(0, 320);
+    if (result?.sceneDescription?.trim() && !this.world.bootContext.trim()) {
+      this.world.bootContext = result.sceneDescription.trim().slice(0, 320);
     }
     this.deepBaselineDone = true;
     this.character.noteBaselineScene();
@@ -420,7 +420,7 @@ export class GroveeVisionRunner {
       const sensorBlock = buildRichSensorBlock(this.world, this.getLatestResult());
       const result = await this.callbacks.requestAnalysis({
         bytes,
-        previousSummary: this.world.lastSummary,
+        previousSummary: this.world.bootContext || this.world.lastSummary,
         reason,
         sensorBlock,
       });

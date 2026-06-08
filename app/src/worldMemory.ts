@@ -33,6 +33,8 @@ export type WorldInspectorSnapshot = {
   emotionEstimate: string;
   lastVisionFrameAt: number;
   memoryAgeSec: number;
+  bootContext: string;
+  liveContext: string;
 };
 
 export type VisionPayload = {
@@ -241,6 +243,10 @@ export class WorldMemory {
   faceSummary = "";
   /** Timestamp of last vision-lab frame synced into memory. */
   lastVisionFrameAt = 0;
+  /** Deep Gemma boot snapshot — room baseline (set once). */
+  bootContext = "";
+  /** Live rolling context from small models — updated every vision frame. */
+  liveContext = "";
 
   get sceneAgeSec(): number {
     if (!this.sceneStartedAt) return 0;
@@ -261,6 +267,8 @@ export class WorldMemory {
       memoryAgeSec: this.lastVisionFrameAt
         ? Math.max(0, Math.floor((Date.now() - this.lastVisionFrameAt) / 1000))
         : 0,
+      bootContext: this.bootContext,
+      liveContext: this.liveContext,
     };
   }
 
@@ -298,6 +306,8 @@ export class WorldMemory {
     this.fingerStates = [];
     this.faceSummary = "";
     this.lastVisionFrameAt = 0;
+    this.bootContext = "";
+    this.liveContext = "";
   }
 
   /** Append semantic events from vision-lab rule engine. */
@@ -496,7 +506,12 @@ export class WorldMemory {
   /** Stage 3 — Gemma enriches summary + non-COCO objects only (no people/events). */
   applyDeepVision(payload: VisionPayload): void {
     this.lastAnalysisAt = Date.now();
-    if (payload.summary?.trim()) this.lastSummary = payload.summary.trim();
+    if (payload.summary?.trim()) {
+      this.bootContext = payload.summary.trim().slice(0, 520);
+      if (!this.liveContext.trim()) {
+        this.lastSummary = this.bootContext;
+      }
+    }
     const extra = normalizeList([...(payload.objects ?? []), ...(payload.current ?? [])]);
     if (extra.length) {
       this.objects = normalizeList([...this.objects, ...extra]);

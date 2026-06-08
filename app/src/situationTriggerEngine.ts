@@ -47,6 +47,9 @@ const collectSignals = (result: VisionResult): Array<{ source: SituationRule["so
   for (const o of result.objects) {
     out.push({ source: "object", name: norm(o.displayLabel || o.label) });
   }
+  for (const f of result.fingerStates) {
+    out.push({ source: "finger_count", name: String(f.count) });
+  }
 
   return out;
 };

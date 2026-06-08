@@ -15,6 +15,7 @@ import {
   registrySubjectFromLabEvent,
   type SituationTriggerState,
 } from "./situationTriggerEngine";
+import { buildLiveContextFromResult } from "./liveVisionContext";
 import {
   makeSemanticEvent,
   normalizeLabel,
@@ -24,6 +25,7 @@ import {
 } from "./worldMemory";
 
 const PERSON_CONFIRM_FRAMES = 2;
+const EVENT_DEDUP_MS = 45_000;
 
 const labEventToSemantic = (name: string, confidence: number): SemanticEvent | null => {
   const n = name.toLowerCase();
@@ -50,15 +52,29 @@ const labEventToSemantic = (name: string, confidence: number): SemanticEvent | n
 
 export type GroveeVisionSyncState = {
   personStreak: number;
-  lastEventKeys: Set<string>;
+  /** event key -> last fired timestamp (TTL dedup, not permanent) */
+  lastEventKeys: Map<string, number>;
   situationTriggers: SituationTriggerState;
 };
 
 export const createGroveeVisionSyncState = (): GroveeVisionSyncState => ({
   personStreak: 0,
-  lastEventKeys: new Set(),
+  lastEventKeys: new Map(),
   situationTriggers: createSituationTriggerState(),
 });
+
+const canEmitLabEvent = (syncState: GroveeVisionSyncState, key: string): boolean => {
+  const now = Date.now();
+  const last = syncState.lastEventKeys.get(key) ?? 0;
+  if (now - last < EVENT_DEDUP_MS) return false;
+  syncState.lastEventKeys.set(key, now);
+  if (syncState.lastEventKeys.size > 48) {
+    for (const [k, ts] of syncState.lastEventKeys) {
+      if (now - ts > EVENT_DEDUP_MS) syncState.lastEventKeys.delete(k);
+    }
+  }
+  return true;
+};
 
 export type GroveeVisionSyncResult = {
   worldUpdate: WorldUpdateResult;
@@ -132,24 +148,20 @@ export const syncVisionResultToWorld = (
   }
 
   world.lastVisionFrameAt = Date.now();
+  world.liveContext = buildLiveContextFromResult(result, world);
 
   if (worldUpdate.isBaselineCapture && result.sceneDescription?.trim()) {
-    world.lastSummary = result.sceneDescription.trim().slice(0, 320);
+    if (!world.bootContext.trim()) {
+      world.bootContext = result.sceneDescription.trim().slice(0, 320);
+    }
     world.baselineEstablished = true;
-  } else if (!world.lastSummary.trim() && result.sceneDescription?.trim()) {
-    world.lastSummary = result.sceneDescription.trim().slice(0, 320);
   }
 
   const situationRules = loadSituationRegistry();
   const labEvents: SemanticEvent[] = [];
   for (const ev of result.events) {
-    const key = `${ev.name}:${Math.round(ev.confidence * 100)}`;
-    if (syncState.lastEventKeys.has(key)) continue;
-    syncState.lastEventKeys.add(key);
-    if (syncState.lastEventKeys.size > 24) {
-      const first = syncState.lastEventKeys.values().next().value;
-      if (first) syncState.lastEventKeys.delete(first);
-    }
+    const key = `event:${ev.name.toLowerCase()}`;
+    if (!canEmitLabEvent(syncState, key)) continue;
     const subject =
       registrySubjectFromLabEvent(ev.name, situationRules) ??
       labEventToSemantic(ev.name, ev.confidence)?.subject;

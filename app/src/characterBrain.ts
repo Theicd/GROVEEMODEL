@@ -75,11 +75,12 @@ export class CharacterBrain {
     return Date.now() - this.lastUserInteractionAt;
   }
 
-  wasTopicMentionedRecently(topic: string): boolean {
+  wasTopicMentionedRecently(topic: string, subject?: string): boolean {
     const key = normalizeTopic(topic);
     const ts = this.topicsMentioned.get(key);
     if (!ts) return false;
-    return Date.now() - ts < CHARACTER_CONFIG.topicMentionTtlMs;
+    const ttl = topicMentionWindow(subject ?? topic);
+    return Date.now() - ts < ttl;
   }
 
   markSpoke(decision: CharacterDecision): void {
@@ -110,7 +111,7 @@ export class CharacterBrain {
         const cooldown = urgent ? CHARACTER_CONFIG.urgentCooldownMs : CHARACTER_CONFIG.excitedCooldownMs;
         if (msSinceProactive >= cooldown) {
           const topic = situationTopic(sub);
-          if (!this.wasTopicMentionedRecently(topic)) {
+          if (!this.wasTopicMentionedRecently(topic, sub)) {
             const message = utteranceSituation(sub, world);
             if (message) {
               const mood: CharacterMood =
@@ -235,11 +236,22 @@ export class CharacterBrain {
   }
 }
 
+function topicMentionWindow(subject: string): number {
+  if (
+    /^gesture:/.test(subject) ||
+    /^(wave|arm_movement|motion_burst|hands_on_head|hand_on_head|hand_on_face)$/.test(subject)
+  ) {
+    return 90_000;
+  }
+  return CHARACTER_CONFIG.topicMentionTtlMs;
+}
+
 function isSituationActivity(subject: string): boolean {
   return (
-    /^(wave|arm_movement|motion_burst|focused_work|pose_change|stood_with_drink|hands_on_head|hand_on_face|gesture:thumbs_up)$/.test(
+    /^(wave|arm_movement|motion_burst|focused_work|pose_change|stood_with_drink|hands_on_head|hand_on_head|hand_on_face)$/.test(
       subject,
     ) ||
+    subject.startsWith("gesture:") ||
     subject.startsWith("object_held:") ||
     subject.startsWith("object:") ||
     subject.startsWith("pose_change:")
@@ -248,7 +260,8 @@ function isSituationActivity(subject: string): boolean {
 
 function isUrgentSituation(subject: string): boolean {
   return (
-    /^(wave|arm_movement|motion_burst|stood_with_drink)$/.test(subject) ||
+    /^(wave|arm_movement|motion_burst|stood_with_drink|hands_on_head|hand_on_head)$/.test(subject) ||
+    subject.startsWith("gesture:") ||
     subject.startsWith("object_held:")
   );
 }

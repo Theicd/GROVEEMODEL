@@ -50,4 +50,29 @@ describe("situationTriggerEngine", () => {
     const subject = registrySubjectFromLabEvent("Phone Usage", DEFAULT_SITUATION_RULES);
     expect(subject).toBe("focused_work");
   });
+
+  it("fires one finger rule from finger count", () => {
+    const result = emptyVision();
+    result.fingerStates.push({
+      hand: "Right",
+      count: 1,
+      fingers: { thumb: "Closed", index: "Open", middle: "Closed", ring: "Closed", pinky: "Closed" },
+    });
+    const state = createSituationTriggerState();
+    const events = evaluateSituationTriggers(result, DEFAULT_SITUATION_RULES, state);
+    expect(events.some((e) => e.subject === "gesture:one_finger")).toBe(true);
+  });
+
+  it("fires hand on head from body language", () => {
+    const result = emptyVision();
+    result.bodyLanguage.push({
+      signal: "Hand on head",
+      meaning: "Touching head",
+      category: "self-touch",
+      confidence: 0.82,
+    });
+    const state = createSituationTriggerState();
+    const events = evaluateSituationTriggers(result, DEFAULT_SITUATION_RULES, state);
+    expect(events.some((e) => e.subject === "hand_on_head")).toBe(true);
+  });
 });
