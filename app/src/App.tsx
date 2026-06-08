@@ -819,6 +819,13 @@ function App() {
     vlmDescription: "",
     fps: 0,
     backend: "wasm",
+    faceModule: {
+      status: "idle",
+      message: "Face module not started",
+      lastScanAt: 0,
+      lastFaceCount: 0,
+      modelSource: "none",
+    },
   }));
   const [visionPipelineConfig, setVisionPipelineConfig] = useState<PipelineConfig>(() =>
     loadPipelineConfig(),

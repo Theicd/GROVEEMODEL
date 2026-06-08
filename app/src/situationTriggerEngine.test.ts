@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VisionResult } from "./vision-lab/core/types";
+import { DEFAULT_FACE_MODULE } from "./vision-lab/core/types";
 import {
   createSituationTriggerState,
   evaluateSituationTriggers,
@@ -25,6 +26,7 @@ const emptyVision = (): VisionResult => ({
   vlmDescription: "",
   fps: 0,
   backend: "wasm",
+  faceModule: { ...DEFAULT_FACE_MODULE },
 });
 
 describe("situationTriggerEngine", () => {

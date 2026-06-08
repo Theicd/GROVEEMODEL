@@ -114,7 +114,10 @@ export function VisionInspectorFeed({
         ctx.strokeRect(x, y, w, h);
         ctx.fillStyle = "#fbbf24";
         ctx.font = "10px monospace";
-        const emo = r.emotion?.dominant ? ` · ${r.emotion.dominant}` : "";
+        const emo =
+          r.emotion?.dominant && r.emotion.dominantScore >= 0.2
+            ? ` · ${r.emotion.dominant}`
+            : "";
         ctx.fillText(`Face #${face.id}${emo}`, x, Math.max(10, y - 2));
       }
 

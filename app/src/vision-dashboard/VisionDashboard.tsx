@@ -92,8 +92,10 @@ export function VisionDashboard({ result, compact = false }: { result: VisionRes
         ))}
       </VisionCard>
 
-      <VisionCard title="Face" empty={result.faces.length === 0}>
-        <div className="vision-dash-hand-title">Count: {result.faces.length}</div>
+      <VisionCard title="Face" empty={result.faces.length === 0 && result.faceModule.status === "disabled"}>
+        <div className="vision-dash-hand-title">
+          {result.faces.length ? `Count: ${result.faces.length}` : result.faceModule.message}
+        </div>
         {result.faces.map((face) => (
           <div key={face.id} className="vision-dash-face-block">
             <div>Face #{face.id}</div>
@@ -104,7 +106,10 @@ export function VisionDashboard({ result, compact = false }: { result: VisionRes
         ))}
       </VisionCard>
 
-      <VisionCard title="Emotion" empty={!result.emotion}>
+      <VisionCard title="Emotion" empty={!result.emotion && result.faceModule.status === "disabled"}>
+        {!result.emotion && result.faceModule.status !== "disabled" ? (
+          <p className="vision-dash-empty">{result.faceModule.message}</p>
+        ) : null}
         {result.emotion ? (
           <>
             <p className="vision-inspector-emotion-disclaimer">Estimate only — not clinical.</p>

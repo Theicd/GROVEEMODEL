@@ -198,7 +198,7 @@ export class GroveeVisionRunner {
     if (this.pipelinePausedForInference) return;
     this.pipelinePausedForInference = true;
     this.pipeline.setHeavyPaused(true);
-    this.callbacks.onCameraStatus?.("👁 Vision · ידיים/תנוחה פעילים (YOLO מושהה)");
+    this.callbacks.onCameraStatus?.("👁 Vision · ידיים/פנים/תנוחה פעילים (YOLO מושהה)");
   }
 
   /** Resume full vision stack after user chat finishes. */
@@ -435,7 +435,7 @@ export class GroveeVisionRunner {
 
     this.analyzing = true;
     this.pipeline.setHeavyPaused(true);
-    this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}… (face/hands still active)`);
+    this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}…`);
 
     try {
       const bytes = await captureVideoFrame(this.requireVideo(), GROVEE_VISION_LOOP_CONFIG.analysisMaxWidth);
