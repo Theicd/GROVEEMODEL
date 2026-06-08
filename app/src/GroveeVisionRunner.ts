@@ -98,7 +98,6 @@ export class GroveeVisionRunner {
   private uiFlushTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityBound = false;
   private pipelinePausedForInference = false;
-  private runningBeforePause = false;
   private lastUiEmit = 0;
 
   constructor(
@@ -189,7 +188,6 @@ export class GroveeVisionRunner {
   pauseForChatInference(): void {
     if (this.pipelinePausedForInference) return;
     this.pipelinePausedForInference = true;
-    this.runningBeforePause = this.uiFlushTimer !== null;
     if (this.uiFlushTimer) {
       clearInterval(this.uiFlushTimer);
       this.uiFlushTimer = null;

@@ -62,7 +62,6 @@ import {
 } from "./characterPrompts";
 import { buildProactiveSensorBlock, buildRichSensorBlock, poseFromWorld } from "./sensorBlock";
 import { buildFingerCountBlock } from "./visionBridge";
-import { pauseTfVision, resumeTfVision } from "./visionCoordination";
 import { formatFreshPersonBlock } from "./personFocus";
 import {
   attachStreamToVideo,
@@ -1114,7 +1113,6 @@ function App() {
       try {
         await attachStreamToVideo(video, cameraStream);
 
-        cameraLoopRef.current?.dispose();
         worldMemoryRef.current.reset();
         characterBrainRef.current.reset();
         chatTopicRef.current = null;
