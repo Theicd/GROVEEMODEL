@@ -6,7 +6,7 @@ import {
 } from '@mediapipe/tasks-vision';
 import type { DetectedObject } from '../core/types';
 import { LABEL_DISPLAY, TARGET_COCO_LABELS } from '../core/types';
-import { modelUrl, probeWebGpu } from '../utils/helpers';
+import { modelUrl } from '../utils/helpers';
 
 const COCO_LABELS = [
   'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
@@ -41,13 +41,13 @@ export class YoloDetector {
   private timestamp = 0;
 
   async init(onProgress?: (msg: string) => void): Promise<void> {
-    const hasWebGpu = await probeWebGpu();
-    this.backend = hasWebGpu ? 'webgpu' : 'wasm';
+    // Keep YOLO on WASM so ORT WebGPU stays free for Gemma (shared GPU / EP conflicts).
+    this.backend = 'wasm';
 
     try {
       onProgress?.('Loading YOLO11n ONNX...');
       ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/';
-      const providers = hasWebGpu ? ['webgpu', 'wasm'] : ['wasm'];
+      const providers = ['wasm'];
       let loaded = false;
 
       for (const relativePath of YOLO_MODEL_CANDIDATES) {

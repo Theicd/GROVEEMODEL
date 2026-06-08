@@ -24,9 +24,17 @@ export function createOffscreenCanvas(
   maxWidth = 640,
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
-  const ratio = source instanceof HTMLVideoElement
-    ? source.videoWidth / source.videoHeight
-    : source.width / source.height;
+  let srcW = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
+  let srcH = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
+  if (!srcW || !srcH) {
+    srcW = source instanceof HTMLVideoElement ? source.clientWidth : source.width;
+    srcH = source instanceof HTMLVideoElement ? source.clientHeight : source.height;
+  }
+  if (!srcW || !srcH) {
+    srcW = maxWidth;
+    srcH = Math.round(maxWidth * 0.75);
+  }
+  const ratio = srcW / srcH;
   canvas.width = maxWidth;
   canvas.height = Math.round(maxWidth / ratio);
   const ctx = canvas.getContext('2d')!;

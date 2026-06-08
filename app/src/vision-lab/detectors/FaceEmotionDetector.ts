@@ -1,7 +1,8 @@
-import * as faceapi from 'face-api.js';
 import type { DetectedFace, EmotionScores } from '../core/types';
 import { bboxIoU } from '../utils/geometry';
-import { modelUrl } from '../utils/helpers';
+import { createOffscreenCanvas, modelUrl } from '../utils/helpers';
+
+type FaceApiModule = typeof import('face-api.js');
 
 const EXPRESSION_MAP: Record<string, keyof Omit<EmotionScores, 'dominant' | 'dominantScore'>> = {
   happy: 'happy',
@@ -14,21 +15,58 @@ const EXPRESSION_MAP: Record<string, keyof Omit<EmotionScores, 'dominant' | 'dom
 };
 
 interface FaceExpressionDetection {
-  detection: faceapi.FaceDetection;
-  landmarks: faceapi.FaceLandmarks68;
+  detection: { box: { x: number; y: number; width: number; height: number } };
+  landmarks: {
+    getNose(): Array<{ x: number; y: number }>;
+    getLeftEye(): Array<{ x: number; y: number }>;
+    getRightEye(): Array<{ x: number; y: number }>;
+  };
   age?: number;
   gender?: string;
-  expressions?: faceapi.FaceExpressions;
+  expressions?: Record<string, number>;
 }
+
+let faceApiPromise: Promise<FaceApiModule> | null = null;
+
+const loadFaceApi = (): Promise<FaceApiModule> => {
+  if (!faceApiPromise) {
+    faceApiPromise = import('face-api.js');
+  }
+  return faceApiPromise;
+};
 
 export class FaceEmotionDetector {
   private loaded = false;
   private nextId = 1;
   private tracks = new Map<number, DetectedFace>();
+  private faceapi: FaceApiModule | null = null;
+
+  /** face-api.js ships TF 1.x — init before any @tensorflow/tfjs 4.x backend. */
+  private async ensureFaceTfBackend(faceapi: FaceApiModule): Promise<void> {
+    await faceapi.tf.ready();
+    if (faceapi.tf.getBackend()) return;
+    const preferCpu =
+      typeof navigator !== 'undefined' &&
+      (navigator.webdriver ||
+        !document.createElement('canvas').getContext('webgl'));
+    if (preferCpu) {
+      await faceapi.tf.setBackend('cpu');
+    } else {
+      try {
+        await faceapi.tf.setBackend('webgl');
+      } catch {
+        await faceapi.tf.setBackend('cpu');
+      }
+    }
+    await faceapi.tf.ready();
+  }
 
   async init(onProgress?: (msg: string) => void): Promise<void> {
     if (this.loaded) return;
     onProgress?.('Loading face & emotion models...');
+    const faceapi = await loadFaceApi();
+    this.faceapi = faceapi;
+    await this.ensureFaceTfBackend(faceapi);
     const base = modelUrl('models/face-api');
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(base),
@@ -48,17 +86,31 @@ export class FaceEmotionDetector {
       return { faces: [], emotion: null };
     }
 
-    const detections = (await faceapi
-      .detectAllFaces(source, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 }))
-      .withFaceLandmarks()
-      .withAgeAndGender()
-      .withFaceExpressions()) as FaceExpressionDetection[];
+    const faceapi = this.faceapi ?? (await loadFaceApi());
+    this.faceapi = faceapi;
 
-    const width = source.videoWidth || 1;
-    const height = source.videoHeight || 1;
-    if (width < 64 || height < 64) {
+    const vw = source.videoWidth || source.clientWidth || 640;
+    const vh = source.videoHeight || source.clientHeight || 480;
+    if (vw < 64 || vh < 64) {
       return { faces: [], emotion: null };
     }
+
+    const canvas = createOffscreenCanvas(source, 640);
+    const detectPromise = faceapi
+      .detectAllFaces(canvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+      .withFaceLandmarks()
+      .withAgeAndGender()
+      .withFaceExpressions();
+
+    const detections = (await Promise.race([
+      detectPromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Face detect timeout (30s)')), 30_000);
+      }),
+    ])) as FaceExpressionDetection[];
+
+    const width = canvas.width;
+    const height = canvas.height;
     const faces: DetectedFace[] = [];
 
     if (options.face) {
@@ -150,6 +202,7 @@ export class FaceEmotionDetector {
 
   dispose(): void {
     this.loaded = false;
+    this.faceapi = null;
     this.tracks.clear();
   }
 }

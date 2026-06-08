@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "qa:pages": "node --import tsx scripts/qa-pages.mjs",
-    "check-node": "node scripts/check-node.mjs"
+    "qa:vision": "node scripts/qa-vision-premium.mjs",
+    "check-node": "node scripts/check-node.mjs",
+    "postinstall": "node scripts/download-face-models.mjs",
+    "models:face": "node scripts/download-face-models.mjs"
   },
   "engines": {
     "node": ">=18.18.0"

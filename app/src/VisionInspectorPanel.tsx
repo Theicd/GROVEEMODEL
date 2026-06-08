@@ -3,6 +3,7 @@ import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
 import { clampInterval, intervalsFromMode } from "./vision-lab/core/schedule";
 import type { PerformanceMode } from "./vision-lab/core/types";
 import { VisionInspectorFeed } from "./VisionInspectorFeed";
+import { EmotionMeterPanel } from "./vision-dashboard/EmotionMeterPanel";
 import { VisionDashboard } from "./vision-dashboard/VisionDashboard";
 import type { WorldInspectorSnapshot } from "./worldMemory";
 
@@ -102,6 +103,17 @@ export function VisionInspectorPanel({
             <p className="vi-idle">הפעל מצלמה כדי לראות זיהוי חי</p>
           )}
         </div>
+
+        {showDetectionCards && (config.toggles.face || config.toggles.emotion) ? (
+          <div className="vi-emotion-strip">
+            <EmotionMeterPanel
+              emotion={result.emotion}
+              compact
+              statusMessage={result.faceModule.message}
+              faceCount={result.faces.length}
+            />
+          </div>
+        ) : null}
 
         {showDetectionCards ? (
           <div className="vi-cards">

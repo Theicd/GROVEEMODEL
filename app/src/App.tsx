@@ -77,6 +77,7 @@ import {
   type CharacterDecision,
   type SceneAnalysisResult,
 } from "./GroveeVisionRunner";
+import { mountGroveeVisionProbe } from "./visionQaProbe";
 import { CameraPreview } from "./CameraPreview";
 import { ModelActivityPanel } from "./ModelActivityPanel";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
@@ -152,6 +153,12 @@ type WorkerOutMessage =
 const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
+
+/** Dev-only: ?qa=vision skips Gemma gate for automated face/emotion QA. */
+const QA_VISION_MODE =
+  import.meta.env.DEV &&
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("qa") === "vision";
 
 /** Friendly product tips while Gemma downloads — explain what GROVEE is. */
 const LOADING_DOWNLOAD_TIPS = [
@@ -1120,6 +1127,7 @@ function App() {
     cameraBootingRef.current = false;
     cameraLoopRef.current?.dispose();
     cameraLoopRef.current = null;
+    mountGroveeVisionProbe(null);
     cameraStreamRef.current?.stop();
     cameraStreamRef.current = null;
     setCameraStream(null);
@@ -1141,7 +1149,7 @@ function App() {
       stopCameraMode();
       return;
     }
-    if (!isLoaded || isGenerating) return;
+    if ((!isLoaded && !QA_VISION_MODE) || isGenerating) return;
     setCameraError(null);
     const support = checkBrowserVisionSupport();
     if (!support.ok) {
@@ -1160,9 +1168,19 @@ function App() {
     }
   }, [cameraMode, isGenerating, isLoaded, stopCameraMode]);
 
+  useEffect(() => {
+    if (!QA_VISION_MODE || cameraModeRef.current) return;
+    void toggleCameraMode();
+  }, [toggleCameraMode]);
+
+  useEffect(() => {
+    if (!QA_VISION_MODE || !visionResult) return;
+    setVisionInspectorOpen(true);
+  }, [visionResult]);
+
   const startVisionPipeline = useCallback(
     async (video: HTMLVideoElement) => {
-      if (!cameraStream || !isLoaded || cameraBootingRef.current || cameraLoopRef.current) return;
+      if (!cameraStream || (!isLoaded && !QA_VISION_MODE) || cameraBootingRef.current || cameraLoopRef.current) return;
       cameraBootingRef.current = true;
       try {
         await attachStreamToVideo(video, cameraStream);
@@ -1211,7 +1229,8 @@ function App() {
               if (cameraLoopRef.current?.isDeepVisionDegraded()) return false;
               return true;
             },
-            useBootDeepSnapshot: () => appSettingsRef.current.vision.useBootDeepSnapshot,
+            useBootDeepSnapshot: () =>
+              QA_VISION_MODE ? false : appSettingsRef.current.vision.useBootDeepSnapshot,
             resolveUtterance: async (decision) => {
               const llm = await requestCharacterUtterance(decision);
               if (llm?.trim()) return { ...decision, message: llm.trim() };
@@ -1309,6 +1328,7 @@ function App() {
         );
         runner.bindVideo(video);
         cameraLoopRef.current = runner;
+        mountGroveeVisionProbe(runner);
         await runner.start();
         setCameraStatus("👁 Character · Vision Lab פעיל");
       } catch (err) {
@@ -1331,7 +1351,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (!cameraMode || !cameraStream || !isLoaded) return;
+    if (!cameraMode || !cameraStream || (!isLoaded && !QA_VISION_MODE)) return;
     const video = cameraVideoRef.current;
     if (!video || cameraLoopRef.current || cameraBootingRef.current) return;
     void startVisionPipeline(video);
@@ -1345,7 +1365,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (phase !== "ready" && cameraMode) stopCameraMode();
+    if (phase !== "ready" && cameraMode && !QA_VISION_MODE) stopCameraMode();
   }, [phase, cameraMode, stopCameraMode]);
 
   useEffect(() => {
@@ -2206,6 +2226,26 @@ function App() {
         onClear={() => setActivityLog([])}
       />
 
+      {QA_VISION_MODE ? (
+        <video
+          ref={cameraVideoRef}
+          className="qa-vision-video"
+          playsInline
+          muted
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            width: 640,
+            height: 480,
+            top: 0,
+            left: 0,
+            opacity: 0.02,
+            pointerEvents: "none",
+            zIndex: 1,
+          }}
+        />
+      ) : null}
+
       <VisionInspectorPanel
         open={visionInspectorOpen}
         onClose={() => setVisionInspectorOpen(false)}
@@ -2559,7 +2599,7 @@ function App() {
                   type="checkbox"
                   checked={cameraMode}
                   onChange={() => void toggleCameraMode()}
-                  disabled={isGenerating || !isLoaded}
+                  disabled={isGenerating || (!isLoaded && !QA_VISION_MODE)}
                 />
                 <span>🎥 Camera</span>
               </label>

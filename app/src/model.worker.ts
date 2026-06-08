@@ -132,8 +132,16 @@ const isWorkerBusy = () => chatBusy || sceneBusy;
 
 const isWebGpuRuntimeError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err);
-  return /webgpu|OrtRun|GPUBuffer|mapAsync|Device.*is lost|device is lost|external Instance/i.test(msg);
+  return (
+    /webgpu|OrtRun|GPUBuffer|mapAsync|Device.*is lost|device is lost|external Instance/i.test(msg) ||
+    /GatherBlockQuantized|Can't create a session|ERROR_CODE:\s*9|Could not find an implementation/i.test(
+      msg,
+    )
+  );
 };
+
+/** Remember GPUs that advertise WebGPU but lack quantized ONNX ops (e.g. GatherBlockQuantized). */
+let webGpuOnnxBlocked = false;
 
 const ensureChatSlot = async (modelId: string): Promise<{ model: Gemma4Model; processor: Gemma4Processor }> => {
   if (!chatSlot.model || !chatSlot.processor || chatSlot.modelId !== modelId) {
@@ -177,6 +185,7 @@ const runSceneGenerateWithFallback = async (
 
 const forceReloadWasm = async (modelId: string): Promise<CachedModel> => {
   modelCache.delete(modelId);
+  webGpuOnnxBlocked = true;
   inferenceBackend = "wasm";
   return loadMultimodalModel(modelId, "q4");
 };
@@ -193,6 +202,7 @@ let webGpuAdapterProbe: boolean | null = null;
 
 const resetWebGpuProbe = () => {
   webGpuAdapterProbe = null;
+  webGpuOnnxBlocked = false;
 };
 
 const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
@@ -254,6 +264,13 @@ const formatHubLoadError = (err: unknown): string => {
       ? " Try Settings → HF mirror (e.g. https://hf-mirror.com), Clear cache, Start again."
       : " Official hub and/or your mirror may be blocked — try VPN, another network, or a different mirror.";
     return `${raw} — Cannot reach the model host (firewall, ISP, block, or offline).${mirrorHint}`;
+  }
+  if (
+    lower.includes("gatherblockquantized") ||
+    lower.includes("could not find an implementation") ||
+    lower.includes("can't create a session")
+  ) {
+    return `${raw} — WebGPU on this GPU cannot run the quantized Gemma model. Settings → Inference → WASM, then Clear cache → Start again.`;
   }
   return raw;
 };
@@ -471,11 +488,40 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
 
   const cached = modelCache.get(modelId);
   if (cached) {
-    if (pref === "auto") return cached;
-    if (pref === "webgpu" && cached.device === "webgpu") return cached;
-    if (pref === "wasm" && cached.device === "wasm") return cached;
-    modelCache.delete(modelId);
+    if (cached.device === "webgpu" && webGpuOnnxBlocked) {
+      modelCache.delete(modelId);
+    } else if (pref === "auto") {
+      return cached;
+    } else if (pref === "webgpu" && cached.device === "webgpu") {
+      return cached;
+    } else if (pref === "wasm" && cached.device === "wasm") {
+      return cached;
+    } else {
+      modelCache.delete(modelId);
+    }
   }
+
+  const tryWebGpuWithFallback = async (): Promise<CachedModel> => {
+    if (webGpuOnnxBlocked) {
+      post({
+        type: "status",
+        text: `WebGPU lacks required ONNX ops on this GPU — loading ${modelId} on WASM (CPU).`,
+      });
+      return await tryWasm();
+    }
+    try {
+      return await tryWebGpu();
+    } catch (err) {
+      if (!isWebGpuRuntimeError(err)) throw err;
+      webGpuOnnxBlocked = true;
+      modelCache.delete(modelId);
+      post({
+        type: "status",
+        text: `WebGPU error — using WASM (CPU) for ${modelId}.`,
+      });
+      return await tryWasm();
+    }
+  };
 
   if (pref === "wasm") {
     post({
@@ -488,12 +534,7 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   if (pref === "webgpu") {
     if (await hasRunnableWebGpuAdapter()) {
       post({ type: "status", text: `Loading ${modelId} on WebGPU…` });
-      try {
-        return await tryWebGpu();
-      } catch {
-        post({ type: "status", text: `WebGPU error — using WASM (CPU) for ${modelId}.` });
-        return await tryWasm();
-      }
+      return await tryWebGpuWithFallback();
     }
     post({
       type: "status",
@@ -503,12 +544,7 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   }
 
   if (await hasRunnableWebGpuAdapter()) {
-    try {
-      return await tryWebGpu();
-    } catch {
-      post({ type: "status", text: `WebGPU error — using WASM (CPU) for ${modelId}.` });
-      return await tryWasm();
-    }
+    return await tryWebGpuWithFallback();
   }
 
   post({ type: "status", text: `No WebGPU adapter — loading ${modelId} on WASM (CPU).` });

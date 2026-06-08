@@ -1,4 +1,5 @@
 import type { VisionResult } from "../vision-lab/core/types";
+import { EmotionMeterPanel } from "./EmotionMeterPanel";
 import { VisionCard } from "./VisionCard";
 
 function Row({ label, value, className }: { label: string; value: string; className?: string }) {
@@ -92,10 +93,15 @@ export function VisionDashboard({ result, compact = false }: { result: VisionRes
         ))}
       </VisionCard>
 
-      <VisionCard title="Face" empty={result.faces.length === 0 && result.faceModule.status === "disabled"}>
-        <div className="vision-dash-hand-title">
-          {result.faces.length ? `Count: ${result.faces.length}` : result.faceModule.message}
-        </div>
+      <VisionCard
+        title="Face"
+        empty={result.faces.length === 0 && result.faceModule.status === "disabled"}
+      >
+        {result.faces.length === 0 ? (
+          <p className="vision-dash-empty">{result.faceModule.message}</p>
+        ) : (
+          <div className="vision-dash-hand-title">Count: {result.faces.length}</div>
+        )}
         {result.faces.map((face) => (
           <div key={face.id} className="vision-dash-face-block">
             <div>Face #{face.id}</div>
@@ -106,20 +112,27 @@ export function VisionDashboard({ result, compact = false }: { result: VisionRes
         ))}
       </VisionCard>
 
-      <VisionCard title="Emotion" empty={!result.emotion && result.faceModule.status === "disabled"}>
-        {!result.emotion && result.faceModule.status !== "disabled" ? (
-          <p className="vision-dash-empty">{result.faceModule.message}</p>
-        ) : null}
-        {result.emotion ? (
-          <>
-            <p className="vision-inspector-emotion-disclaimer">Estimate only — not clinical.</p>
+      <VisionCard
+        title="Emotion"
+        empty={!result.emotion && result.faceModule.status === "disabled"}
+      >
+        {compact ? (
+          result.emotion ? (
             <Row
               label={result.emotion.dominant}
               value={`${Math.round(result.emotion.dominantScore * 100)}%`}
               className="vision-dash-value emotion"
             />
-          </>
-        ) : null}
+          ) : (
+            <p className="vision-dash-empty">{result.faceModule.message}</p>
+          )
+        ) : (
+          <EmotionMeterPanel
+            emotion={result.emotion}
+            statusMessage={result.faceModule.message}
+            faceCount={result.faces.length}
+          />
+        )}
       </VisionCard>
 
       <VisionCard title="Environment" empty={result.environment === "Unknown"}>

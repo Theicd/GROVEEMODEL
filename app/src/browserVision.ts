@@ -1,10 +1,9 @@
 /**
  * Browser-only vision stack helpers (GitHub Pages / static hosting).
  * No Node APIs — canvas, WebGL/WASM TF.js, getUserMedia, Web Workers only.
+ *
+ * TF.js 4.x is loaded lazily — face-api.js bundles TF 1.x and must init first.
  */
-
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-backend-webgl";
 
 export type BrowserVisionSupport = {
   ok: boolean;
@@ -85,12 +84,14 @@ export const checkBrowserVisionSupport = (): BrowserVisionSupport => {
   return { ok: true, secureContext, mediaDevices, worker, canvas, webgl };
 };
 
-/** Init TF.js for COCO-SSD — CPU when camera+Gemma share the machine (avoids WebGL/WebGPU fights). */
+/** Init TF.js 4.x for legacy COCO/MoveNet — never import at module top (face-api conflict). */
 export const ensureTfBackend = async (preferCpu = false): Promise<string> => {
   if (tfBackendPromise && !preferCpu) return tfBackendPromise;
   if (preferCpu) tfBackendPromise = null;
 
   tfBackendPromise = (async () => {
+    const tf = await import("@tensorflow/tfjs");
+    await import("@tensorflow/tfjs-backend-webgl");
     await tf.ready();
     if (preferCpu) {
       await tf.setBackend("cpu");

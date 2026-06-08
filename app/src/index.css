@@ -2727,6 +2727,125 @@ button:disabled {
   overflow: hidden;
 }
 
+.vi-emotion-strip {
+  flex-shrink: 0;
+  padding: 6px 10px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(8, 12, 20, 0.85);
+}
+
+.emotion-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.emotion-meter--compact {
+  gap: 4px;
+}
+
+.emotion-meter--idle {
+  min-height: 2rem;
+}
+
+.emotion-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.emotion-meter-dominant {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: #34d399;
+}
+
+.emotion-meter--compact .emotion-meter-dominant {
+  font-size: 0.72rem;
+}
+
+.emotion-meter-meta {
+  font-size: 0.62rem;
+  color: #64748b;
+}
+
+.emotion-meter-disclaimer {
+  margin: 0;
+  font-size: 0.58rem;
+  color: #64748b;
+}
+
+.emotion-meter--compact .emotion-meter-disclaimer {
+  display: none;
+}
+
+.emotion-meter-status {
+  margin: 0;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.emotion-meter-bars {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 10px;
+}
+
+.emotion-meter--compact .emotion-meter-bars {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 2px 6px;
+}
+
+.emotion-meter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.emotion-meter-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.58rem;
+  text-transform: capitalize;
+  color: #94a3b8;
+}
+
+.emotion-meter--compact .emotion-meter-labels {
+  font-size: 0.5rem;
+}
+
+.emotion-meter-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emotion-meter-pct {
+  color: #cbd5e1;
+  flex-shrink: 0;
+}
+
+.emotion-meter-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #1e293b;
+}
+
+.emotion-meter--compact .emotion-meter-track {
+  height: 4px;
+}
+
+.emotion-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #059669, #34d399);
+  transition: width 0.15s ease-out;
+}
+
 .vi-toolbar {
   flex-shrink: 0;
   display: flex;

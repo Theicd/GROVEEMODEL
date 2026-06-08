@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { deepVisionBackoffMs, detectVisionBudget } from "./visionBudget";
 
 describe("visionBudget", () => {
-  it("detectVisionBudget returns a profile with tier", () => {
+  it("detectVisionBudget always returns normal tier (no hardware gating)", () => {
     const p = detectVisionBudget();
-    expect(["low", "normal"]).toContain(p.tier);
+    expect(p.tier).toBe("normal");
     expect(p.pollIntervalMs).toBeGreaterThan(0);
   });
 

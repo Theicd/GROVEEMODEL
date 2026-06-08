@@ -1,6 +1,5 @@
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
-import { intervalsFromMode } from "./vision-lab/core/schedule";
-import type { ModelToggles, PerformanceMode } from "./vision-lab/core/types";
+import type { ModelToggles } from "./vision-lab/core/types";
 
 const MODULE_LABELS: Record<keyof ModelToggles, string> = {
   yolo: "YOLO",
@@ -32,30 +31,13 @@ export function CameraVisionHud({
     onConfigChange({ toggles: { ...config.toggles, [key]: !config.toggles[key] } });
   };
 
-  const setMode = (mode: PerformanceMode) => {
-    onConfigChange?.({
-      performanceMode: mode,
-      sampleIntervals: intervalsFromMode(mode),
-    });
-  };
-
   return (
     <div className="camera-vision-hud" dir="ltr">
       <div className="camera-vision-hud-top">
         <span className="camera-vision-fps">
-          {paused ? "⏸ paused" : `${result.fps} FPS`}
+          {paused ? "⏸ chat typing" : `${result.fps} FPS`}
         </span>
         <span className="camera-vision-backend">{result.backend}</span>
-        <select
-          className="camera-vision-mode"
-          value={config.performanceMode}
-          onChange={(e) => setMode(e.target.value as PerformanceMode)}
-          title="Performance preset (intervals)"
-        >
-          <option value="lite">lite</option>
-          <option value="balanced">balanced</option>
-          <option value="full">full</option>
-        </select>
       </div>
 
       {progress ? <p className="camera-vision-progress">{progress}</p> : null}
@@ -107,6 +89,22 @@ export function CameraVisionHud({
               {a.name}
             </span>
           ))}
+        </div>
+      ) : null}
+
+      {config.toggles.face || config.toggles.emotion ? (
+        <div className="camera-vision-objects">
+          <span
+            className={`camera-vision-chip camera-vision-chip--face face-module--${result.faceModule.status}`}
+            title={result.faceModule.message}
+          >
+            Face: {result.faces.length || "—"} · {result.faceModule.status}
+          </span>
+          {result.emotion ? (
+            <span className="camera-vision-chip camera-vision-chip--emotion">
+              {result.emotion.dominant} {Math.round(result.emotion.dominantScore * 100)}%
+            </span>
+          ) : null}
         </div>
       ) : null}
 

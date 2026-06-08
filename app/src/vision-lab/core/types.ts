@@ -106,6 +106,24 @@ export type EnvironmentType =
   | 'Vehicle'
   | 'Unknown';
 
+export type FaceModuleStatus = 'idle' | 'loading' | 'ready' | 'error' | 'scanning' | 'disabled';
+
+export interface FaceModuleDiagnostics {
+  status: FaceModuleStatus;
+  message: string;
+  lastScanAt: number;
+  lastFaceCount: number;
+  modelSource: 'local' | 'cdn' | 'none';
+}
+
+export const DEFAULT_FACE_MODULE: FaceModuleDiagnostics = {
+  status: 'idle',
+  message: 'Face module not started',
+  lastScanAt: 0,
+  lastFaceCount: 0,
+  modelSource: 'none',
+};
+
 export interface VisionResult {
   objects: DetectedObject[];
   poseLandmarks: PoseLandmark[];
@@ -116,6 +134,7 @@ export interface VisionResult {
   motionGestures: MotionGesture[];
   faces: DetectedFace[];
   emotion: EmotionScores | null;
+  faceModule: FaceModuleDiagnostics;
   interactions: Interaction[];
   events: DetectedEvent[];
   bodyLanguage: BodyLanguageCue[];

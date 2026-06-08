@@ -25,4 +25,10 @@ if (maj === 20 && min < 19) {
   );
 }
 
+if (maj === 21) {
+  console.warn(
+    "[GROVEE] Node 21.x shows EBADENGINE warnings from ESLint 10 — install works; prefer Node 22 LTS for CI.",
+  );
+}
+
 process.exit(0);

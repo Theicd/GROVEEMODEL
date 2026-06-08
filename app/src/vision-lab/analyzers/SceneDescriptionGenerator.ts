@@ -1,6 +1,8 @@
 import type {
   DetectedEvent,
+  DetectedFace,
   DetectedObject,
+  FaceModuleDiagnostics,
   Interaction,
   MotionGesture,
   PoseAction,
@@ -16,7 +18,9 @@ export function buildRuleBasedDescription(params: {
   interactions: Interaction[];
   events: DetectedEvent[];
   environment: string;
+  faces?: DetectedFace[];
   emotionDominant?: string;
+  faceModule?: FaceModuleDiagnostics;
   bodyLanguage?: BodyLanguageCue[];
 }): string {
   const sentences: string[] = [];
@@ -62,8 +66,28 @@ export function buildRuleBasedDescription(params: {
     sentences.push(`Environment appears to be an ${environment.toLowerCase()}.`);
   }
 
+  const faces = params.faces ?? [];
+  const faceModule = params.faceModule;
+
+  if (faces.length === 1) {
+    const f = faces[0];
+    sentences.push(
+      `One face detected (age est. ${f.estimatedAge}, gaze ${f.gazeDirection.toLowerCase()}).`,
+    );
+  } else if (faces.length > 1) {
+    sentences.push(`${faces.length} faces detected.`);
+  } else if (faceModule?.status === 'scanning' || faceModule?.status === 'ready') {
+    sentences.push('Face scanner active — no face in frame.');
+  } else if (faceModule?.status === 'loading') {
+    sentences.push('Loading face & emotion models…');
+  } else if (faceModule?.status === 'error') {
+    sentences.push(`Face module error: ${faceModule.message}`);
+  }
+
   if (emotionDominant) {
     sentences.push(`Estimated emotion: ${emotionDominant}.`);
+  } else if (faces.length && faceModule && faceModule.status !== 'error') {
+    sentences.push('Face visible; emotion estimate pending.');
   }
 
   for (const cue of (params.bodyLanguage ?? []).slice(0, 3)) {

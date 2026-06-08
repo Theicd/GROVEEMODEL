@@ -99,7 +99,6 @@ export class GroveeVisionRunner {
   private uiFlushTimer: ReturnType<typeof setInterval> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityBound = false;
-  private pipelinePausedForInference = false;
   private lastUiEmit = 0;
 
   constructor(
@@ -191,21 +190,14 @@ export class GroveeVisionRunner {
   }
 
   /**
-   * During user chat: pause only heavy vision (YOLO/face/VLM).
-   * Hands + pose + world sync keep running continuously.
+   * Legacy hook — vision models are never auto-paused (user toggles only).
    */
   pauseForChatInference(): void {
-    if (this.pipelinePausedForInference) return;
-    this.pipelinePausedForInference = true;
-    this.pipeline.setHeavyPaused(true);
-    this.callbacks.onCameraStatus?.("👁 Vision · ידיים/פנים/תנוחה פעילים (YOLO מושהה)");
+    this.callbacks.onCameraStatus?.("👁 Character · צופה (כל המודלים פעילים)");
   }
 
-  /** Resume full vision stack after user chat finishes. */
+  /** Legacy hook — no-op; models stay running. */
   resumeAfterChatInference(): void {
-    if (!this.pipelinePausedForInference) return;
-    this.pipelinePausedForInference = false;
-    this.pipeline.setHeavyPaused(false);
     const video = this.video;
     if (video && video.readyState >= 2) {
       const last = this.pipeline.getLastFrameAt();
@@ -224,7 +216,7 @@ export class GroveeVisionRunner {
   }
 
   private watchdogPipeline(): void {
-    if (!this.video || this.pipelinePausedForInference) return;
+    if (!this.video) return;
     const last = this.pipeline.getLastFrameAt();
     if (!last) return;
     const staleMs = Date.now() - last;
@@ -239,7 +231,7 @@ export class GroveeVisionRunner {
   }
 
   isPipelinePaused(): boolean {
-    return this.pipelinePausedForInference;
+    return false;
   }
 
   holdForChat(ms = GROVEE_VISION_LOOP_CONFIG.chatHoldMs): void {
@@ -262,6 +254,10 @@ export class GroveeVisionRunner {
     return this.deepVisionDegraded;
   }
 
+  isDeepBaselineDone(): boolean {
+    return this.deepBaselineDone;
+  }
+
   async captureFreshSnapshot(): Promise<ArrayBuffer> {
     return captureVideoFrame(this.requireVideo(), GROVEE_VISION_LOOP_CONFIG.analysisMaxWidth);
   }
@@ -270,7 +266,7 @@ export class GroveeVisionRunner {
     const result = this.getLatestResult();
     const video = this.video;
     if (!result || !video || video.readyState < 2) return null;
-    if (this.callbacks.isWorkerBusy() || isTfVisionPaused()) return null;
+    if (isTfVisionPaused()) return null;
 
     const hasPerson = result.objects.some((o) => o.label === "person" && o.confidence >= 0.45);
     if (!hasPerson) {
@@ -302,13 +298,14 @@ export class GroveeVisionRunner {
   }
 
   private onVisibility = (): void => {
-    if (document.hidden) {
-      this.pipeline.stop();
-      return;
-    }
+    // Keep all vision models running when tab is hidden — no auto-stop.
+    if (document.hidden) return;
     const video = this.video;
-    if (!this.pipelinePausedForInference && video && video.readyState >= 2) {
-      this.pipeline.start(video);
+    if (video && video.readyState >= 2) {
+      const last = this.pipeline.getLastFrameAt();
+      if (!last || Date.now() - last > 3000) {
+        this.pipeline.start(video);
+      }
     }
   };
 
@@ -385,8 +382,8 @@ export class GroveeVisionRunner {
 
   private maybeDeepVision(significantChange: boolean): void {
     if (!this.budget.useLlmDeepVision || this.deepVisionDegraded) return;
-    if (Date.now() < this.deepVisionBackoffUntil || Date.now() < this.holdUntil) return;
-    if (this.analyzing || this.callbacks.isWorkerBusy() || isTfVisionPaused()) return;
+    if (Date.now() < this.deepVisionBackoffUntil) return;
+    if (this.analyzing || isTfVisionPaused()) return;
 
     const timing = mergeCameraLoopTiming(
       {
@@ -427,15 +424,14 @@ export class GroveeVisionRunner {
   }
 
   private async runDeepVision(reason: string): Promise<void> {
-    if (this.analyzing || this.callbacks.isWorkerBusy() || Date.now() < this.holdUntil) return;
+    if (this.analyzing) return;
     if (!this.budget.useLlmDeepVision) {
       this.finishSensorOnlyBaseline(this.getLatestResult());
       return;
     }
 
     this.analyzing = true;
-    this.pipeline.setHeavyPaused(true);
-    this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}…`);
+    this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}… (YOLO + face keep running)`);
 
     try {
       const bytes = await captureVideoFrame(this.requireVideo(), GROVEE_VISION_LOOP_CONFIG.analysisMaxWidth);
@@ -475,9 +471,6 @@ export class GroveeVisionRunner {
       this.callbacks.onCameraStatus?.("👁 Character · שגיאה");
     } finally {
       this.analyzing = false;
-      if (!this.pipelinePausedForInference) {
-        this.pipeline.setHeavyPaused(false);
-      }
     }
   }
 

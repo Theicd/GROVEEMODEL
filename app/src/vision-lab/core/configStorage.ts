@@ -53,8 +53,8 @@ export function ensureVisionLabConfig(
       pose: true,
       hands: true,
       vlm: false,
-      face: tier === 'low' ? false : config.toggles.face !== false,
-      emotion: tier === 'low' ? false : config.toggles.emotion !== false,
+      face: config.toggles.face !== false,
+      emotion: config.toggles.emotion !== false,
     },
     sampleIntervals: {
       ...intervals,

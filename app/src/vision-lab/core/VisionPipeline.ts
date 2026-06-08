@@ -89,8 +89,6 @@ export class VisionPipeline {
   private onUpdate: ((result: VisionResult) => void) | null = null;
   private onProgress: ((msg: string) => void) | null = null;
   private initialized = false;
-  /** Pause YOLO/VLM only — hands, pose, face, emotion keep running (chat / Gemma). */
-  private heavyPaused = false;
   private yoloBusy = false;
   private faceBusy = false;
   private faceModule: FaceModuleDiagnostics = { ...DEFAULT_FACE_MODULE };
@@ -128,14 +126,6 @@ export class VisionPipeline {
     return this.lastPublishAt;
   }
 
-  setHeavyPaused(paused: boolean): void {
-    this.heavyPaused = paused;
-  }
-
-  isHeavyPaused(): boolean {
-    return this.heavyPaused;
-  }
-
   setOnUpdate(cb: (result: VisionResult) => void): void {
     this.onUpdate = cb;
   }
@@ -149,9 +139,6 @@ export class VisionPipeline {
     const progress = (msg: string) => this.onProgress?.(msg);
     const { toggles } = this.config;
 
-    if (toggles.yolo) await this.yolo.init(progress);
-    if (toggles.pose) await this.pose.init(progress);
-    if (toggles.hands) await this.hands.init(progress);
     if (toggles.face || toggles.emotion) {
       this.faceModule = {
         status: 'loading',
@@ -160,14 +147,25 @@ export class VisionPipeline {
         lastFaceCount: 0,
         modelSource: 'local',
       };
-      await this.faceEmotion.init(progress);
-      this.faceModule = {
-        status: 'ready',
-        message: 'Face & emotion models ready — scanning',
-        lastScanAt: 0,
-        lastFaceCount: 0,
-        modelSource: 'local',
-      };
+      try {
+        await this.faceEmotion.init(progress);
+        this.faceModule = {
+          status: 'ready',
+          message: 'Face & emotion models ready — scanning',
+          lastScanAt: 0,
+          lastFaceCount: 0,
+          modelSource: 'local',
+        };
+      } catch (err) {
+        console.warn('[VisionPipeline] face/emotion init failed', err);
+        this.faceModule = {
+          status: 'error',
+          message: err instanceof Error ? err.message : 'Face model load failed',
+          lastScanAt: 0,
+          lastFaceCount: 0,
+          modelSource: 'local',
+        };
+      }
     } else {
       this.faceModule = {
         status: 'disabled',
@@ -177,6 +175,10 @@ export class VisionPipeline {
         modelSource: 'none',
       };
     }
+
+    if (toggles.yolo) await this.yolo.init(progress);
+    if (toggles.pose) await this.pose.init(progress);
+    if (toggles.hands) await this.hands.init(progress);
     if (toggles.vlm) {
       void this.vlm.init(progress).catch(() => progress('VLM model unavailable'));
     }
@@ -281,8 +283,8 @@ export class VisionPipeline {
       }
     }
 
-    // YOLO / VLM — separate lane, paused during chat / deep Gemma.
-    if (!this.heavyPaused && !this.yoloBusy) {
+    // YOLO / VLM — never auto-paused; user toggles only.
+    if (!this.yoloBusy) {
       if (toggles.yolo && isModuleDue(now, this.pipelineStart, this.lastModuleRun.yolo, schedule.yolo)) {
         void this.runYoloModule(video);
       } else if (
@@ -308,17 +310,17 @@ export class VisionPipeline {
     };
     try {
       const result = await this.faceEmotion.detect(video, {
-        face: toggles.face && updateFace,
-        emotion: toggles.emotion && updateEmotion,
+        face: toggles.face,
+        emotion: toggles.emotion,
       });
       const ts = performance.now();
-      if (updateFace && toggles.face) {
+      if (toggles.face) {
         this.layers.faces = result.faces;
-        this.lastModuleRun.face = ts;
+        if (updateFace) this.lastModuleRun.face = ts;
       }
-      if (updateEmotion && toggles.emotion) {
+      if (toggles.emotion) {
         this.layers.emotion = result.emotion;
-        this.lastModuleRun.emotion = ts;
+        if (updateEmotion) this.lastModuleRun.emotion = ts;
       }
       const count = result.faces.length;
       this.faceModule = {

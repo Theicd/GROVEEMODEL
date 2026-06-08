@@ -1,4 +1,10 @@
 declare module 'face-api.js' {
+  export const tf: {
+    ready(): Promise<void>;
+    getBackend(): string;
+    setBackend(name: string): Promise<boolean>;
+  };
+
   export interface FaceDetection {
     box: { x: number; y: number; width: number; height: number };
   }
@@ -38,14 +44,17 @@ declare module 'face-api.js' {
     faceExpressionNet: { loadFromUri(uri: string): Promise<void> };
   };
 
-  export function detectAllFaces(
-    input: HTMLVideoElement,
-    options: TinyFaceDetectorOptions,
-  ): {
+  export type FaceDetectTask = {
     withFaceLandmarks(): {
       withAgeAndGender(): {
         withFaceExpressions(): Promise<Array<WithAgeGender<unknown> & WithExpressions<unknown>>>;
       };
+      withFaceExpressions(): Promise<Array<WithAgeGender<unknown> & WithExpressions<unknown>>>;
     };
   };
+
+  export function detectAllFaces(
+    input: HTMLVideoElement | HTMLCanvasElement,
+    options: TinyFaceDetectorOptions,
+  ): FaceDetectTask & Promise<FaceDetection[]>;
 }

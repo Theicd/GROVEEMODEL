@@ -2,6 +2,19 @@
 
 Run after `npm run dev` or on the deployed site. Gemma 4 must finish downloading first.
 
+## Automated QA
+
+```bash
+npm run dev
+# other terminal:
+npm run qa:vision
+# or with custom port:
+QA_VISION_URL=http://localhost:5174 npm run qa:vision
+```
+
+Uses `?qa=vision` dev mode + face sample in `public/qa/face-sample.jpg`.  
+Results: `tests/qa-vision-premium-results.json`
+
 ## Chat & model
 
 | # | Goal | Try (paste) | Expect |
