@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { getFingerState } from "./vision-lab/analyzers/GestureRecognizer";
 import type { VisionResult } from "./vision-lab/core/types";
 import { HAND_CONNECTIONS, POSE_CONNECTIONS } from "./vision-lab/core/types";
 
@@ -49,8 +50,8 @@ export function VisionInspectorFeed({
         ctx.lineWidth = 2;
         ctx.strokeRect(x, y, w, h);
         ctx.fillStyle = color;
-        ctx.font = "14px monospace";
-        ctx.fillText(`${obj.displayLabel} ${Math.round(obj.confidence * 100)}%`, x, y - 4);
+        ctx.font = "12px monospace";
+        ctx.fillText(`${obj.displayLabel} ${Math.round(obj.confidence * 100)}%`, x, Math.max(12, y - 2));
       }
 
       if (r.poseLandmarks.length) {
@@ -65,9 +66,16 @@ export function VisionInspectorFeed({
           ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
           ctx.stroke();
         }
+        for (const lm of r.poseLandmarks) {
+          ctx.fillStyle = "#6ee7b7";
+          ctx.beginPath();
+          ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
       for (const hand of r.hands) {
+        const { count } = getFingerState(hand);
         ctx.strokeStyle = "#a78bfa";
         ctx.lineWidth = 2;
         for (const [a, b] of HAND_CONNECTIONS) {
@@ -78,6 +86,35 @@ export function VisionInspectorFeed({
           ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
           ctx.stroke();
         }
+        for (const lm of hand.landmarks) {
+          ctx.fillStyle = "#c4b5fd";
+          ctx.beginPath();
+          ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        const wrist = hand.landmarks[0];
+        if (wrist) {
+          ctx.fillStyle = "#e9d5ff";
+          ctx.font = "bold 11px monospace";
+          ctx.fillText(
+            `${hand.handedness} · ${count}f`,
+            wrist.x * canvas.width,
+            Math.max(11, wrist.y * canvas.height - 6),
+          );
+        }
+      }
+
+      for (const face of r.faces) {
+        const x = face.bbox.x * canvas.width;
+        const y = face.bbox.y * canvas.height;
+        const w = face.bbox.width * canvas.width;
+        const h = face.bbox.height * canvas.height;
+        ctx.strokeStyle = "#fbbf24";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = "#fbbf24";
+        ctx.font = "10px monospace";
+        ctx.fillText(`Face #${face.id}`, x, Math.max(10, y - 2));
       }
 
       raf = requestAnimationFrame(draw);
@@ -87,5 +124,5 @@ export function VisionInspectorFeed({
     return () => cancelAnimationFrame(raf);
   }, [videoRef]);
 
-  return <canvas ref={canvasRef} className="vision-inspector-canvas" aria-label="Live vision feed" />;
+  return <canvas ref={canvasRef} className="vi-canvas" aria-label="Live vision feed" />;
 }

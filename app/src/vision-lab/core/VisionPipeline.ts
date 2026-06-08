@@ -185,13 +185,25 @@ export class VisionPipeline {
       this.lastModuleRun.pose = now;
     }
 
-    const faceDue = toggles.face
-      && getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.face, schedule.face) > 0;
-    const emotionDue = toggles.emotion
-      && getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.emotion, schedule.emotion) > 0;
+    const faceOverdue = toggles.face
+      ? getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.face, schedule.face)
+      : 0;
+    const emotionOverdue = toggles.emotion
+      ? getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.emotion, schedule.emotion)
+      : 0;
+    const faceDue = faceOverdue > 0;
+    const emotionDue = emotionOverdue > 0;
 
     // Heavy modules — at most one async inference per frame to spread CPU/GPU load.
-    const heavy = pickHeavyModule(now, this.pipelineStart, this.lastModuleRun, schedule, toggles);
+    let heavy = pickHeavyModule(now, this.pipelineStart, this.lastModuleRun, schedule, toggles);
+
+    const faceStarved =
+      (faceDue || emotionDue)
+      && Math.max(faceOverdue, emotionOverdue)
+        > Math.min(schedule.face.intervalMs, schedule.emotion.intervalMs) * 1.15;
+    if (heavy === 'yolo' && faceStarved) {
+      heavy = 'faceEmotion';
+    }
 
     if (heavy === 'yolo') {
       objects = await this.yolo.detect(video);

@@ -2656,6 +2656,155 @@ button:disabled {
   margin-top: 8px;
 }
 
+/* Vision Inspector — redesigned single-page layout */
+.vi-panel {
+  background: #0d111c;
+  border: 1px solid #2a3348;
+  border-radius: 12px;
+  width: min(1180px, 96vw);
+  max-width: 96vw;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.vi-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid #2a3348;
+  flex-shrink: 0;
+}
+
+.vi-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.vi-sub {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  color: #888;
+}
+
+.vi-video {
+  flex-shrink: 0;
+  height: min(34vh, 280px);
+  min-height: 180px;
+  background: #000;
+  border-bottom: 1px solid #2a3348;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.vi-video.mirror {
+  transform: scaleX(-1);
+}
+
+.vi-canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.vi-idle {
+  color: #888;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.vi-cards {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+}
+
+.vi-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 8px 10px;
+  border-top: 1px solid #2a3348;
+  background: #0a0e17;
+  font-size: 0.68rem;
+}
+
+.vi-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.vi-toolbar-label {
+  color: #5eead4;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-inline-end: 2px;
+}
+
+.vi-chip {
+  border: 1px solid #2a3348;
+  background: #121826;
+  color: #9aa8c4;
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+  font-size: 0.65rem;
+  text-transform: capitalize;
+}
+
+.vi-chip.active {
+  border-color: #0d9488;
+  color: #5eead4;
+  background: #042f2e;
+}
+
+.vi-toolbar-intervals {
+  margin-inline-start: auto;
+}
+
+.vi-interval {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #888;
+}
+
+.vi-interval input {
+  width: 44px;
+  background: #0a0e17;
+  border: 1px solid #2a3348;
+  color: #e2e8f0;
+  border-radius: 3px;
+  padding: 1px 3px;
+  font-size: 0.65rem;
+}
+
+.vi-memory {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 6px 10px;
+  border-top: 1px solid #2a3348;
+  font-family: ui-monospace, monospace;
+  font-size: 0.62rem;
+  color: #9eb4d4;
+  background: #080c14;
+}
+
 /* Vision Inspector — detection cards grid */
 .vision-inspector-panel--wide.modal-box {
   max-width: min(1320px, 98vw);
@@ -2684,6 +2833,53 @@ button:disabled {
   gap: 6px;
   height: 100%;
   max-height: calc(94vh - 280px);
+}
+
+.vision-dash-grid--compact {
+  gap: 4px;
+  max-height: none;
+  height: auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(2, auto);
+}
+
+.vision-dash-grid--compact .vision-dash-card {
+  padding: 3px 5px;
+  min-height: 52px;
+  max-height: 72px;
+}
+
+.vision-dash-grid--compact .vision-dash-card-title {
+  font-size: 0.55rem;
+  margin-bottom: 2px;
+}
+
+.vision-dash-grid--compact .vision-dash-card-body {
+  font-size: 0.58rem;
+  line-height: 1.25;
+}
+
+.vision-dash-grid--compact .vision-dash-empty {
+  font-size: 0.58rem;
+}
+
+.vision-dash-grid--compact .vision-dash-hand-block,
+.vision-dash-grid--compact .vision-dash-cue,
+.vision-dash-grid--compact .vision-dash-face-block {
+  margin-bottom: 2px;
+}
+
+.vision-dash-grid--compact .vision-dash-fingers {
+  display: none;
+}
+
+.vision-dash-grid--compact .vision-dash-scene {
+  font-size: 0.58rem;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .vision-dash-card {

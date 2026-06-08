@@ -49,7 +49,7 @@ export class FaceEmotionDetector {
     }
 
     const detections = (await faceapi
-      .detectAllFaces(source, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+      .detectAllFaces(source, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.35 }))
       .withFaceLandmarks()
       .withAgeAndGender()
       .withFaceExpressions()) as FaceExpressionDetection[];

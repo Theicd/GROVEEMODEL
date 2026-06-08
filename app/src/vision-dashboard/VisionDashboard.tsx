@@ -10,11 +10,14 @@ function Row({ label, value, className }: { label: string; value: string; classN
   );
 }
 
-export function VisionDashboard({ result }: { result: VisionResult }) {
+export function VisionDashboard({ result, compact = false }: { result: VisionResult; compact?: boolean }) {
   const uniqueObjects = [...new Map(result.objects.map((o) => [o.displayLabel, o])).values()];
+  const poseLimit = compact ? 3 : 6;
+  const gestureLimit = compact ? 2 : 4;
+  const bodyLimit = compact ? 2 : 4;
 
   return (
-    <div className="vision-dash-grid">
+    <div className={`vision-dash-grid ${compact ? "vision-dash-grid--compact" : ""}`}>
       <VisionCard title="Objects" empty={uniqueObjects.length === 0}>
         {uniqueObjects.map((obj) => (
           <Row key={obj.displayLabel} label={obj.displayLabel} value={`${Math.round(obj.confidence * 100)}%`} />
@@ -22,7 +25,7 @@ export function VisionDashboard({ result }: { result: VisionResult }) {
       </VisionCard>
 
       <VisionCard title="Pose" empty={result.poseActions.length === 0}>
-        {result.poseActions.slice(0, 6).map((a) => (
+        {result.poseActions.slice(0, poseLimit).map((a) => (
           <Row key={a.name} label={a.name} value={`${Math.round(a.confidence * 100)}%`} className="vision-dash-value pose" />
         ))}
       </VisionCard>
@@ -45,7 +48,7 @@ export function VisionDashboard({ result }: { result: VisionResult }) {
             </div>
           </div>
         ))}
-        {result.staticGestures.slice(0, 4).map((g, i) => (
+        {result.staticGestures.slice(0, gestureLimit).map((g, i) => (
           <div key={`${g.name}-${i}`} className="vision-dash-gesture-static">
             {g.hand}: {g.name}
           </div>
@@ -59,13 +62,13 @@ export function VisionDashboard({ result }: { result: VisionResult }) {
         {result.motionGestures.map((g, i) => (
           <Row key={`m-${g.name}-${i}`} label={g.name} value={`${Math.round(g.confidence * 100)}%`} className="vision-dash-value motion" />
         ))}
-        {result.staticGestures.map((g, i) => (
+        {result.staticGestures.slice(0, gestureLimit).map((g, i) => (
           <Row key={`s-${g.name}-${i}`} label={g.name} value={`${Math.round(g.confidence * 100)}%`} className="vision-dash-value sign" />
         ))}
       </VisionCard>
 
       <VisionCard title="Body Language" empty={result.bodyLanguage.length === 0}>
-        {result.bodyLanguage.map((cue) => (
+        {result.bodyLanguage.slice(0, bodyLimit).map((cue) => (
           <div key={`${cue.category}-${cue.signal}`} className="vision-dash-cue">
             <div className="vision-dash-cue-head">
               <span>{cue.signal}</span>
