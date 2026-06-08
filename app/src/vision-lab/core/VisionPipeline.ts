@@ -41,6 +41,14 @@ const EMPTY_RESULT: VisionResult = {
   backend: 'wasm',
 };
 
+type FrameLayers = {
+  objects: VisionResult['objects'];
+  poseLandmarks: VisionResult['poseLandmarks'];
+  hands: VisionResult['hands'];
+  faces: VisionResult['faces'];
+  emotion: VisionResult['emotion'];
+};
+
 export class VisionPipeline {
   private yolo = new YoloDetector();
   private pose = new PoseDetector();
@@ -71,10 +79,22 @@ export class VisionPipeline {
   };
 
   private latest: VisionResult = { ...EMPTY_RESULT };
+  private layers: FrameLayers = {
+    objects: [],
+    poseLandmarks: [],
+    hands: [],
+    faces: [],
+    emotion: null,
+  };
   private vlmDescription = '';
   private onUpdate: ((result: VisionResult) => void) | null = null;
   private onProgress: ((msg: string) => void) | null = null;
   private initialized = false;
+  /** Skip YOLO/face/VLM only — hands + pose keep running (chat / Gemma). */
+  private heavyPaused = false;
+  private heavyBusy = false;
+  private lastPublishAt = 0;
+  private mediaPipeTs = 0;
 
   setConfig(config: Partial<PipelineConfig>): void {
     const nextMode = config.performanceMode ?? this.config.performanceMode;
@@ -103,6 +123,18 @@ export class VisionPipeline {
     return resolveSchedule(this.config).uiUpdateMs;
   }
 
+  getLastFrameAt(): number {
+    return this.lastPublishAt;
+  }
+
+  setHeavyPaused(paused: boolean): void {
+    this.heavyPaused = paused;
+  }
+
+  isHeavyPaused(): boolean {
+    return this.heavyPaused;
+  }
+
   setOnUpdate(cb: (result: VisionResult) => void): void {
     this.onUpdate = cb;
   }
@@ -129,16 +161,29 @@ export class VisionPipeline {
   }
 
   start(video: HTMLVideoElement): void {
-    if (this.running) return;
+    this.stop();
     this.running = true;
     this.loopFrames = 0;
     this.pipelineStart = performance.now();
     this.lastModuleRun = { yolo: 0, pose: 0, hands: 0, face: 0, emotion: 0, vlm: 0 };
+    this.mediaPipeTs = 0;
     this.motionGestures.reset();
     this.poseActions.reset();
-    const loop = async (timestamp: number) => {
+    this.layers = {
+      objects: [],
+      poseLandmarks: [],
+      hands: [],
+      faces: [],
+      emotion: null,
+    };
+
+    const loop = (timestamp: number) => {
       if (!this.running) return;
-      await this.processFrame(video, timestamp);
+      try {
+        this.processFrame(video, timestamp);
+      } catch (err) {
+        console.warn('[VisionPipeline] frame error', err);
+      }
       this.rafId = requestAnimationFrame(loop);
     };
     this.rafId = requestAnimationFrame(loop);
@@ -147,43 +192,66 @@ export class VisionPipeline {
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.rafId);
+    this.heavyBusy = false;
   }
 
   getLatest(): VisionResult {
     return this.latest;
   }
 
-  private async processFrame(video: HTMLVideoElement, timestamp: number): Promise<void> {
+  private nextMediaPipeTs(): number {
+    this.mediaPipeTs += 33;
+    return this.mediaPipeTs;
+  }
+
+  private processFrame(video: HTMLVideoElement, _timestamp: number): void {
     if (video.readyState < 2) return;
 
     this.loopFrames++;
     const now = performance.now();
     const schedule = resolveSchedule(this.config);
     const { toggles } = this.config;
-    const ts = Math.round(timestamp);
+    const ts = this.nextMediaPipeTs();
 
-    let objects = this.latest.objects;
-    let poseLandmarks = this.latest.poseLandmarks;
-    let hands = this.latest.hands;
-    let faces = this.latest.faces;
-    let emotion = this.latest.emotion;
+    let hands = this.layers.hands;
+    let poseLandmarks = this.layers.poseLandmarks;
 
-    // Light modules — fast sync inference, may run together without heavy burst impact.
-    if (
-      toggles.hands
-      && isModuleDue(now, this.pipelineStart, this.lastModuleRun.hands, schedule.hands)
-    ) {
-      hands = this.hands.detect(video, ts);
-      this.lastModuleRun.hands = now;
+    try {
+      if (
+        toggles.hands
+        && isModuleDue(now, this.pipelineStart, this.lastModuleRun.hands, schedule.hands)
+      ) {
+        hands = this.hands.detect(video, ts);
+        this.lastModuleRun.hands = now;
+        this.layers.hands = hands;
+      }
+    } catch (err) {
+      console.warn('[VisionPipeline] hands detect failed', err);
     }
 
-    if (
-      toggles.pose
-      && isModuleDue(now, this.pipelineStart, this.lastModuleRun.pose, schedule.pose)
-    ) {
-      poseLandmarks = this.pose.detect(video, ts);
-      this.lastModuleRun.pose = now;
+    try {
+      if (
+        toggles.pose
+        && isModuleDue(now, this.pipelineStart, this.lastModuleRun.pose, schedule.pose)
+      ) {
+        poseLandmarks = this.pose.detect(video, ts);
+        this.lastModuleRun.pose = now;
+        this.layers.poseLandmarks = poseLandmarks;
+      }
+    } catch (err) {
+      console.warn('[VisionPipeline] pose detect failed', err);
     }
+
+    this.publishFrame(now, hands, poseLandmarks);
+
+    if (!this.heavyPaused && !this.heavyBusy) {
+      void this.runHeavyModule(video, now);
+    }
+  }
+
+  private async runHeavyModule(video: HTMLVideoElement, now: number): Promise<void> {
+    const schedule = resolveSchedule(this.config);
+    const { toggles } = this.config;
 
     const faceOverdue = toggles.face
       ? getModuleOverdue(now, this.pipelineStart, this.lastModuleRun.face, schedule.face)
@@ -194,9 +262,7 @@ export class VisionPipeline {
     const faceDue = faceOverdue > 0;
     const emotionDue = emotionOverdue > 0;
 
-    // Heavy modules — at most one async inference per frame to spread CPU/GPU load.
     let heavy = pickHeavyModule(now, this.pipelineStart, this.lastModuleRun, schedule, toggles);
-
     const faceStarved =
       (faceDue || emotionDue)
       && Math.max(faceOverdue, emotionOverdue)
@@ -205,35 +271,57 @@ export class VisionPipeline {
       heavy = 'faceEmotion';
     }
 
-    if (heavy === 'yolo') {
-      objects = await this.yolo.detect(video);
-      this.lastModuleRun.yolo = now;
-    } else if (heavy === 'faceEmotion' && (faceDue || emotionDue)) {
-      const result = await this.faceEmotion.detect(video, {
-        face: toggles.face,
-        emotion: toggles.emotion,
-      });
-      if (faceDue) {
-        faces = result.faces;
-        this.lastModuleRun.face = now;
+    if (!heavy) return;
+    if (heavy === 'faceEmotion' && !faceDue && !emotionDue) return;
+
+    this.heavyBusy = true;
+    try {
+      if (heavy === 'yolo' && toggles.yolo) {
+        const objects = await this.yolo.detect(video);
+        this.layers.objects = objects;
+        this.lastModuleRun.yolo = performance.now();
+        this.publishFrame(performance.now(), this.layers.hands, this.layers.poseLandmarks);
+      } else if (heavy === 'faceEmotion' && (faceDue || emotionDue)) {
+        const result = await this.faceEmotion.detect(video, {
+          face: toggles.face,
+          emotion: toggles.emotion,
+        });
+        if (faceDue) {
+          this.layers.faces = result.faces;
+          this.lastModuleRun.face = performance.now();
+        }
+        if (emotionDue) {
+          this.layers.emotion = result.emotion;
+          this.lastModuleRun.emotion = performance.now();
+        }
+        this.publishFrame(performance.now(), this.layers.hands, this.layers.poseLandmarks);
+      } else if (heavy === 'vlm' && toggles.vlm) {
+        const vlmText = await this.vlm.describe(video, true);
+        if (vlmText) this.vlmDescription = vlmText;
+        this.lastModuleRun.vlm = performance.now();
+        this.publishFrame(performance.now(), this.layers.hands, this.layers.poseLandmarks);
       }
-      if (emotionDue) {
-        emotion = result.emotion;
-        this.lastModuleRun.emotion = now;
-      }
-    } else if (heavy === 'vlm') {
-      const vlmText = await this.vlm.describe(video, true);
-      if (vlmText) this.vlmDescription = vlmText;
-      this.lastModuleRun.vlm = now;
+    } catch (err) {
+      console.warn('[VisionPipeline] heavy module failed', heavy, err);
+    } finally {
+      this.heavyBusy = false;
     }
+  }
+
+  private publishFrame(
+    now: number,
+    hands: VisionResult['hands'],
+    poseLandmarks: VisionResult['poseLandmarks'],
+  ): void {
+    const { objects, faces, emotion } = this.layers;
 
     const fingerStates = hands.map((h) => ({
       hand: h.handedness,
       ...getFingerState(h),
     }));
     const staticGestures = recognizeStaticGestures(hands);
-    const motionGestures = this.motionGestures.update(hands, ts);
-    const poseActionList = this.poseActions.classify(poseLandmarks, ts);
+    const motionGestures = this.motionGestures.update(hands, Math.round(now));
+    const poseActionList = this.poseActions.classify(poseLandmarks, Math.round(now));
     const interactions = analyzeInteractions(objects, hands, faces);
     const events = evaluateEvents(
       objects.map((o) => o.label),
@@ -290,6 +378,7 @@ export class VisionPipeline {
       backend: this.yolo.getBackend(),
     };
 
+    this.lastPublishAt = Date.now();
     this.onUpdate?.(this.latest);
   }
 

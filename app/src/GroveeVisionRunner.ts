@@ -97,6 +97,7 @@ export class GroveeVisionRunner {
   private lastDeepVisionAt = 0;
   private latest: VisionResult | null = null;
   private uiFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityBound = false;
   private pipelinePausedForInference = false;
   private lastUiEmit = 0;
@@ -116,7 +117,6 @@ export class GroveeVisionRunner {
     this.applyPipelineConfig(initialConfig);
     this.pipeline.setOnUpdate((r) => {
       this.latest = r;
-      if (this.pipelinePausedForInference) return;
       const now = performance.now();
       const uiMs = this.pipeline.getUiUpdateMs();
       if (now - this.lastUiEmit < uiMs) return;
@@ -158,6 +158,7 @@ export class GroveeVisionRunner {
 
     const uiMs = this.pipeline.getUiUpdateMs();
     this.uiFlushTimer = setInterval(() => this.onUiTick(), uiMs);
+    this.watchdogTimer = setInterval(() => this.watchdogPipeline(), 2500);
 
     if (!this.visibilityBound) {
       document.addEventListener("visibilitychange", this.onVisibility);
@@ -172,6 +173,10 @@ export class GroveeVisionRunner {
       clearInterval(this.uiFlushTimer);
       this.uiFlushTimer = null;
     }
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     this.pipeline.stop();
     if (this.visibilityBound) {
       document.removeEventListener("visibilitychange", this.onVisibility);
@@ -185,30 +190,52 @@ export class GroveeVisionRunner {
     this.pipeline.dispose();
   }
 
-  /** Stop all vision-lab models while Gemma / worker inference runs (saves GPU/CPU). */
+  /**
+   * During user chat: pause only heavy vision (YOLO/face/VLM).
+   * Hands + pose + world sync keep running continuously.
+   */
   pauseForChatInference(): void {
     if (this.pipelinePausedForInference) return;
     this.pipelinePausedForInference = true;
-    if (this.uiFlushTimer) {
-      clearInterval(this.uiFlushTimer);
-      this.uiFlushTimer = null;
-    }
-    this.pipeline.stop();
-    this.callbacks.onCameraStatus?.("⏸ Vision · מושהה לצ'אט");
+    this.pipeline.setHeavyPaused(true);
+    this.callbacks.onCameraStatus?.("👁 Vision · ידיים/תנוחה פעילים (YOLO מושהה)");
   }
 
-  /** Resume vision-lab monitoring after user chat finishes. */
+  /** Resume full vision stack after user chat finishes. */
   resumeAfterChatInference(): void {
     if (!this.pipelinePausedForInference) return;
     this.pipelinePausedForInference = false;
+    this.pipeline.setHeavyPaused(false);
     const video = this.video;
-    if (!video || video.readyState < 2) return;
-    this.pipeline.start(video);
+    if (video && video.readyState >= 2) {
+      const last = this.pipeline.getLastFrameAt();
+      if (!last || Date.now() - last > 3000) {
+        this.pipeline.start(video);
+      }
+    }
     if (!this.uiFlushTimer) {
       const uiMs = this.pipeline.getUiUpdateMs();
       this.uiFlushTimer = setInterval(() => this.onUiTick(), uiMs);
     }
+    if (!this.watchdogTimer) {
+      this.watchdogTimer = setInterval(() => this.watchdogPipeline(), 2500);
+    }
     this.callbacks.onCameraStatus?.("👁 Character · צופה");
+  }
+
+  private watchdogPipeline(): void {
+    if (!this.video || this.pipelinePausedForInference) return;
+    const last = this.pipeline.getLastFrameAt();
+    if (!last) return;
+    const staleMs = Date.now() - last;
+    if (staleMs < 4000) return;
+
+    console.warn(`[GROVEE vision] pipeline stalled ${staleMs}ms — restarting`);
+    this.pipeline.stop();
+    if (this.video.readyState >= 2) {
+      this.pipeline.start(this.video);
+    }
+    this.callbacks.onCameraStatus?.("👁 Vision · הופעל מחדש (ניטור נעצר)");
   }
 
   isPipelinePaused(): boolean {
@@ -286,7 +313,6 @@ export class GroveeVisionRunner {
   };
 
   private onUiTick(): void {
-    if (this.pipelinePausedForInference) return;
     const result = this.getLatestResult();
     if (!result) return;
 
@@ -408,6 +434,7 @@ export class GroveeVisionRunner {
     }
 
     this.analyzing = true;
+    this.pipeline.setHeavyPaused(true);
     this.callbacks.onCameraStatus?.(`👁 Gemma · ${reason}…`);
 
     try {
@@ -448,6 +475,9 @@ export class GroveeVisionRunner {
       this.callbacks.onCameraStatus?.("👁 Character · שגיאה");
     } finally {
       this.analyzing = false;
+      if (!this.pipelinePausedForInference) {
+        this.pipeline.setHeavyPaused(false);
+      }
     }
   }
 

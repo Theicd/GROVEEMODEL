@@ -2,7 +2,7 @@ import type { PipelineConfig } from './types';
 import { DEFAULT_TOGGLES } from './types';
 import { intervalsFromMode } from './schedule';
 
-const STORAGE_KEY = 'grovee-vision-pipeline-config';
+const STORAGE_KEY = 'grovee-vision-pipeline-config-v2';
 
 /** GROVEE: VLM off by default — Gemma handles chat; lab uses rule-based sceneDescription. */
 export const GROVEE_DEFAULT_TOGGLES = {
@@ -41,6 +41,8 @@ export function ensureVisionLabConfig(
   tier: 'low' | 'normal' = 'normal',
 ): PipelineConfig {
   const mode = tier === 'low' ? 'lite' : config.performanceMode;
+  const defaults = intervalsFromMode(mode === 'lite' ? 'lite' : mode);
+  const intervals = { ...defaults, ...config.sampleIntervals };
   return {
     ...config,
     performanceMode: mode,
@@ -54,8 +56,13 @@ export function ensureVisionLabConfig(
       face: tier === 'low' ? false : config.toggles.face !== false,
       emotion: tier === 'low' ? false : config.toggles.emotion !== false,
     },
-    sampleIntervals:
-      config.sampleIntervals ?? intervalsFromMode(mode === 'lite' ? 'lite' : mode),
+    sampleIntervals: {
+      ...intervals,
+      hands: Math.min(intervals.hands, mode === 'lite' ? 150 : 100),
+      pose: Math.min(intervals.pose, mode === 'lite' ? 3000 : 500),
+      face: Math.min(intervals.face, mode === 'lite' ? 5000 : 2000),
+      emotion: Math.min(intervals.emotion, mode === 'lite' ? 5000 : 2000),
+    },
   };
 }
 
