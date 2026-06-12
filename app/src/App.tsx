@@ -233,6 +233,7 @@ type WorkerOutMessage =
       file?: string;
     }
   | { type: "loaded"; modelId: string; device: string }
+  | { type: "webgpu_blocked" }
   | { type: "token"; text: string }
   | { type: "done" }
   | { type: "aborted" }
@@ -331,19 +332,50 @@ const defaultGemmaSettings: TunableModelSettings = {
   systemPrompt: GROVEE_CHAT_SYSTEM,
 };
 
-/** Gemma q4 on WebGPU often fails (GatherBlockQuantized) — WASM is the reliable default on Pages and prod builds. */
+/** Respect saved preference; default Auto (GPU→CPU fallback). Only pin WASM if this GPU already failed WebGPU. */
 const normalizeInferenceBackend = (
   parsed: InferenceBackendPreference | undefined,
 ): InferenceBackendPreference => {
-  if (typeof window !== "undefined") {
-    if (localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1") return "wasm";
-    if (window.location.hostname.endsWith("github.io")) return "wasm";
+  if (typeof window !== "undefined" && localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1") {
+    /* Keep Auto in settings — worker skips GPU via webGpuBlocked flag. Force WASM only if user chose it. */
+    if (parsed === "wasm") return "wasm";
+    if (parsed === "webgpu") return "webgpu";
+    return "auto";
   }
-  if (parsed === "wasm") return "wasm";
-  if (import.meta.env.DEV) {
-    return parsed === "webgpu" || parsed === "auto" ? parsed : "auto";
+  if (parsed === "webgpu" || parsed === "wasm" || parsed === "auto") return parsed;
+  return "auto";
+};
+
+const readWebGpuBlocked = (): boolean => {
+  try {
+    return localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1";
+  } catch {
+    return false;
   }
-  return "wasm";
+};
+
+const markWebGpuBlocked = () => {
+  try {
+    localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+};
+
+const clearWebGpuBlocked = () => {
+  try {
+    localStorage.removeItem(WEBGPU_BLOCKED_KEY);
+  } catch {
+    /* ignore */
+  }
+};
+
+const postConfigureInference = (
+  worker: Worker,
+  backend: InferenceBackendPreference,
+  webGpuBlocked = readWebGpuBlocked(),
+) => {
+  worker.postMessage({ type: "configure_inference", backend, webGpuBlocked });
 };
 
 const defaultAppSettings = (): AppSettings => ({
@@ -461,8 +493,8 @@ const saveChatSessionsState = (state: ChatSessionsState) => {
 
 const formatInferenceDevice = (device: string): string => {
   const d = device.toLowerCase();
-  if (d === "webgpu") return "WebGPU (GPU)";
-  if (d === "wasm") return "WASM (CPU)";
+  if (d === "webgpu") return "GPU (WebGPU)";
+  if (d === "wasm") return "CPU (WASM)";
   if (d === "cache") return "cache";
   return device;
 };
@@ -2101,10 +2133,13 @@ function App() {
         }
       } else if (msg.type === "loaded") {
         setWorkerBootError(null);
+        wasmBootRetryRef.current = false;
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
-        setStatus(`Gemma ready on ${formatInferenceDevice(msg.device)}`);
+        setStatus(`Gemma מוכן — ${formatInferenceDevice(msg.device)}`);
+      } else if (msg.type === "webgpu_blocked") {
+        markWebGpuBlocked();
       } else if (msg.type === "token") {
         if (globeHeadlineModeRef.current) {
           globeHeadlineBufferRef.current += msg.text;
@@ -2156,20 +2191,12 @@ function App() {
         });
         const isChatError = msg.scope === "chat" || isGeneratingRef.current;
         if (isWebGpuInferenceError(msg.error)) {
-          try {
-            localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
-          } catch {
-            /* ignore */
-          }
-          if (isChatError) {
-            if (appSettingsRef.current.inferenceBackend !== "wasm") {
-              const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
-              appSettingsRef.current = next;
-              setAppSettings(next);
-              saveSettings(next);
-              workerRef.current?.postMessage({ type: "configure_inference", backend: "wasm" });
-            }
-          }
+          markWebGpuBlocked();
+          workerRef.current?.postMessage({
+            type: "configure_inference",
+            backend: appSettingsRef.current.inferenceBackend,
+            webGpuBlocked: true,
+          });
         }
         if (isChatError) {
           isGeneratingRef.current = false;
@@ -2178,21 +2205,10 @@ function App() {
           setStatus(`שגיאה: ${msg.error}`);
           cameraLoopRef.current?.releaseAfterChat();
         } else {
-          const errText = msg.error;
-          if (isWebGpuInferenceError(errText) && !wasmBootRetryRef.current) {
-            wasmBootRetryRef.current = true;
-            setWorkerBootError(null);
-            loadModel({ forceWasm: true });
-            return;
-          }
           setIsLoading(false);
           setProgress(0);
-          setStatus(`Error: ${errText}`);
-          setWorkerBootError(
-            isWebGpuInferenceError(errText)
-              ? `${errText} — לחץ «טען ב-WASM» למטה, או הגדרות → Inference → WASM, נקה מטמון, והתחל שוב.`
-              : errText,
-          );
+          setStatus(`Error: ${msg.error}`);
+          setWorkerBootError(msg.error);
         }
       } else if (msg.type === "scene_analysis") {
         workerInferenceBusyRef.current = false;
@@ -2272,10 +2288,7 @@ function App() {
       type: "configure_hub",
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
     });
-    worker.postMessage({
-      type: "configure_inference",
-      backend: appSettingsRef.current.inferenceBackend,
-    });
+    postConfigureInference(worker, appSettingsRef.current.inferenceBackend);
     void (async () => {
       const r = await requestPersistentStorage();
       console.info("[GROVEE] storage.persist:", r);
@@ -2294,10 +2307,8 @@ function App() {
   }, [appSettings.hfRemoteHost]);
 
   useEffect(() => {
-    workerRef.current?.postMessage({
-      type: "configure_inference",
-      backend: appSettings.inferenceBackend,
-    });
+    if (!workerRef.current) return;
+    postConfigureInference(workerRef.current, appSettings.inferenceBackend);
   }, [appSettings.inferenceBackend]);
 
   useEffect(() => {
@@ -2327,28 +2338,26 @@ function App() {
 
   const loadModel = (opts?: { forceWasm?: boolean }) => {
     if (!workerRef.current) return;
-    if (!opts?.forceWasm) wasmBootRetryRef.current = false;
+    wasmBootRetryRef.current = false;
     setWorkerBootError(null);
     setIsLoading(true);
     setIsLoaded(false);
-    setStatus(opts?.forceWasm ? "טוען מודל ב-WASM (CPU)…" : "Loading Gemma 4 E2B…");
+    const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
+    setStatus(
+      backend === "webgpu"
+        ? "טוען Gemma על GPU (WebGPU)…"
+        : backend === "wasm"
+          ? "טוען Gemma על CPU (WASM)…"
+          : readWebGpuBlocked()
+            ? "Auto: GPU לא זמין במחשב זה — טוען על CPU…"
+            : "Auto: מנסה GPU, אם לא יציב — CPU…",
+    );
     setProgress(0);
     setLoadingPhase("download");
     setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
     setLoadingTipIndex(0);
     loadingFileRef.current = "";
-    const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
-    if (opts?.forceWasm && appSettingsRef.current.inferenceBackend !== "wasm") {
-      const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
-      appSettingsRef.current = next;
-      setAppSettings(next);
-      saveSettings(next);
-      try {
-        localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
-      } catch {
-        /* ignore */
-      }
-    }
+    if (opts?.forceWasm) markWebGpuBlocked();
     workerRef.current.postMessage({
       type: "configure_hub",
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
@@ -2358,6 +2367,7 @@ function App() {
       modelId: GEMMA_MODEL_ID,
       dtype: "q4",
       backend,
+      webGpuBlocked: readWebGpuBlocked(),
     });
   };
 
@@ -2456,6 +2466,7 @@ function App() {
       setIsLoading(false);
       setAssistantBuffer("");
       assistantBufferRef.current = "";
+      clearWebGpuBlocked();
       setWorkerReloadKey((k) => k + 1);
 
       const freedSummary =
@@ -2472,17 +2483,25 @@ function App() {
   };
 
   const persistSettings = (s: AppSettings) => {
+    if (s.inferenceBackend === "webgpu") clearWebGpuBlocked();
     setAppSettings((prev) => {
       if (s.inferenceBackend !== prev.inferenceBackend || s.hfRemoteHost !== prev.hfRemoteHost) {
         queueMicrotask(() => {
           setIsLoaded(false);
           setIsLoading(false);
-          setStatus("הגדרות השתנו — לחץ «התחל» כדי לטעון מחדש");
+          setStatus("הגדרות השתנו — לחץ «טען מודל מקומי» כדי לטעון מחדש");
         });
       }
       return s;
     });
     saveSettings(s);
+    if (workerRef.current) {
+      postConfigureInference(
+        workerRef.current,
+        s.inferenceBackend,
+        s.inferenceBackend === "webgpu" ? false : readWebGpuBlocked(),
+      );
+    }
   };
 
   type BeginGenerationOptions = {
