@@ -223,10 +223,13 @@ export const shouldContinueCode = (userText: string, turns: ChatTurn[]): boolean
   return hasUnclosedCodeFence(last.content) || isCodeGenerationRequest(last.content);
 };
 
+/** Rough char budget for browser Gemma (WebGPU OOM if too long). ~14k ≈ safe for q4 multimodal. */
+export const CHAT_HISTORY_CHAR_BUDGET = 14_000;
+
 /** Keep recent turns within a char budget; optionally always keep the last assistant reply. */
 export const trimHistoryForContext = (
   turns: ChatTurn[],
-  maxChars = 32_000,
+  maxChars = CHAT_HISTORY_CHAR_BUDGET,
   pinLastAssistant = false,
 ): ChatTurn[] => {
   if (turns.length === 0) return [];

@@ -624,9 +624,9 @@ function SettingsModal({
   };
 
   const backendOptions: { id: InferenceBackendPreference; label: string; hint: string }[] = [
-    { id: "auto", label: "Auto", hint: "WebGPU אם אפשר, אחרת WASM" },
-    { id: "wasm", label: "WASM", hint: "מעבד — יציב" },
-    { id: "webgpu", label: "WebGPU", hint: "GPU — מהיר יותר" },
+    { id: "auto", label: "Auto", hint: "WebGPU אם אפשר; נופל ל-WASM בשגיאה" },
+    { id: "wasm", label: "WASM", hint: "מעבד — יציב לשיחות ארוכות" },
+    { id: "webgpu", label: "WebGPU", hint: "GPU — מהיר; עלול להיכשל אחרי זמן" },
   ];
 
   return (
@@ -2972,7 +2972,7 @@ function App() {
 
     systemPrompt = `${systemPrompt}\n\n${buildLanguageReplyDirective(effectivePrompt)}`;
 
-    const historyForWorker = trimHistoryForContext(priorTurns, 32_000, continueCode);
+    const historyForWorker = trimHistoryForContext(priorTurns, undefined, continueCode);
 
     const currentImageBuffers = documentTurn
       ? attachmentBuffers

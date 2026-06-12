@@ -184,9 +184,14 @@ const runSceneGenerateWithFallback = async (
 };
 
 const forceReloadWasm = async (modelId: string): Promise<CachedModel> => {
-  modelCache.delete(modelId);
   webGpuOnnxBlocked = true;
   inferenceBackend = "wasm";
+  const cachedWasm = modelCache.get(modelId);
+  if (cachedWasm?.device === "wasm") {
+    return cachedWasm;
+  }
+  modelCache.delete(modelId);
+  clearModelSlots();
   return loadMultimodalModel(modelId, "q4");
 };
 
@@ -201,6 +206,10 @@ const waitForSceneIdle = async (maxMs = 180_000): Promise<boolean> => {
 let webGpuAdapterProbe: boolean | null = null;
 
 const resetWebGpuProbe = () => {
+  webGpuAdapterProbe = null;
+};
+
+const resetInferenceRuntime = () => {
   webGpuAdapterProbe = null;
   webGpuOnnxBlocked = false;
 };
@@ -565,11 +574,12 @@ const toRawImages = async (payloads: WorkerImagePayload[]): Promise<RawImage[]> 
 
 const collectImagesInOrder = (message: GenerateMessage): WorkerImagePayload[] => {
   const ordered: WorkerImagePayload[] = [];
-  for (const turn of message.history) {
-    if (turn.role === "user" && turn.images?.length) {
+  const historyLen = message.history.length;
+  message.history.forEach((turn, i) => {
+    if (turn.role === "user" && turn.images?.length && i >= historyLen - 2) {
       ordered.push(...turn.images);
     }
-  }
+  });
   if (message.images.length) ordered.push(...message.images);
   return ordered;
 };
@@ -592,8 +602,11 @@ const buildInputs = async (processor: Gemma4Processor, message: GenerateMessage)
     chatMessages.push({ role: "system", content: `Web context:\n${message.webContext.trim()}` });
   }
 
-  for (const turn of message.history) {
-    const imgCount = turn.role === "user" ? (turn.images?.length ?? 0) : 0;
+  const historyLen = message.history.length;
+  for (let i = 0; i < historyLen; i++) {
+    const turn = message.history[i];
+    const keepImages = turn.role === "user" && i >= historyLen - 2;
+    const imgCount = keepImages ? (turn.images?.length ?? 0) : 0;
     chatMessages.push({
       role: turn.role,
       content: buildTurnContent(turn.role, turn.content, imgCount),
@@ -682,7 +695,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const next = message.backend;
       if (next !== inferenceBackend) {
         inferenceBackend = next;
-        resetWebGpuProbe();
+        resetInferenceRuntime();
         modelCache.clear();
         clearModelSlots();
       }
@@ -803,7 +816,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         if (chatSlot.device === "webgpu" && isWebGpuRuntimeError(err)) {
           post({
             type: "status",
-            text: "WebGPU נכשל (התנגשות GPU) — עובר ל-WASM ומנסה שוב…",
+            text: "WebGPU נכשל (זיכרון GPU / שיחה ארוכה) — עובר ל-WASM ומנסה שוב…",
           });
           try {
             const switched = await forceReloadWasm(message.modelId);
@@ -811,12 +824,17 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
             chatSlot.processor = switched.processor;
             chatSlot.modelId = message.modelId;
             chatSlot.device = switched.device;
+            post({
+              type: "loaded",
+              modelId: chatSlot.modelId,
+              device: chatSlot.device,
+            });
             await runGenerate(switched.model);
             post({ type: interrupt.interrupted || abortRequested ? "aborted" : "done" });
           } catch (retryErr) {
             post({
               type: "error",
-              error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+              error: formatHubLoadError(retryErr),
               scope: "chat",
             });
           }
