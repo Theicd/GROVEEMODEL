@@ -10,7 +10,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: path.join(__dirname, "app"),
   publicDir: path.join(__dirname, "public"),
-  // Default ./ for local & docs/ — set VITE_BASE=/GROVEEMODEL/ when building for github.io/GROVEEMODEL/
+  // Default ./ for local dev. Pages from repo /docs/: npm run build:pages-docs (VITE_BASE=/GROVEEMODEL/docs/)
+  // Pages from Actions artifact at site root: VITE_BASE=/GROVEEMODEL/
   base: process.env.VITE_BASE ?? "./",
   plugins: [react(), devRealityPlugin()],
   build: {

@@ -12,7 +12,7 @@
  */
 
 const argBase = process.argv.find((a) => a.startsWith("--base="))?.split("=")[1];
-const BASE = (argBase ?? process.env.QA_PAGES_BASE ?? "https://theicd.github.io/GROVEEMODEL/").replace(/\/?$/, "/");
+const BASE = (argBase ?? process.env.QA_PAGES_BASE ?? "https://theicd.github.io/GROVEEMODEL/docs/").replace(/\/?$/, "/");
 
 let pass = 0;
 let fail = 0;

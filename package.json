@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/sync-reality-ui.mjs && vite",
     "build": "node scripts/sync-reality-ui.mjs && tsc -b && vite build",
+    "build:pages-docs": "node scripts/build-pages-docs.mjs",
     "sync:reality": "node scripts/sync-reality-ui.mjs",
     "lint": "eslint .",
     "preview": "vite preview",

@@ -205,10 +205,6 @@ const waitForSceneIdle = async (maxMs = 180_000): Promise<boolean> => {
 
 let webGpuAdapterProbe: boolean | null = null;
 
-const resetWebGpuProbe = () => {
-  webGpuAdapterProbe = null;
-};
-
 const resetInferenceRuntime = () => {
   webGpuAdapterProbe = null;
   webGpuOnnxBlocked = false;
