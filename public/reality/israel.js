@@ -1080,9 +1080,10 @@ function focusGeo(lon, lat, alt = israelAlt) {
 async function loadAreaMeta() {
   if (_areaMeta) return _areaMeta;
   const [coordsText, migunText] = await Promise.all([
-    fetch(META.coordsUrl).then(r => r.text()),
-    fetch(META.migunUrl).then(r => r.text())
+    _corsFetch(META.coordsUrl, 15000),
+    _corsFetch(META.migunUrl, 15000),
   ]);
+  if (!coordsText || !migunText) throw new Error('area metadata unavailable');
 
   const coords = new Map();
   const migun = new Map();
@@ -2709,10 +2710,7 @@ async function fetchPublicEarthquakes() {
   const url = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
   _log('Earthquake', `→ ${url}`);
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    _log('Earthquake', `← HTTP ${r.status} ${r.statusText} (${(performance.now()-t0).toFixed(0)}ms)`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    const d = await _fetchRemote(url, { timeout: 10000, json: true });
     if (!d?.features) { _logWarn('Earthquake', 'No features in response'); return; }
     live.earthquake = { timestamp: new Date().toISOString(), items: d.features.map(f => ({ id: f.id, magnitude: f.properties.mag, place: f.properties.place, time: f.properties.time, depth: f.geometry.coordinates[2], geo: { lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] } })) };
     _log('Earthquake', `✓ ${live.earthquake.items.length} quakes (${(performance.now()-t0).toFixed(0)}ms)`);
@@ -2727,8 +2725,8 @@ async function fetchPublicSpaceWeather() {
   _log('SpaceWx', `→ ${swUrl}`);
   try {
     const [kpR, swR] = await Promise.all([
-      fetch(kpUrl, { signal: AbortSignal.timeout(6000) }).then(r => { _log('SpaceWx', `← KP HTTP ${r.status}`); return r.json(); }).catch(e => { _logWarn('SpaceWx', `✗ KP failed: ${e?.message||e}`); return null; }),
-      fetch(swUrl, { signal: AbortSignal.timeout(6000) }).then(r => { _log('SpaceWx', `← SolarWind HTTP ${r.status}`); return r.json(); }).catch(e => { _logWarn('SpaceWx', `✗ SolarWind failed: ${e?.message||e}`); return null; })
+      _fetchRemote(kpUrl, { timeout: 6000, json: true }).catch(e => { _logWarn('SpaceWx', `✗ KP failed: ${e?.message||e}`); return null; }),
+      _fetchRemote(swUrl, { timeout: 6000, json: true }).catch(e => { _logWarn('SpaceWx', `✗ SolarWind failed: ${e?.message||e}`); return null; }),
     ]);
     const sw = {};
     if (Array.isArray(kpR) && kpR.length > 1) {
@@ -2765,10 +2763,8 @@ async function fetchPublicWeather() {
     const lons = cities.map(c => c.lon).join(',');
     const wxUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&current_weather=true`;
     _log('Weather', `→ ${wxUrl.substring(0,80)}...`);
-    const r = await fetch(wxUrl, { signal: AbortSignal.timeout(10000) });
-    _log('Weather', `← HTTP ${r.status} ${r.statusText} (${(performance.now()-t0).toFixed(0)}ms)`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    const d = await _fetchRemote(wxUrl, { timeout: 10000, json: true });
+    if (!d) throw new Error('empty weather response');
     const items = (Array.isArray(d) ? d : [d]).map((w, i) => {
       const cw = w.current_weather || {};
       return { city: cities[i]?.name || '', temperature: cw.temperature, windspeed: cw.windspeed, geo: { lat: cities[i]?.lat, lon: cities[i]?.lon } };
@@ -2779,9 +2775,7 @@ async function fetchPublicWeather() {
   if (!live.weather && _standalone) {
     _log('Weather', '→ Fallback: https://wttr.in/Tel+Aviv?format=j1');
     try {
-      const r = await fetch('https://wttr.in/Tel+Aviv?format=j1', { signal: AbortSignal.timeout(6000) });
-      _log('Weather', `← wttr.in HTTP ${r.status}`);
-      const d = await r.json();
+      const d = await _fetchRemote('https://wttr.in/Tel+Aviv?format=j1', { timeout: 6000, json: true });
       const cc = d?.current_condition?.[0];
       if (cc) { live.weather = { timestamp: new Date().toISOString(), items: [{ city: 'Tel Aviv', temperature: parseFloat(cc.temp_C), windspeed: parseFloat(cc.windspeedKmph), humidity: parseFloat(cc.humidity), geo: { lat: 32.08, lon: 34.78 } }] }; _log('Weather', '✓ wttr.in fallback OK'); }
       else _logWarn('Weather', '✗ wttr.in no data');
@@ -2854,10 +2848,8 @@ async function fetchPublicMarine() {
     const lats = pts.map(p=>p.lat).join(','), lons = pts.map(p=>p.lon).join(',');
     const marUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${lats}&longitude=${lons}&current=wave_height,wave_period`;
     _log('Marine', `→ ${marUrl.substring(0,80)}...`);
-    const r = await fetch(marUrl, { signal: AbortSignal.timeout(10000) });
-    _log('Marine', `← HTTP ${r.status} ${r.statusText} (${(performance.now()-t0).toFixed(0)}ms)`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    const d = await _fetchRemote(marUrl, { timeout: 10000, json: true });
+    if (!d) throw new Error('empty marine response');
     const arr = Array.isArray(d) ? d : [d];
     const items = arr.map((m, i) => {
       const wh = m?.current?.wave_height;
@@ -3092,9 +3084,8 @@ async function _loadVesselMeta() {
   if (_vesselMeta && Date.now() - _vesselMetaAge < 3600000) return _vesselMeta;
   _log('Ships', '→ Loading vessel metadata...');
   try {
-    const r = await fetch('https://meri.digitraffic.fi/api/ais/v1/vessels', { signal: AbortSignal.timeout(15000) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const arr = await r.json();
+    const arr = await _fetchRemote('https://meri.digitraffic.fi/api/ais/v1/vessels', { timeout: 15000, json: true });
+    if (!arr) throw new Error('empty vessel metadata');
     _vesselMeta = new Map();
     (Array.isArray(arr) ? arr : []).forEach(v => { if (v.mmsi) _vesselMeta.set(v.mmsi, v); });
     _vesselMetaAge = Date.now();
@@ -3108,12 +3099,11 @@ async function fetchPublicShips() {
   _log('Ships', '→ Fetching real AIS data (Digitraffic)...');
   let realItems = [];
   try {
-    const [metaMap, locR] = await Promise.all([
+    const [metaMap, geo] = await Promise.all([
       _loadVesselMeta(),
-      fetch('https://meri.digitraffic.fi/api/ais/v1/locations', { signal: AbortSignal.timeout(12000) })
+      _fetchRemote('https://meri.digitraffic.fi/api/ais/v1/locations', { timeout: 12000, json: true }),
     ]);
-    if (!locR.ok) throw new Error(`HTTP ${locR.status}`);
-    const geo = await locR.json();
+    if (!geo) throw new Error('empty AIS locations');
     const features = geo?.features || [];
     _log('Ships', `→ Raw AIS locations: ${features.length}`);
     realItems = features.slice(0, _standalone ? 300 : 600).map(f => {
@@ -3193,10 +3183,8 @@ async function fetchPublicDisasters() {
 
   // NASA EONET — natural events
   try {
-    const r = await fetch('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=30', { signal: AbortSignal.timeout(10000) });
-    _log('Disasters', `← EONET HTTP ${r.status}`);
-    if (r.ok) {
-      const d = await r.json();
+    const d = await _fetchRemote('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=30', { timeout: 10000, json: true });
+    if (d) {
       (d.events || []).forEach(ev => {
         const geo = ev.geometry?.[0];
         if (!geo?.coordinates) return;
@@ -3214,10 +3202,8 @@ async function fetchPublicDisasters() {
 
   // GDACS — global disaster alerts
   try {
-    const r = await fetch('https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=EQ;TC;FL;VO;DR;WF;TS&alertlevel=Green;Orange;Red&limit=30', { signal: AbortSignal.timeout(10000) });
-    _log('Disasters', `← GDACS HTTP ${r.status}`);
-    if (r.ok) {
-      const d = await r.json();
+    const d = await _fetchRemote('https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=EQ;TC;FL;VO;DR;WF;TS&alertlevel=Green;Orange;Red&limit=30', { timeout: 10000, json: true });
+    if (d) {
       const features = d.features || [];
       let added = 0;
       features.forEach(f => {
@@ -3245,7 +3231,6 @@ async function fetchPublicDisasters() {
 }
 
 async function fetchPublicFires() {
-  if (_isStaticWebHost()) return;
   const t0 = performance.now();
   const url = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv/DEMO_KEY/VIIRS_SNPP_NRT/world/1';
   _log('Fires', '→ Fetching NASA FIRMS (proxied)...');
@@ -3282,10 +3267,8 @@ async function fetchPublicEMSC() {
   const t0 = performance.now();
   _log('EMSC', '→ Fetching European seismic data...');
   try {
-    const r = await fetch('https://www.seismicportal.eu/fdsnws/event/1/query?limit=30&format=json&minmag=3', { signal: AbortSignal.timeout(10000) });
-    _log('EMSC', `← SeismicPortal HTTP ${r.status}`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
+    const d = await _fetchRemote('https://www.seismicportal.eu/fdsnws/event/1/query?limit=30&format=json&minmag=3', { timeout: 10000, json: true });
+    if (!d) throw new Error('empty EMSC response');
     const features = d.features || [];
     const items = features.map(f => {
       const p = f.properties || {};
@@ -3309,13 +3292,12 @@ async function fetchPublicGlobalAlerts() {
   const items = [];
 
   try {
-    const r = await fetch('https://api.weather.gov/alerts/active?limit=20', {
-      signal: AbortSignal.timeout(10000),
+    const d = await _fetchRemote('https://api.weather.gov/alerts/active?limit=20', {
+      timeout: 10000,
+      json: true,
       headers: { 'User-Agent': 'RealityCore/1.0 (https://github.io; embed@grovee)' },
     });
-    _log('GlobalAlerts', `← NWS HTTP ${r.status}`);
-    if (r.ok) {
-      const d = await r.json();
+    if (d) {
       (d.features || []).forEach(f => {
         const p = f.properties || {};
         const geo = extractGeoFromGeometry(f.geometry);
@@ -3342,11 +3324,24 @@ function _localDevProxyUrl(targetUrl) {
   return `${location.origin}/api/proxy?url=${encodeURIComponent(targetUrl)}`;
 }
 
+function _isCrossOrigin(url) {
+  try { return new URL(url).origin !== location.origin; } catch (_) { return true; }
+}
+
 function _hostNeedsProxy(url) {
   try {
+    if (_isStaticWebHost() && _isCrossOrigin(url)) return true;
     const h = new URL(url).hostname;
-    return /opensky-network|airplanes\.live|oref\.org|tzevaadom|firms\.modaps|wheretheiss|open-notify\.org|celestrak\.org/i.test(h);
-  } catch (_) { return false; }
+    return /opensky-network|airplanes\.live|oref\.org|tzevaadom|firms\.modaps|wheretheiss|open-notify\.org|celestrak\.org|open-meteo|usgs\.gov|noaa\.gov|gdacs\.org|seismicportal|weather\.gov|digitraffic|eonet\.gsfc|wttr\.in|bbci\.co\.uk|rss\.cnn/i.test(h);
+  } catch (_) { return _isStaticWebHost(); }
+}
+
+function _relayFetchSteps(enc, init) {
+  return [
+    { name: 'allorigins', run: () => fetch(`https://api.allorigins.win/raw?url=${enc}`, { signal: init.signal, headers: init.headers }) },
+    { name: 'corsproxy', run: () => fetch(`https://corsproxy.io/?${enc}`, { signal: init.signal, headers: init.headers }) },
+    { name: 'codetabs', run: () => fetch(`https://api.codetabs.com/v1/proxy/?quest=${enc}`, { signal: init.signal, headers: init.headers }) },
+  ];
 }
 
 async function _fetchRemote(url, { timeout = 10000, json = true, headers = {} } = {}) {
@@ -3359,17 +3354,14 @@ async function _fetchRemote(url, { timeout = 10000, json = true, headers = {} } 
     chain.push({ name: 'worker', run: () => fetch(`${_PROXY}${_PROXY.includes('?') ? '' : '?url='}${enc}`, init) });
   }
   const localPx = _localDevProxyUrl(url);
-  if (localPx && blocked) {
+  if (localPx) {
     chain.push({ name: 'vite', run: () => fetch(localPx, init) });
   }
   if (!blocked) {
     chain.push({ name: 'direct', run: () => fetch(url, init) });
   }
   if (blocked) {
-    chain.push({ name: 'allorigins', run: () => fetch(`https://api.allorigins.win/raw?url=${enc}`, { signal: init.signal, headers: init.headers }) });
-    if (_isStaticWebHost()) {
-      chain.push({ name: 'corsproxy', run: () => fetch(`https://corsproxy.io/?${enc}`, { signal: init.signal, headers: init.headers }) });
-    }
+    chain.push(..._relayFetchSteps(enc, init));
   }
 
   for (const step of chain) {
@@ -3474,10 +3466,13 @@ async function fetchPublicRedAlert() {
   const paths = [
     { name: 'tzeva-allorigins', fn: () => fetch(`https://api.allorigins.win/get?url=${tzevaEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).then(j => j?.contents || '') },
     { name: 'oref-allorigins', fn: () => fetch(`https://api.allorigins.win/get?url=${orefEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }).then(j => j?.contents || '') },
+    { name: 'tzeva-corsproxy', fn: () => fetch(`https://corsproxy.io/?${tzevaEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
+    { name: 'oref-corsproxy', fn: () => fetch(`https://corsproxy.io/?${orefEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
+    { name: 'tzeva-codetabs', fn: () => fetch(`https://api.codetabs.com/v1/proxy/?quest=${tzevaEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
+    { name: 'oref-codetabs', fn: () => fetch(`https://api.codetabs.com/v1/proxy/?quest=${orefEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
     ...(_PROXY ? [{ name: 'custom-proxy', fn: () => fetch(`${_PROXY}?url=${tzevaEnc}`, { signal: AbortSignal.timeout(6000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) }] : []),
     ...(_isStaticWebHost() ? [] : [
       { name: 'oref-direct', fn: () => fetch(orefUrl, { signal: AbortSignal.timeout(4000), headers: { 'Referer': 'https://www.oref.org.il/', 'X-Requested-With': 'XMLHttpRequest' } }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
-      { name: 'tzeva-codetabs', fn: () => fetch(`https://api.codetabs.com/v1/proxy/?quest=${tzevaEnc}`, { signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
       { name: 'tzeva-direct', fn: () => fetch(tzevaUrl, { signal: AbortSignal.timeout(5000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }) },
     ]),
   ];
