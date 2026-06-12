@@ -18,6 +18,7 @@ ar_game/
 
 # Built by GitHub Actions (sync-docs-folder.yml)
 docs/
+!public/docs/
 
 # Local push / debug artifacts
 push-all-result.txt
