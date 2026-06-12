@@ -15,6 +15,7 @@ import {
   isAviationQuery,
 } from "./intents";
 import { formatWebContext, summarizeSearchResult } from "./orchestrator";
+import { buildWeatherCannedReply } from "./weatherReply";
 import type { SearchSourceResult } from "./types";
 
 describe("webSearch intents", () => {
@@ -24,9 +25,9 @@ describe("webSearch intents", () => {
     expect(isWeatherQuery("hello")).toBe(false);
   });
 
-  it("extracts location from weather question", () => {
-    expect(extractLocationPhrase("מה מזג האוויר בניו יורק")).toBeTruthy();
-    expect(extractLocationPhrase("weather in Paris")).toBeTruthy();
+  it("extracts location from temperature question", () => {
+    expect(extractLocationPhrase("מה הטמפרטורה עכשיו בברזיל")).toMatch(/ברזיל/i);
+    expect(extractLocationPhrase("מה מזג האוויר בתל אביב")).toBeTruthy();
   });
 
   it("classifies weather intent", () => {
@@ -62,8 +63,10 @@ describe("webSearch intents", () => {
     expect(needsWebSearch("חפש מידע על ברמודה")).toBe(true);
   });
 
-  it("does not add wikipedia for pure weather intent", () => {
-    expect(classifySearchIntents("מה מזג האוויר בתל אביב")).toContain("weather");
+  it("detects Hebrew temperature questions", () => {
+    expect(isWeatherQuery("מה הטמפרטורה עכשיו בברזיל")).toBe(true);
+    expect(classifySearchIntents("מה הטמפרטורה עכשיו בברזיל")).toContain("weather");
+    expect(classifySearchIntents("מה מזג האוויר בתל אביב")).toEqual(["weather"]);
   });
 
   it("classifies world time and country intents", () => {
@@ -138,7 +141,7 @@ describe("formatWebContext", () => {
         provider: "open-meteo",
         label: "מזג אוויר",
         ok: true,
-        text: "טמפרatura: 22°C",
+        text: "טמפרטורה: 22°C",
         url: "https://open-meteo.com",
         latencyMs: 100,
       },
@@ -178,5 +181,20 @@ describe("formatWebContext", () => {
       ["weather"],
     );
     expect(s).toContain("1 מקורות");
+  });
+});
+
+describe("weatherReply", () => {
+  it("builds direct weather reply from open-meteo source", () => {
+    const source: SearchSourceResult = {
+      provider: "open-meteo",
+      label: "מזג אוויר",
+      ok: true,
+      text: "מיקום: Brazil\nטמפרטורה: 28°C (מרגיש 30°C)\nמצב: מעונן",
+      latencyMs: 100,
+    };
+    const reply = buildWeatherCannedReply(source);
+    expect(reply).toContain("28°C");
+    expect(reply).toContain("Brazil");
   });
 });

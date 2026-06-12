@@ -101,7 +101,7 @@ export const fetchWeatherSearch = async (query: string): Promise<SearchSourceRes
       ...(place.elevation != null ? [`גובה: ${Math.round(place.elevation)} m`] : []),
       `זמן (מקומי): ${cur?.time ?? "—"}`,
       `מצב: ${desc}`,
-      `טמפרatura: ${cur?.temperature_2m ?? "—"}°C (מרגיש ${cur?.apparent_temperature ?? "—"}°C)`,
+      `טמפרטורה: ${cur?.temperature_2m ?? "—"}°C (מרגיש ${cur?.apparent_temperature ?? "—"}°C)`,
       `לחות: ${cur?.relative_humidity_2m ?? "—"}%`,
       `רוח: ${cur?.wind_speed_10m ?? "—"} km/h, כיוון ${cur?.wind_direction_10m ?? "—"}°`,
       `לחץ: ${cur?.surface_pressure ?? "—"} hPa`,

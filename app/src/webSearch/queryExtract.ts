@@ -49,7 +49,9 @@ export const extractLocationPhrase = (query: string): string | null => {
   const patterns: RegExp[] = [
     /(?:מה\s+)?(?:ה)?שע(?:ה|ת)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:what\s+)?time\s+(?:is\s+it\s+)?(?:in|at|for)\s+(.+?)(?:[?!.]?$)/i,
-    /(?:מזג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
+    /(?:מה\s+)?(?:ה)?טמפרטור(?:ה)?\s+(?:עכשיו\s+)?(?:ב|ב־|in|at|for)\s*(.+?)(?:[?!.]?$)/i,
+    /(?:what(?:'s| is) the )?(?:temperature|temp)\s+(?:now\s+)?(?:in|at|for)\s*(.+?)(?:[?!.]?$)/i,
+    /(?:מזג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s*(.+?)(?:[?!.]?$)/i,
     /(?:מה\s+)?(?:מזג\s*האוויר|מז"?\s*א)\s+(?:ב|ב־|של)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:גשם|שלג|מעונן|גשום|rain|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:צפוי|forecast|expect)\s+(?:גשם|rain|שלג|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,

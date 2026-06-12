@@ -1,5 +1,5 @@
 import type { GlobeCommand } from "./bridge";
-import { normalizeCountrySearchName } from "../webSearch/queryExtract";
+import { normalizeCountrySearchName, extractLocationPhrase } from "../webSearch/queryExtract";
 
 const PLACE_PATTERNS = [
   /(?:הצג(?:ה|י)?|הראה|תציג|הציג|show)\s+(?:לי\s+|me\s+|א(?:ת|ת ה)?\s*)?(.+?)(?:\s+על\s+המפה|\s+on\s+the\s+map|\?|$)/i,
@@ -111,7 +111,15 @@ export function buildGlobeCommand(query: string, intents: string[] = []): GlobeC
   if (/התרע|צבע\s*אדום|tzeva|oref/i.test(q) || intents.includes("israel-alerts")) {
     return { type: "focusIsrael" };
   }
-  if (/סופה|הurricane|typhoon|מזג\s*אוויר|weather/i.test(q) || intents.includes("weather")) {
+  if (/סופה|הurricane|typhoon|מזג\s*אוויר|weather|טמפרטור|temperature/i.test(q) || intents.includes("weather")) {
+    const loc = extractLocationPhrase(q);
+    if (loc) {
+      return {
+        type: "focusPlaceQuiet",
+        name: normalizeCountrySearchName(loc),
+        presentation: false,
+      };
+    }
     return { type: "showLayer", layer: "weather" };
   }
   if (/ספינ|ship|marine|ים/i.test(q) || intents.includes("marine")) {

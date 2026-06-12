@@ -134,7 +134,7 @@ const isWebGpuRuntimeError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err);
   return (
     /webgpu|OrtRun|GPUBuffer|mapAsync|Device.*is lost|device is lost|external Instance/i.test(msg) ||
-    /GatherBlockQuantized|Can't create a session|ERROR_CODE:\s*9|Could not find an implementation/i.test(
+    /GatherBlockQuantized|Can't create a session|bad_alloc|ERROR_CODE:\s*[69]|Could not find an implementation/i.test(
       msg,
     )
   );
@@ -755,11 +755,24 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
 
       if (!chatSlot.model || !chatSlot.processor || chatSlot.modelId !== message.modelId) {
-        const switched = await loadMultimodalModel(message.modelId, "q4");
-        chatSlot.model = switched.model;
-        chatSlot.processor = switched.processor;
-        chatSlot.modelId = message.modelId;
-        chatSlot.device = switched.device;
+        try {
+          const switched = await loadMultimodalModel(message.modelId, "q4");
+          chatSlot.model = switched.model;
+          chatSlot.processor = switched.processor;
+          chatSlot.modelId = message.modelId;
+          chatSlot.device = switched.device;
+        } catch (loadErr) {
+          if (!isWebGpuRuntimeError(loadErr)) throw loadErr;
+          post({
+            type: "status",
+            text: "WebGPU נכשל בטעינה — עובר ל-WASM…",
+          });
+          const switched = await forceReloadWasm(message.modelId);
+          chatSlot.model = switched.model;
+          chatSlot.processor = switched.processor;
+          chatSlot.modelId = message.modelId;
+          chatSlot.device = switched.device;
+        }
       }
 
       const model = chatSlot.model;

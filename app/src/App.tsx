@@ -159,6 +159,11 @@ import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
 import { appendModelActivity, type ModelActivityEntry } from "./modelActivityLog";
 import { SearchSourcesBlock } from "./SearchSourcesBlock";
 import { runWebSearch, needsWebSearch, type SearchSourceResult } from "./webSearch";
+import {
+  buildWeatherCannedReply,
+  findOpenMeteoSource,
+  isPureWeatherTurn,
+} from "./webSearch/weatherReply";
 import { GamesPanel } from "./GamesPanel";
 import { GameSpotlightDock } from "./GameSpotlightDock";
 import { GlobePanel } from "./GlobePanel";
@@ -255,6 +260,7 @@ type WorkerOutMessage =
 
 const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
+const WEBGPU_BLOCKED_KEY = "grovee-webgpu-blocked";
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
 
 /** Dev-only: ?qa=vision skips Gemma gate for automated face/emotion QA. */
@@ -324,9 +330,11 @@ const defaultAppSettings = (): AppSettings => {
   const onStaticPages =
     typeof window !== "undefined" &&
     (window.location.hostname.endsWith("github.io") || window.location.protocol === "file:");
+  const webGpuBlocked =
+    typeof window !== "undefined" && localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1";
   return {
     hfRemoteHost: "",
-    inferenceBackend: onStaticPages ? "wasm" : "auto",
+    inferenceBackend: onStaticPages || webGpuBlocked ? "wasm" : "auto",
     gemma: { ...defaultGemmaSettings },
     vision: { ...DEFAULT_VISION_SETTINGS },
   };
@@ -346,9 +354,11 @@ const loadSettings = (): AppSettings => {
       ...defaultAppSettings(),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
       inferenceBackend:
-        parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
-          ? parsed.inferenceBackend
-          : "auto",
+        localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1"
+          ? "wasm"
+          : parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
+            ? parsed.inferenceBackend
+            : "auto",
       gemma,
       vision: mergeVisionSettings(parsed.vision),
     };
@@ -2132,6 +2142,20 @@ function App() {
           detail: msg.error,
         });
         const isChatError = msg.scope === "chat" || isGeneratingRef.current;
+        if (/WebGPU|bad_alloc|Can't create a session|GatherBlockQuantized/i.test(msg.error)) {
+          try {
+            localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
+          } catch {
+            /* ignore */
+          }
+          if (appSettingsRef.current.inferenceBackend !== "wasm") {
+            const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
+            appSettingsRef.current = next;
+            setAppSettings(next);
+            saveSettings(next);
+            workerRef.current?.postMessage({ type: "configure_inference", backend: "wasm" });
+          }
+        }
         if (isChatError) {
           isGeneratingRef.current = false;
           setIsGenerating(false);
@@ -2654,6 +2678,42 @@ function App() {
       assistantBufferRef.current = gameSearchCannedReply;
       setAssistantBuffer(gameSearchCannedReply);
       setStatus("Ready");
+      finalizeAssistantReply(false);
+      return;
+    }
+
+    const weatherSource = findOpenMeteoSource(pendingWebSearchRef.current?.sources ?? []);
+    const weatherCannedReply =
+      weatherSource && isPureWeatherTurn(trimmed || effectivePrompt)
+        ? buildWeatherCannedReply(weatherSource)
+        : null;
+
+    if (
+      weatherCannedReply &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      !wantsGameSearch
+    ) {
+      if (desktopLayout && shouldOpenGlobePanel(trimmed || effectivePrompt, searchIntentsForGlobe)) {
+        const cmd = buildGlobeCommand(trimmed || effectivePrompt, searchIntentsForGlobe);
+        if (cmd) {
+          setGlobePanelOpen(true);
+          setGlobeCommand(cmd);
+          setArtifactOpen(false);
+          setGamesPanelOpen(false);
+        }
+      }
+      assistantBufferRef.current = weatherCannedReply;
+      setAssistantBuffer(weatherCannedReply);
+      setStatus("Ready");
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: "Weather · direct reply",
+        detail: weatherCannedReply,
+      });
       finalizeAssistantReply(false);
       return;
     }

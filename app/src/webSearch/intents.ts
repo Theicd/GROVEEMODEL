@@ -170,7 +170,9 @@ export const isDisasterQuery = (text: string): boolean =>
   /(?:אסון|אסונות|gdacs|הוריקן|hurricane|tsunami|צונאמי|שריפ(?:ה|ות)|wildfire|סופ(?:ה|ות)\s+טרופי)/i.test(text);
 
 export const isWeatherQuery = (text: string): boolean =>
-  /מזג\s*האוויר|מז"?\s*א|טמפרatur|weather|temperature|גשם|שלג|מעונן|לחות|מזג/i.test(text);
+  /מזג\s*האוויר|מז"?\s*א|טמפרטור|temperature|\btemp\b|weather|גשם|שלג|מעונן|לחות|חם\s+ב|קר\s+ב|ממש\s+ח(?:ם)?/i.test(
+    text,
+  );
 
 export const isMarineQuery = (text: string): boolean =>
   /גלים|wave|סערה|הurricane|typhoon|גובה\s*גל|סופה|ים\b|ocean|marine|שיא\s*גלים/i.test(text);
