@@ -22,6 +22,15 @@ import {
   classifyChatTopic,
   isTopicShift,
   topicShiftHint,
+  isConversationFirstRequest,
+  formatCameraTopicLabel,
+  needsVisionSensorContext,
+  isVisionUnrelatedTurn,
+  needsAttachedDocumentAnalysis,
+  isDocumentImageRequest,
+  wantsWorksheetReplicaHtml,
+  wantsExactTextExtraction,
+  stripLeakedVisionReport,
 } from "./chatIntents";
 
 describe("chatIntents", () => {
@@ -137,5 +146,52 @@ Thinking Process:
     expect(isTopicShift("design", "bored_play")).toBe(true);
     expect(isTopicShift("design", "design")).toBe(false);
     expect(topicShiftHint("design", "bored_play")).toMatch(/Do NOT continue/);
+  });
+
+  it("conversation-first requests include play and sharing", () => {
+    expect(isConversationFirstRequest("בוא נשחק משחק")).toBe(true);
+    expect(isConversationFirstRequest("הפסקת חשמל")).toBe(true);
+    expect(isConversationFirstRequest("מה אתה רואה?")).toBe(false);
+  });
+
+  it("formats camera topic labels for UI", () => {
+    expect(formatCameraTopicLabel("bored_play")).toBe("משחק / שעמום");
+    expect(formatCameraTopicLabel("pack:acknowledgment-request")).toBe("רגע / מצב");
+  });
+
+  it("splits vision vs pure chat turns", () => {
+    expect(needsVisionSensorContext("מה אתה רואה סביבך")).toBe(true);
+    expect(needsVisionSensorContext("אני מחפש רעיון לסיפור מדע בדיוני")).toBe(false);
+    expect(needsVisionSensorContext("שלום איך קוראים לך")).toBe(false);
+    expect(needsVisionSensorContext("תגיד לי אתה תן לי רעיון")).toBe(false);
+    expect(isVisionUnrelatedTurn("מה אני מחזיק ביד")).toBe(false);
+  });
+
+  it("routes attached images as document analysis", () => {
+    expect(needsAttachedDocumentAnalysis("שלום", false)).toBe(false);
+    expect(needsAttachedDocumentAnalysis("שלום", true)).toBe(true);
+    expect(isDocumentImageRequest("תסתכל על התמונה אלו השאלות")).toBe(true);
+    expect(isDocumentImageRequest("אני צריך עזרה בשיעורי הבית")).toBe(true);
+    expect(isDocumentImageRequest("")).toBe(true);
+    expect(isDocumentImageRequest("שלום")).toBe(false);
+  });
+
+  it("detects worksheet HTML replica requests", () => {
+    expect(wantsWorksheetReplicaHtml("חלץ את השאלות וצור HTML זהה לתמונה")).toBe(true);
+    expect(wantsWorksheetReplicaHtml("פתור את השאלות")).toBe(false);
+  });
+
+  it("runs OCR only for exact transcription requests", () => {
+    expect(wantsExactTextExtraction("מה כתוב בתמונה")).toBe(true);
+    expect(wantsExactTextExtraction("חלץ שאלות ועזור לי לפתור")).toBe(false);
+  });
+
+  it("strips leaked perception snapshot from output", () => {
+    const raw = `Perception snapshot (internal — not for user display):
+Person visible: NO
+YOLO persons: 0
+
+שלום, איך אוכל לעזור?`;
+    expect(stripLeakedVisionReport(raw)).toBe("שלום, איך אוכל לעזור?");
   });
 });

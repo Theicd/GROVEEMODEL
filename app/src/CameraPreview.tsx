@@ -2,6 +2,10 @@ import { forwardRef, useCallback, useRef, type MutableRefObject, type Ref } from
 import { moodLabelHe, type CharacterMood } from "./characterBrain";
 import { VisionDetectionOverlay } from "./VisionDetectionOverlay";
 import { CameraVisionHud } from "./CameraVisionHud";
+import { HalPerceptionHud } from "./HalPerceptionHud";
+import type { HalMoodState } from "./vision2/halMoodEngine";
+import type { EntityProfile } from "./vision2/entityProfile";
+import type { ConsciousnessLayer, InterpretationLayer } from "./vision2/types";
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
 
 function mergeRefs<T>(...refs: Array<Ref<T> | undefined>): (value: T | null) => void {
@@ -18,6 +22,11 @@ type CameraPreviewProps = {
   active: boolean;
   observing?: boolean;
   mood?: CharacterMood;
+  hal?: HalMoodState | null;
+  interpretation?: InterpretationLayer | null;
+  consciousness?: ConsciousnessLayer | null;
+  entity?: EntityProfile | null;
+  cameraStatus?: string;
   error?: string | null;
   visionResult?: VisionResult | null;
   pipelineConfig?: PipelineConfig | null;
@@ -35,6 +44,11 @@ export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
       active,
       observing,
       mood = "observing",
+      hal = null,
+      interpretation = null,
+      consciousness = null,
+      entity = null,
+      cameraStatus = "",
       error,
       visionResult,
       pipelineConfig,
@@ -112,6 +126,15 @@ export const CameraPreview = forwardRef<HTMLVideoElement, CameraPreviewProps>(
                 onConfigChange={onPipelineConfigChange}
               />
             ) : null}
+
+            <HalPerceptionHud
+              hal={hal}
+              interpretation={interpretation}
+              consciousness={consciousness}
+              entity={entity}
+              mood={mood}
+              cameraStatus={cameraStatus}
+            />
 
             <span className={`camera-preview-badge ${moodClass}`}>
               👁 {moodLabelHe(mood)}

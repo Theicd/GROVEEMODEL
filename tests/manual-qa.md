@@ -2,6 +2,8 @@
 
 Run after `npm run dev` or on the deployed site. Gemma 4 must finish downloading first.
 
+**Vision 2.0 migration:** שלבי מיגרציה + Sensor UI Gate (חובה בכל phase) — [vision-2.0-migration-checklist.md](./vision-2.0-migration-checklist.md)
+
 ## Automated QA
 
 ```bash

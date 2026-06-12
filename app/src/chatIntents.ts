@@ -13,16 +13,23 @@ export const isSimpleGreeting = (text: string): boolean => {
   return /^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized);
 };
 
-/** User asks about live camera / environment context. */
+/** User asks about live camera / environment / presence / consciousness. */
 export const isCameraContextQuestion = (text: string): boolean => {
   const t = text.trim();
   if (!t) return false;
   return (
-    /מה אתה רואה|מה אתה רואה\?|מה השתנה|מה אני עושה|יש משהו מעניין|מה קורה סביב|מה יש ליד/i.test(
-      t,
-    ) ||
-    /what do you see|what changed|what am i doing|anything interesting|what'?s happening/i.test(t)
+    /מה אתה רואה|מה אתה מזהה|מה מזהה|מה רואים|מה קורה|מה יש במרחב|מה יש בחדר/i.test(t) ||
+    /מה השתנה|מה אני עושה|יש משהו מעניין|מה קורה סביב|מה יש ליד/i.test(t) ||
+    /נוכחות|יציבות|וודאות|בטוח|קריסה|אותו מצב|המשכיות/i.test(t) ||
+    /what do you see|what do you detect|what'?s happening|what is in (the|this) (room|space)/i.test(t) ||
+    /presence|certainty|same (person|state)|still there/i.test(t)
   );
+};
+
+/** Consciousness / continuity / certainty questions while camera is on. */
+export const isConsciousnessQuestion = (text: string): boolean => {
+  const t = text.trim();
+  return /נוכחות|וודאות|בטוח|קריסה|אותו|המשכיות|phantom|stable|confidence|certainty/i.test(t);
 };
 
 /** User asks about a specific visual detail — requires fresh snapshot, not memory alone. */
@@ -70,10 +77,21 @@ export const isCurrentPersonStateQuestion = (text: string): boolean => {
   return (
     /עומד\s*או\s*יושב|יושב\s*או\s*עומד|standing\s*or\s*sitting/i.test(t) ||
     /האדם\s*(עומד|יושב)|האם\s*(הוא|היא|האדם)\s*(עומד|יושב)/i.test(t) ||
-    /(האם|מה).*(עומד|יושב|תנוחה)/i.test(t) && /(אדם|person|הוא|היא|\?)/i.test(t) ||
-    /האם\s*הוא\s*מחזיק|מה\s*(הוא|היא)\s*מחזיק|what\s*(is|are)\s*(he|she|they)\s*holding/i.test(t) ||
-    /לאן\s*(הוא|היא)\s*מסתכל|where\s*(is|are)\s*(he|she|they)\s*looking/i.test(t) ||
+    (/((האם|מה).*(עומד|יושב|תנוחה))/i.test(t) && /(אדם|person|הוא|היא|\?)/i.test(t)) ||
+    /מה\s*אני\s*מחזיק|what\s*am\s*i\s*holding/i.test(t) ||
+    /האם\s*הוא\s*מחזיק|מה\s*(הוא|היא|אני)\s*מחזיק|what\s*(is|are)\s*(he|she|they|i)\s*holding/i.test(t) ||
+    /לאן\s*(הוא|היא|אני)\s*מסתכל|where\s*(is|are)\s*(he|she|they|i)\s*looking/i.test(t) ||
     (/posture|standing|sitting/i.test(t) && /(person|אדם|\?)/i.test(t))
+  );
+};
+
+/** User asks about mood/emotion of person in frame — use emotion sensor data. */
+export const isPersonMoodQuestion = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    /מצב\s*ה?רוח|איך\s*(הוא|היא|האדם|אני)\s*מרגיש|what\s*(is|'?s)\s*(his|her|their|your)\s*mood/i.test(t) ||
+    (/emotion|mood|מרגיש|רגש/.test(t) && /(אדם|person|הוא|היא|אני|phone|טלפון)/i.test(t))
   );
 };
 
@@ -109,7 +127,59 @@ export const needsCameraVisionEscalation = (text: string): boolean =>
   isVisualDetailQuestion(text) ||
   isPersonVisibilityQuestion(text) ||
   isCurrentPersonStateQuestion(text) ||
-  isFingerCountQuestion(text);
+  isFingerCountQuestion(text) ||
+  isConsciousnessQuestion(text);
+
+/** User asks gender / age of person in frame. */
+export const isPersonDemographicsQuestion = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    /גבר\s*או\s*אישה|אישה\s*או\s*גבר|זכר\s*או\s*נקבה|בן\s*כמה|בת\s*כמה|מה\s*הגיל|איזה\s*גיל|how\s*old|man\s*or\s*woman|male\s*or\s*female|gender|age\s*estimate/i.test(
+      t,
+    ) || (/גבר|אישה|זכר|נקבה|גיל/.test(t) && /רואה|מזהה|see|detect/i.test(t))
+  );
+};
+
+/** Any message that should pull live camera context into chat (text brief + optional snapshot). */
+export const needsLiveCameraContext = (text: string): boolean =>
+  needsCameraVisionEscalation(text) ||
+  isCameraContextQuestion(text) ||
+  isPersonDemographicsQuestion(text) ||
+  isPersonMoodQuestion(text);
+
+/** Remove internal vision context if the model echoed it into the answer. */
+export const stripLeakedVisionReport = (text: string): string => {
+  if (!text.trim()) return text;
+  let out = text;
+  const markers = [
+    /Perception snapshot \(internal[\s\S]*?(?=\n\n[^\n-]|$)/gi,
+    /═+\s*\n?PRE-CHAT VISION REPORT[\s\S]*?(?=\n\n(?![═\-])|$)/gi,
+    /PRE-CHAT VISION REPORT[\s\S]*?(?=RULE:|$)/gi,
+    />>> PERSON VISIBLE NOW:[\s\S]*?(?=\n\n|$)/gi,
+    /\[INTERNAL VISION CONTEXT[\s\S]*?\[\/INTERNAL\]/gi,
+  ];
+  for (const re of markers) out = out.replace(re, "");
+  out = out
+    .replace(/^Person visible:[^\n]*\n/gm, "")
+    .replace(/^YOLO persons:[^\n]*\n/gm, "")
+    .replace(/^Faces:[^\n]*\n/gm, "")
+    .replace(/^Fresh snapshot:[^\n]*\n/gm, "")
+    .replace(/^Holding \(sensor\):[^\n]*\n/gm, "")
+    .replace(/^Scene \(VLM\):[^\n]*\n/gm, "")
+    .replace(/^HAL soul:[^\n]*\n/gm, "")
+    .replace(/^-\s*Camera:\s*ACTIVE[^\n]*\n/gm, "")
+    .replace(/^-\s*YOLO persons:[^\n]*\n/gm, "")
+    .replace(/^-\s*Face-api faces:[^\n]*\n/gm, "")
+    .replace(/^-\s*FACE DATA[^\n]*\n/gm, "")
+    .replace(/^-\s*HAL soul:[^\n]*\n/gm, "")
+    .replace(/^-\s*Emotion:[^\n]*\n/gm, "")
+    .replace(/^-\s*Attention:[^\n]*\n/gm, "")
+    .replace(/^-\s*Scene:[^\n]*\n/gm, "")
+    .replace(/^RULE: Do NOT contradict[^\n]*\n/gm, "")
+    .trim();
+  return out;
+};
 
 export const isRtlText = (text: string): boolean => /[\u0590-\u05FF]/.test(text);
 
@@ -324,10 +394,120 @@ export const classifyChatTopic = (text: string): ChatTopic => {
   const t = text.trim();
   if (!t) return "general";
   if (isSimpleGreeting(t)) return "greeting";
-  if (needsCameraVisionEscalation(t) || isCameraContextQuestion(t)) return "camera";
   if (BORED_PLAY_RE.test(t)) return "bored_play";
+  if (needsCameraVisionEscalation(t) || isCameraContextQuestion(t)) return "camera";
   if (DESIGN_RE.test(t)) return "design";
   return "general";
+};
+
+/** User wants dialogue / play / empathy / creative — NOT environment vision. */
+export const isConversationFirstRequest = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    BORED_PLAY_RE.test(t) ||
+    /ספר לי|סיפור|בוא נדבר|מה דעתך|what do you think|tell me about/i.test(t) ||
+    /קורה לי|קרה לי|happened to me|שיתף|רוצה לשתף/i.test(t) ||
+    /הפסק|חשמל|עייף|עצוב|שמח|stressed|tired/i.test(t) ||
+    /רעיון|מדע בדיוני|קונספיר|fiction|story idea|creative writing/i.test(t) ||
+    /תן לי|תגיד לי.*(רעיון|idea)|give me an idea/i.test(t)
+  );
+};
+
+/** Explicit ask about sight, people, posture, room — needs sensors + snapshot. */
+export const isExplicitVisionQuestion = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    isCameraContextQuestion(t) ||
+    isPersonVisibilityQuestion(t) ||
+    isCurrentPersonStateQuestion(t) ||
+    isPersonDemographicsQuestion(t) ||
+    isPersonMoodQuestion(t) ||
+    isPersonActivityQuestion(t) ||
+    isVisualDetailQuestion(t) ||
+    isFingerCountQuestion(t) ||
+    isConsciousnessQuestion(t)
+  );
+};
+
+/** Run OCR only when user needs verbatim transcription (saves time on local machine). */
+export const wantsExactTextExtraction = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    /מה כתוב|מה רשום|תמלול|העתק.*טקסט|copy.*text|exact text|מדויק/i.test(t) ||
+    /קרא את (כל )?הטקסט|read (all )?(the )?text/i.test(t)
+  );
+};
+
+/** User attached image(s) — analyze document/photo content, not live camera. */
+export const needsAttachedDocumentAnalysis = (_text: string, hasImages: boolean): boolean =>
+  hasImages;
+
+/** User wants a fillable HTML page that mirrors the photographed worksheet. */
+export const wantsWorksheetReplicaHtml = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    /חלץ.*(שאלות|דף|טבלא|טקסט)|extract.*(questions|worksheet|page|text)/i.test(t) ||
+    /(HTML|html|קובץ).*?(זהה|identical|same|כמו)|זהה ל(תמונה|דף|מקור|צילום)/i.test(t) ||
+    /צור.*(HTML|קובץ|דף).*?(זהה|identical|למילוי|fill|print|הדפס|עבודה)/i.test(t) ||
+    /דף עבודה.*HTML|worksheet.*html|HTML.*worksheet/i.test(t) ||
+    /למלא.*(תשוב|דף)|fillable|fill.?in|להדפיס|לצלם שוב/i.test(t) ||
+    /שחזר.*(דף|HTML)|recreate.*(page|worksheet)/i.test(t)
+  );
+};
+
+/** Heuristic: user likely wants text read from an attached image. */
+export const isDocumentImageRequest = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return true;
+  return (
+    /שיעורי\s*(ה)?בית|homework|worksheet|מבחן|תרגיל|exercise|מסמך|document|צילום/i.test(t) ||
+    /שאל(ות|ה)|לפתור|פתור|solve|answer (the )?question/i.test(t) ||
+    /תסתכל על (ה)?תמונה|על התמונה|look at (the )?(image|picture|photo)/i.test(t) ||
+    /מה כתוב|קרא (את|מה)|what (does|is) (it|the image) say|read (the|this)/i.test(t) ||
+    /עזרה עם|help with|תרגם|translate/i.test(t)
+  );
+};
+
+/** Camera on but user talks about ideas, identity, stories — no sensor injection. */
+export const isVisionUnrelatedTurn = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  if (isExplicitVisionQuestion(t)) return false;
+  if (isConversationFirstRequest(t)) return true;
+  if (/איך קוראים|what'?s your name|מי אתה|who are you/i.test(t)) return true;
+  if (/רעיון|סיפור|מדע בדיונ|קונספיר|ברמודה|פירמיד|ירח|fiction|plot|character/i.test(t)) return true;
+  if (/תן לי|תגיד לי|help me write|brainstorm/i.test(t) && !/רואה|see|מצלמה|camera/i.test(t)) return true;
+  if (isCodeGenerationRequest(t)) return true;
+  if (isSimpleGreeting(t) && !/רואה|see|מזהה|detect/i.test(t)) return true;
+  return false;
+};
+
+/** Attach snapshot + sensor report to this turn. */
+export const needsVisionSensorContext = (text: string): boolean => {
+  if (isVisionUnrelatedTurn(text)) return false;
+  return isExplicitVisionQuestion(text) || isSceneInterpretationQuestion(text);
+};
+
+export const formatCameraTopicLabel = (topic: string): string => {
+  const key = topic.trim();
+  const map: Record<string, string> = {
+    greeting: "ברכה",
+    camera: "ראייה",
+    general: "שיחה",
+    design: "עיצוב",
+    bored_play: "משחק / שעמום",
+    scene_general: "סצנה",
+    visibility: "נוכחות",
+    person: "אדם בפריים",
+    mood: "מצב רוח",
+  };
+  if (key.startsWith("pack:")) return "רגע / מצב";
+  if (key.startsWith("situation:")) return "מצב";
+  return map[key] ?? key.replace(/^(pack|topic):/, "");
 };
 
 /** True when the user clearly moved to a different conversational lane. */
@@ -365,8 +545,8 @@ export const cleanDisplayText = (raw: string): string =>
 export const stripGemmaControlTokens = (raw: string): string => {
   const { answer, thought, hasThinking } = parseGemmaThinkingOutput(raw);
   const base = hasThinking && answer ? answer : raw;
-  return (
+  const cleaned =
     cleanDisplayText(base) ||
-    (thought ? cleanDisplayText(thought) : cleanDisplayText(raw))
-  );
+    (thought ? cleanDisplayText(thought) : cleanDisplayText(raw));
+  return stripLeakedVisionReport(cleaned);
 };

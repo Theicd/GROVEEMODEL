@@ -36,6 +36,15 @@ export const CHARACTER_CONFIG = {
   screenStareAfterMs: 180_000,
 } as const;
 
+export type CharacterBrainSnapshot = {
+  mood: CharacterMood;
+  curiosity: number;
+  boredom: number;
+  acquaintanceDone: boolean;
+  baselineIntroDone: boolean;
+  topicsMentioned: Record<string, number>;
+};
+
 export class CharacterBrain {
   mood: CharacterMood = "observing";
   curiosity = 0.35;
@@ -44,6 +53,8 @@ export class CharacterBrain {
   lastProactiveAt = 0;
   baselineSceneAt = 0;
   baselineIntroDone = false;
+  /** Vision 2 — first personalized greeting after stable presence. */
+  acquaintanceDone = false;
   topicsMentioned = new Map<string, number>();
   recentQuestions: { text: string; ts: number }[] = [];
 
@@ -55,8 +66,36 @@ export class CharacterBrain {
     this.lastProactiveAt = 0;
     this.baselineSceneAt = 0;
     this.baselineIntroDone = false;
+    this.acquaintanceDone = false;
     this.topicsMentioned.clear();
     this.recentQuestions = [];
+  }
+
+  exportSnapshot(): CharacterBrainSnapshot {
+    const topicsMentioned: Record<string, number> = {};
+    for (const [k, v] of this.topicsMentioned.entries()) topicsMentioned[k] = v;
+    return {
+      mood: this.mood,
+      curiosity: this.curiosity,
+      boredom: this.boredom,
+      acquaintanceDone: this.acquaintanceDone,
+      baselineIntroDone: this.baselineIntroDone,
+      topicsMentioned,
+    };
+  }
+
+  importSnapshot(s: Partial<CharacterBrainSnapshot>): void {
+    if (s.mood) this.mood = s.mood;
+    if (typeof s.curiosity === "number") this.curiosity = s.curiosity;
+    if (typeof s.boredom === "number") this.boredom = s.boredom;
+    if (typeof s.acquaintanceDone === "boolean") this.acquaintanceDone = s.acquaintanceDone;
+    if (typeof s.baselineIntroDone === "boolean") this.baselineIntroDone = s.baselineIntroDone;
+    if (s.topicsMentioned) {
+      this.topicsMentioned.clear();
+      for (const [k, v] of Object.entries(s.topicsMentioned)) {
+        if (typeof v === "number") this.topicsMentioned.set(k, v);
+      }
+    }
   }
 
   noteBaselineScene(): void {
@@ -87,6 +126,7 @@ export class CharacterBrain {
     this.lastProactiveAt = Date.now();
     this.topicsMentioned.set(normalizeTopic(decision.topic), Date.now());
     if (decision.reason === "curious:baseline") this.baselineIntroDone = true;
+    if (decision.reason.startsWith("acquaintance:")) this.acquaintanceDone = true;
     this.recentQuestions.unshift({ text: decision.message, ts: Date.now() });
     this.recentQuestions = this.recentQuestions.slice(0, CHARACTER_CONFIG.maxRecentQuestions);
     this.mood = decision.mood;

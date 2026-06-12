@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { devRealityPlugin } from "./vite-plugins/devReality";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -11,7 +12,7 @@ export default defineConfig({
   publicDir: path.join(__dirname, "public"),
   // Default ./ for local & docs/ — set VITE_BASE=/GROVEEMODEL/ when building for github.io/GROVEEMODEL/
   base: process.env.VITE_BASE ?? "./",
-  plugins: [react()],
+  plugins: [react(), devRealityPlugin()],
   build: {
     outDir: path.join(__dirname, "dist"),
     emptyOutDir: true,
@@ -23,7 +24,7 @@ export default defineConfig({
           if (id.includes("@tensorflow-models/coco-ssd")) return "coco-ssd";
           if (id.includes("onnxruntime-web")) return "onnxruntime";
           if (id.includes("@mediapipe/tasks-vision")) return "mediapipe-vision";
-          if (id.includes("face-api")) return "face-api";
+          if (id.includes("pdfjs-dist")) return "pdfjs";
         },
       },
     },

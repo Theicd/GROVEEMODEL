@@ -1,33 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { buildPersistedAssistantPayload, extractPrimaryArtifact } from "./artifacts";
+import { buildPersistedAssistantPayload } from "./artifacts";
+import { stripHtmlFencesForChat } from "./chatMarkdown";
 
-const SAMPLE_HTML = `\`\`\`html
-<!DOCTYPE html>
-<html><head><style>
-.star { position: absolute; }
-</style></head>
-<body><div class="star"></div>
-<script>
-const stars = [];
-for (let i = 0; i < 50; i++) stars.push(i);
-</script></body></html>
+describe("chat-only document replies", () => {
+  it("flattens HTML fences into chat markdown text", () => {
+    const raw = `הנה התוכן:
+
+\`\`\`html
+<!DOCTYPE html><html><body><h1>שאלה 1</h1><p>2+2=</p></body></html>
 \`\`\``;
-
-describe("artifacts persistence", () => {
-  it("preserves HTML verbatim in artifact field", () => {
-    const raw = `<|channel>thought
-plan animation
-
-${SAMPLE_HTML}`;
-    const { content, artifact } = buildPersistedAssistantPayload(raw, true);
-    expect(artifact?.kind).toBe("html");
-    expect(artifact?.content).toContain("class=\"star\"");
-    expect(artifact?.content).toContain("for (let i = 0; i < 50; i++)");
-    expect(content).not.toContain("<script>");
+    const flat = stripHtmlFencesForChat(raw);
+    expect(flat).toContain("שאלה 1");
+    expect(flat).not.toContain("<!DOCTYPE");
   });
 
-  it("extractPrimaryArtifact matches streaming and saved forms", () => {
-    const a = extractPrimaryArtifact(SAMPLE_HTML);
-    expect(a?.content).toContain("<!DOCTYPE html>");
+  it("does not create artifact for document chat-only mode", () => {
+    const raw = `\`\`\`html
+<html><body><p>1. מהי בירת ישראל?</p></body></html>
+\`\`\``;
+    const { content, artifact } = buildPersistedAssistantPayload(raw, false, {
+      chatOnlyDocument: true,
+    });
+    expect(artifact).toBeNull();
+    expect(content).toContain("בירת ישראל");
   });
 });

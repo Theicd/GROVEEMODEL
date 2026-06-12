@@ -53,6 +53,14 @@ export function SituationSettingsPanel({
           <label className="situation-toggle">
             <input
               type="checkbox"
+              checked={vision.vision2Enabled}
+              onChange={(e) => onVisionChange({ vision2Enabled: e.target.checked })}
+            />
+            <span>Vision 2.0 — HAL perception (JSON ל-Gemma, ללא חיישנים גולמיים)</span>
+          </label>
+          <label className="situation-toggle">
+            <input
+              type="checkbox"
               checked={vision.useBootDeepSnapshot}
               onChange={(e) => onVisionChange({ useBootDeepSnapshot: e.target.checked })}
             />

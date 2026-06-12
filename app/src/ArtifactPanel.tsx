@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArtifactGeneratingSplash } from "./ArtifactGeneratingSplash";
+import { isMinimalDocumentHtml, wrapMinimalHtmlInCanvas } from "./documentHtmlCanvas";
+import { isWorksheetReplicaArtifact } from "./worksheetReplicaHtml";
 
 export type Artifact = {
   kind: "code" | "html";
@@ -9,7 +11,10 @@ export type Artifact = {
 };
 
 const normalizeHtmlForIframe = (fragmentOrDoc: string): string => {
-  const t = fragmentOrDoc.trim();
+  let t = fragmentOrDoc.trim();
+  if (isMinimalDocumentHtml(t) && !isWorksheetReplicaArtifact(t)) {
+    t = wrapMinimalHtmlInCanvas(t, "תוכן המסמך");
+  }
   const headSample = t.slice(0, 600).toLowerCase();
   if (headSample.includes("<!doctype") || headSample.startsWith("<html")) {
     if (!headSample.includes("charset")) {

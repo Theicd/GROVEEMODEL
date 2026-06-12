@@ -23,6 +23,8 @@ import {
   type WorldMemory,
   type WorldUpdateResult,
 } from "./worldMemory";
+import type { PresenceAuthority } from "./vision2/consciousness/types";
+import { correctAgeForDisplay } from "./vision2/entityProfile";
 
 const PERSON_CONFIRM_FRAMES = 2;
 const EVENT_DEDUP_MS = 45_000;
@@ -84,19 +86,34 @@ export type GroveeVisionSyncResult = {
   personJustLeft: boolean;
 };
 
+export type GroveeVisionSyncOptions = {
+  skipRegistryTriggers?: boolean;
+  /** HAL Consciousness — temporal authority overrides frame streak debounce. */
+  presenceAuthority?: PresenceAuthority | null;
+};
+
 export const syncVisionResultToWorld = (
   world: WorldMemory,
   result: VisionResult,
   syncState: GroveeVisionSyncState,
+  options?: GroveeVisionSyncOptions,
 ): GroveeVisionSyncResult => {
   const objectLabels = result.objects.map((o) => normalizeLabel(o.displayLabel || o.label));
   const rawPersonCount = result.objects.filter((o) => o.label === "person" && o.confidence >= 0.45).length;
   const rawHasPerson = rawPersonCount > 0;
 
-  if (rawHasPerson) syncState.personStreak = Math.min(PERSON_CONFIRM_FRAMES, syncState.personStreak + 1);
-  else syncState.personStreak = 0;
+  if (options?.presenceAuthority) {
+    // Consciousness owns debounce — keep streak in sync for legacy paths only.
+    syncState.personStreak = options.presenceAuthority.personStable ? PERSON_CONFIRM_FRAMES : 0;
+  } else if (rawHasPerson) {
+    syncState.personStreak = Math.min(PERSON_CONFIRM_FRAMES, syncState.personStreak + 1);
+  } else {
+    syncState.personStreak = 0;
+  }
 
-  const debouncedHasPerson = syncState.personStreak >= PERSON_CONFIRM_FRAMES;
+  const debouncedHasPerson = options?.presenceAuthority
+    ? options.presenceAuthority.personStable
+    : syncState.personStreak >= PERSON_CONFIRM_FRAMES;
   const prevHadPerson = world.personPresent;
   const people = debouncedHasPerson ? ["person"] : [];
 
@@ -142,7 +159,7 @@ export const syncVisionResultToWorld = (
 
   if (result.faces.length) {
     const f = result.faces[0];
-    world.faceSummary = `age~${Math.round(f.estimatedAge)}, gender est. ${f.estimatedGender}, gaze ${f.gazeDirection}`;
+    world.faceSummary = `age~${correctAgeForDisplay(f.estimatedAge)}, gender est. ${f.estimatedGender}, gaze ${f.gazeDirection}`;
   } else {
     world.faceSummary = "";
   }
@@ -175,11 +192,9 @@ export const syncVisionResultToWorld = (
     }
   }
 
-  const registryEvents = evaluateSituationTriggers(
-    result,
-    situationRules,
-    syncState.situationTriggers,
-  );
+  const registryEvents = options?.skipRegistryTriggers
+    ? []
+    : evaluateSituationTriggers(result, situationRules, syncState.situationTriggers);
   for (const ev of registryEvents) {
     if (!labEvents.some((e) => e.subject === ev.subject)) {
       world.lastSituationSubject = ev.subject ?? "";
@@ -192,11 +207,18 @@ export const syncVisionResultToWorld = (
     world.applySemanticEvents(labEvents);
   }
 
+  const personJustConfirmed = options?.presenceAuthority
+    ? options.presenceAuthority.personJustBecameStable
+    : !prevHadPerson && debouncedHasPerson;
+  const personJustLeft = options?.presenceAuthority
+    ? options.presenceAuthority.personJustCollapsed
+    : prevHadPerson && !debouncedHasPerson;
+
   return {
     worldUpdate,
     labEvents,
     personPresent: debouncedHasPerson,
-    personJustConfirmed: !prevHadPerson && debouncedHasPerson,
-    personJustLeft: prevHadPerson && !debouncedHasPerson,
+    personJustConfirmed,
+    personJustLeft,
   };
 };

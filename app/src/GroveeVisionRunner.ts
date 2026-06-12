@@ -7,6 +7,14 @@ import {
   syncVisionResultToWorld,
   type GroveeVisionSyncState,
 } from "./groveeVisionSync";
+import { buildDeepVisionContextBlock } from "./vision2/dialogueContext";
+import { filterEventsForVision2 } from "./vision2/eventFilter";
+import { evaluateCoachDecision } from "./vision2/characterBrainVision2";
+import { evaluateAcquaintanceDecision } from "./vision2/acquaintanceEngine";
+import {
+  SituationPackEngine,
+  evaluateSituationPackDecision,
+} from "./situation-packs/situationPackEngine";
 import { isTfVisionPaused } from "./visionCoordination";
 import {
   deepVisionBackoffMs,
@@ -17,6 +25,13 @@ import type { SemanticEvent, WorldMemory } from "./worldMemory";
 import { VisionPipeline } from "./vision-lab/core/VisionPipeline";
 import { ensureVisionLabConfig } from "./vision-lab/core/configStorage";
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
+import { Vision2Engine } from "./vision2/Vision2Engine";
+import type { DialogueContext, WorldSnapshot } from "./vision2/types";
+import { HalMoodEngine, type HalMoodState } from "./vision2/halMoodEngine";
+import { InterpretationBrain } from "./vision2/interpretation/interpretationBrain";
+import { toInterpretationLayer } from "./vision2/interpretationDefaults";
+import { ConsciousnessEngine } from "./vision2/consciousness/consciousnessEngine";
+import { perceiveFromVisionResult } from "./vision2/perceptionEngine";
 
 export const GROVEE_VISION_LOOP_CONFIG = {
   deepVisionMinIntervalMs: 120_000,
@@ -61,6 +76,13 @@ export type GroveeVisionCallbacks = {
     personJustConfirmed: boolean;
     personJustLeft: boolean;
     worldUpdate: import("./worldMemory").WorldUpdateResult;
+    consciousness?: {
+      soul: import("./vision2/consciousness/types").SoulState;
+      confidence: number;
+      rawDetected: boolean;
+      personStable: boolean;
+      interpretation: string;
+    };
   }) => void;
   onSituationUpdate?: (payload: {
     poseState: string;
@@ -72,11 +94,15 @@ export type GroveeVisionCallbacks = {
     newEvents: SemanticEvent[];
   }) => void;
   onLabEvents?: (events: SemanticEvent[]) => void;
+  /** Vision 2.0 enabled (HAL perception stack). */
+  useVision2?: () => boolean;
+  onVision2Update?: (payload: { snapshot: WorldSnapshot; dialogue: DialogueContext }) => void;
+  onHalStateUpdate?: (hal: HalMoodState) => void;
 };
 
 export type { PersonFocusSnapshot };
 export { formatFreshPersonBlock };
-export type { CharacterDecision, CharacterMood };
+export type { CharacterDecision, CharacterMood, HalMoodState };
 
 export class GroveeVisionRunner {
   private readonly pipeline = new VisionPipeline();
@@ -86,6 +112,11 @@ export class GroveeVisionRunner {
   private readonly callbacks: GroveeVisionCallbacks;
   private readonly budget: VisionBudgetProfile;
   private readonly syncState: GroveeVisionSyncState = createGroveeVisionSyncState();
+  private readonly vision2 = new Vision2Engine();
+  private readonly situationPacks = new SituationPackEngine();
+  private readonly halMood = new HalMoodEngine();
+  private readonly interpretationBrain = new InterpretationBrain();
+  private readonly consciousness = new ConsciousnessEngine();
 
   private holdUntil = 0;
   private utterancePending = false;
@@ -100,6 +131,7 @@ export class GroveeVisionRunner {
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityBound = false;
   private lastUiEmit = 0;
+  private lastCoachDispatch = { intent: "none" as string, at: 0 };
 
   constructor(
     world: WorldMemory,
@@ -148,7 +180,26 @@ export class GroveeVisionRunner {
     return this.latest ?? this.pipeline.getLatest();
   }
 
+  getDialogueContext(): DialogueContext | null {
+    return this.vision2.getDialogueContext();
+  }
+
+  getWorldSnapshot(): WorldSnapshot | null {
+    return this.vision2.getSnapshot();
+  }
+
+  getHalMoodState(): HalMoodState | null {
+    const s = this.halMood.getState();
+    return s.updatedAt ? s : null;
+  }
+
   async start(): Promise<void> {
+    this.vision2.reset();
+    this.situationPacks.reset();
+    this.halMood.reset();
+    this.interpretationBrain.reset();
+    this.consciousness.reset();
+    this.lastCoachDispatch = { intent: "none", at: 0 };
     this.callbacks.onObservingChange?.(true);
     this.callbacks.onCameraStatus?.("🔬 Vision Lab · טוען מודלים…");
     const video = this.requireVideo();
@@ -177,6 +228,11 @@ export class GroveeVisionRunner {
       this.watchdogTimer = null;
     }
     this.pipeline.stop();
+    this.vision2.reset();
+    this.situationPacks.reset();
+    this.halMood.reset();
+    this.interpretationBrain.reset();
+    this.consciousness.reset();
     if (this.visibilityBound) {
       document.removeEventListener("visibilitychange", this.onVisibility);
       this.visibilityBound = false;
@@ -268,7 +324,9 @@ export class GroveeVisionRunner {
     if (!result || !video || video.readyState < 2) return null;
     if (isTfVisionPaused()) return null;
 
-    const hasPerson = result.objects.some((o) => o.label === "person" && o.confidence >= 0.45);
+    const hasPerson =
+      result.objects.some((o) => o.label === "person" && o.confidence >= 0.45) ||
+      (result.faces?.length ?? 0) > 0;
     if (!hasPerson) {
       return {
         personPresent: false,
@@ -315,7 +373,14 @@ export class GroveeVisionRunner {
 
     this.callbacks.onVisionResult?.(result);
 
-    const sync = syncVisionResultToWorld(this.world, result, this.syncState);
+    const vision2On = this.callbacks.useVision2?.() !== false;
+    const rawHasPerson = result.objects.some((o) => o.label === "person" && o.confidence >= 0.45);
+    const presenceAuthority = vision2On ? this.consciousness.tick(rawHasPerson) : null;
+
+    const sync = syncVisionResultToWorld(this.world, result, this.syncState, {
+      skipRegistryTriggers: vision2On,
+      presenceAuthority,
+    });
     const objectLabels = result.objects
       .filter((o) => o.label !== "person")
       .map((o) => o.displayLabel || o.label);
@@ -328,9 +393,22 @@ export class GroveeVisionRunner {
       personJustConfirmed: sync.personJustConfirmed,
       personJustLeft: sync.personJustLeft,
       worldUpdate: sync.worldUpdate,
+      consciousness: presenceAuthority
+        ? {
+            soul: presenceAuthority.soul,
+            confidence: presenceAuthority.confidence,
+            rawDetected: presenceAuthority.rawDetected,
+            personStable: presenceAuthority.personStable,
+            interpretation: presenceAuthority.interpretation,
+          }
+        : undefined,
     });
 
     if (sync.labEvents.length) {
+      const characterEvents =
+        this.callbacks.useVision2?.() !== false
+          ? filterEventsForVision2(sync.labEvents)
+          : sync.labEvents;
       this.callbacks.onSituationUpdate?.({
         poseState: this.world.poseState,
         gestures: this.world.gestures,
@@ -341,7 +419,23 @@ export class GroveeVisionRunner {
         newEvents: sync.labEvents,
       });
       this.callbacks.onLabEvents?.(sync.labEvents);
-      this.dispatchCharacter(sync.labEvents);
+      if (!vision2On) {
+        this.dispatchCharacter(characterEvents);
+      }
+    }
+
+    if (vision2On) {
+      const freshEvents = filterEventsForVision2([
+        ...sync.labEvents,
+        ...sync.worldUpdate.newEvents,
+      ]);
+      this.situationPacks.ingest(result, this.world, freshEvents, sync.personJustConfirmed);
+      const v2 = this.vision2.process(result, this.world, this.character, { freshEvents });
+      this.vision2.applyConsciousnessLayer(this.consciousness.getSnapshot());
+      const dialogueWithConsciousness = this.vision2.getDialogueContext()!;
+      this.syncHalState(result, dialogueWithConsciousness, freshEvents, sync.personJustConfirmed);
+      this.callbacks.onVision2Update?.({ snapshot: v2.snapshot, dialogue: dialogueWithConsciousness });
+      this.maybeDispatchVision2Proactive(result, freshEvents, sync.personJustConfirmed);
     }
 
     if (sync.worldUpdate.isBaselineCapture && !this.deepBaselineDone) {
@@ -357,7 +451,7 @@ export class GroveeVisionRunner {
       return;
     }
 
-    if (!sync.worldUpdate.suppressedAsChurn && sync.worldUpdate.newEvents.length) {
+    if (!sync.worldUpdate.suppressedAsChurn && sync.worldUpdate.newEvents.length && !vision2On) {
       this.dispatchCharacter(sync.worldUpdate.newEvents);
     }
 
@@ -365,11 +459,23 @@ export class GroveeVisionRunner {
 
     if (Date.now() >= this.holdUntil && !this.callbacks.isWorkerBusy()) {
       this.maybeCharacterTick();
+      if (vision2On) {
+        this.maybeDispatchVision2Proactive(result, [], false);
+      } else {
+        this.maybeDispatchCoach();
+      }
     }
   }
 
+  private sensorBlockForDeepVision(result?: VisionResult | null): string {
+    if (this.callbacks.useVision2?.() !== false) {
+      return buildDeepVisionContextBlock(this.vision2.getDialogueContext());
+    }
+    return buildRichSensorBlock(this.world, result);
+  }
+
   private finishSensorOnlyBaseline(result?: VisionResult | null): void {
-    const sensorBlock = buildRichSensorBlock(this.world, result);
+    const sensorBlock = this.sensorBlockForDeepVision(result);
     this.world.applySensorBaseline(sensorBlock);
     if (result?.sceneDescription?.trim() && !this.world.bootContext.trim()) {
       this.world.bootContext = result.sceneDescription.trim().slice(0, 320);
@@ -440,7 +546,7 @@ export class GroveeVisionRunner {
         return;
       }
 
-      const sensorBlock = buildRichSensorBlock(this.world, this.getLatestResult());
+      const sensorBlock = this.sensorBlockForDeepVision(this.getLatestResult());
       const result = await this.callbacks.requestAnalysis({
         bytes,
         previousSummary: this.world.bootContext || this.world.lastSummary,
@@ -512,6 +618,114 @@ export class GroveeVisionRunner {
     if (!newEvents.length) return;
     const decision = this.character.evaluate(this.world, newEvents);
     if (!decision) return;
+    this.emitCharacter(decision);
+  }
+
+  private syncHalState(
+    result: VisionResult,
+    dialogue: DialogueContext,
+    freshEvents: SemanticEvent[],
+    personJustEntered: boolean,
+  ): void {
+    const packHint = this.situationPacks.peekTopMatch(
+      dialogue,
+      result,
+      this.world,
+      freshEvents,
+      personJustEntered,
+    );
+    const hal = this.halMood.update({
+      human: dialogue.personState,
+      body: dialogue.bodyLanguage,
+      situation: dialogue.situation,
+      personPresent: dialogue.worldState.person.present,
+      packHint: packHint
+        ? {
+            packId: packHint.packId,
+            tone: packHint.tone,
+            interpretation: packHint.interpretation,
+            sceneLabel: packHint.sceneLabel,
+          }
+        : null,
+    });
+    this.vision2.applyHalLayer(hal);
+    const dialogueWithHal = this.vision2.getDialogueContext()!;
+    const meta = this.vision2.getProcessMeta();
+    const obs = perceiveFromVisionResult(
+      result,
+      this.world.personPresent,
+      this.world.lastMotionLevel,
+    );
+    const interpret = this.interpretationBrain.process({
+      dialogue: dialogueWithHal,
+      obs,
+      hal: dialogueWithHal.hal,
+      faceTouchSec: meta.faceTouchSec,
+      waveRising: meta.waveRising,
+      personJustEntered,
+      msSinceUserChat: this.character.msSinceUserInteraction(),
+    });
+    this.vision2.applyInterpretationLayer(toInterpretationLayer(interpret));
+    this.character.mood = hal.mood;
+    this.callbacks.onMoodChange?.(hal.mood);
+    this.callbacks.onHalStateUpdate?.(hal);
+  }
+
+  private maybeDispatchVision2Proactive(
+    result: VisionResult,
+    freshEvents: SemanticEvent[],
+    personJustEntered: boolean,
+  ): void {
+    if (this.callbacks.useVision2?.() === false) return;
+    if (Date.now() < this.holdUntil) return;
+    if (this.analyzing || this.callbacks.isWorkerBusy()) return;
+
+    const dialogue = this.vision2.getDialogueContext();
+    if (!dialogue) return;
+
+    const acquaintance = evaluateAcquaintanceDecision(this.character, dialogue, dialogue.entity ?? null);
+    if (acquaintance) {
+      this.emitCharacter(acquaintance);
+      return;
+    }
+
+    const packDecision = evaluateSituationPackDecision(
+      this.situationPacks,
+      this.character,
+      dialogue,
+      result,
+      this.world,
+      freshEvents,
+      personJustEntered,
+    );
+    if (packDecision) {
+      this.emitCharacter(packDecision);
+      return;
+    }
+
+    this.maybeDispatchCoach();
+  }
+
+  private maybeDispatchCoach(): void {
+    if (this.callbacks.useVision2?.() === false) return;
+    if (Date.now() < this.holdUntil) return;
+    if (this.analyzing || this.callbacks.isWorkerBusy()) return;
+
+    const dialogue = this.vision2.getDialogueContext();
+    if (!dialogue || dialogue.coach.intent === "none") return;
+
+    const now = Date.now();
+    if (
+      dialogue.coach.intent === this.lastCoachDispatch.intent &&
+      now - this.lastCoachDispatch.at < 120_000
+    ) {
+      return;
+    }
+
+    const decision = evaluateCoachDecision(this.character, dialogue);
+    if (!decision) return;
+
+    this.lastCoachDispatch = { intent: dialogue.coach.intent, at: now };
     this.emitCharacter(decision);
   }
 

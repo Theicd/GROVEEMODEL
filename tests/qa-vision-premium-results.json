@@ -1,0 +1,88 @@
+{
+  "base": "http://localhost:5174/?qa=vision",
+  "pass": 8,
+  "fail": 8,
+  "results": [
+    {
+      "ok": true,
+      "name": "1. App shell loads",
+      "detail": "#root=1"
+    },
+    {
+      "ok": true,
+      "name": "2. QA vision mode (?qa=vision)",
+      "detail": "qa=true"
+    },
+    {
+      "ok": true,
+      "name": "2b. App ready for vision QA",
+      "detail": "qa bypass"
+    },
+    {
+      "ok": true,
+      "name": "3. Camera video element",
+      "detail": "visible=true"
+    },
+    {
+      "ok": true,
+      "name": "4. Face sample stream injected",
+      "detail": "C:\\Users\\Avatar001\\CascadeProjects\\GROVEEMODEL\\public\\qa\\face-sample.jpg"
+    },
+    {
+      "ok": true,
+      "name": "5. Vision Inspector opens",
+      "detail": "open=true"
+    },
+    {
+      "ok": true,
+      "name": "6a. Face module status",
+      "detail": "{\"status\":\"ready\",\"message\":\"No face in frame\",\"lastScanAt\":1780955657070,\"lastFaceCount\":0,\"modelSource\":\"local\"}"
+    },
+    {
+      "ok": false,
+      "name": "6b. Face age detected",
+      "detail": "age=undefined"
+    },
+    {
+      "ok": false,
+      "name": "6c. Face gender detected",
+      "detail": "gender=undefined"
+    },
+    {
+      "ok": false,
+      "name": "6d. Emotion dominant + score",
+      "detail": "undefined 0%"
+    },
+    {
+      "ok": false,
+      "name": "6e. Probe faceOk",
+      "detail": "false"
+    },
+    {
+      "ok": false,
+      "name": "6f. Probe emotionOk",
+      "detail": "false"
+    },
+    {
+      "ok": false,
+      "name": "6g. Browser console clean",
+      "detail": "W0608 21:52:10.499000 1880752 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors. | W0608 21:52:10.538000 1880752 inference_feedback_manager.cc:121] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors. | [.WebGL-0x5a9415263800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "ok": true,
+      "name": "7. Models not auto-paused",
+      "detail": "paused=false fps=2 objects=0 face=ready"
+    },
+    {
+      "ok": false,
+      "name": "8. Emotion meter bars in inspector",
+      "detail": "visible=false"
+    },
+    {
+      "ok": false,
+      "name": "9. Face card has detection rows",
+      "detail": ""
+    }
+  ],
+  "at": "2026-06-08T21:54:18.074Z"
+}
