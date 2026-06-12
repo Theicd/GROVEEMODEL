@@ -1,15 +1,23 @@
 import { fetchJson } from "../../webSearch/fetchJson";
 import type { SearchSourceResult } from "../../webSearch/types";
 
-type AdsbResponse = { ac?: Array<{ flight?: string; alt_baro?: number; gs?: number; track?: number }> };
+type AdsbResponse = {
+  ac?: Array<{ flight?: string; alt_baro?: number; gs?: number; track?: number; hex?: string }>;
+};
+
+const ISRAEL_RE = /ישראל|israel|tel\s*aviv|תל\s*אביב/i;
 
 /** Live aircraft near Israel — airplanes.live (CORS-friendly). */
-export const fetchAviationSearch = async (query: string): Promise<SearchSourceResult> => {
+export const fetchAviationSearch = async (
+  query: string,
+  recentUserText: string[] = [],
+): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "adsb-aviation" as const;
   const label = "תעופה (ADS-B)";
   try {
-    const isIsrael = /ישראל|israel|tel\s*aviv|תל\s*אביב/i.test(query);
+    const context = [query, ...recentUserText].join(" ");
+    const isIsrael = ISRAEL_RE.test(context);
     const lat = isIsrael ? 32.08 : 40.7;
     const lon = isIsrael ? 34.78 : -74.0;
     const data = await fetchJson<AdsbResponse>(
@@ -36,6 +44,11 @@ export const fetchAviationSearch = async (query: string): Promise<SearchSourceRe
         return `${i + 1}. ${fl || "לא ידוע"} · גובה ${alt} · ${spd}`;
       }),
     ];
+    if (/צבאי|military|מהם.*מטוס/i.test(query)) {
+      lines.push(
+        "הערה: ADS-B ציבורי לא מסמן באופן אמין מטוסים צבאיים; אין ספירה מדויקת של צבאי/אזרחי מהמקור הזה.",
+      );
+    }
     return {
       provider,
       label,

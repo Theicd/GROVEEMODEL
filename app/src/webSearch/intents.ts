@@ -66,10 +66,32 @@ export const isFactualKnowledgeQuery = (text: string): boolean => {
   return false;
 };
 
+/** Live market / stock / commodity — no browser provider yet; avoid Wikipedia fallback. */
+export const isMarketPriceQuery = (text: string): boolean =>
+  /(?:מחיר|price|quote|שער|נסחר).*(?:מנ(?:י(?:ה|ית|ות)?|stock|זהב|gold|silver|crypto|ביטקוין|bitcoin)|NVIDIA|AAPL|TSLA|אפל\b)/i.test(
+    text,
+  ) || /(?:מחיר|price)\s+(?:של|of)?\s*(?:ה)?(?:זהב|gold|מנ(?:י(?:ה|ית))?)/i.test(text);
+
+export const isRedditQuery = (text: string): boolean =>
+  /(?:^|[\s\-/])r\/\w+|reddit|רדיט|סאב(?:רeddit)?/i.test(text);
+
+export const isHackerNewsQuery = (text: string): boolean =>
+  /(?:hacker\s*news|\bhn\b|ycombinator|חדשות\s*ט(?:ech|ק))/i.test(text);
+
+export const isArxivQuery = (text: string): boolean =>
+  /(?:arxiv|arXiv|מאמר(?:ים)?\s+(?:מ(?:דע|חקר)|ai|ml)|\bpapers?\b|\bresearch\b)/i.test(text);
+
+export const isGeneralWebSearchQuery = (text: string): boolean =>
+  userRequestsSearch(text) ||
+  /(?:חפש\s+(?:ב)?(?:אינטרנט|web|online)|google|גוגל|search\s+the\s+web)/i.test(text);
+
 /** Decide if this turn should hit live web providers (no manual toggle). */
 export const needsWebSearch = (text: string): boolean => {
   const q = text.trim();
   if (!q || isCasualConversation(q)) return false;
+  if (isMarketPriceQuery(q) || isRedditQuery(q)) return true;
+  if (isHackerNewsQuery(q) || isArxivQuery(q)) return true;
+  if (isGeneralWebSearchQuery(q)) return true;
   if (userRequestsSearch(q)) return true;
   if (isWeatherQuery(q) || isMarineQuery(q) || isEarthquakeQuery(q)) return true;
   if (isWorldTimeQuery(q) || isCountryQuery(q) || isHolidayQuery(q)) return true;
@@ -83,7 +105,7 @@ export const needsWebSearch = (text: string): boolean => {
 };
 
 export const isWorldTimeQuery = (text: string): boolean =>
-  /(?:מה\s+)?(?:ה)?שע(?:ה|ת)|what\s+time|time\s+in|time\s+zone|timezone|UTC|GMT|פרש\s+שע|הפרש\s+שע|שעון\s+עולמי|day\s+change|מתי\s+מתחלף\s+יום/i.test(
+  /(?:מה\s+)?(?:ה)?שע(?:ה|ת|ות)|what\s+time|time\s+in|time\s+zone|timezone|UTC|GMT|פרש\s+שע|הפרש\s+שע|כמה\s+שעות\s+.*(?:פרש|הפרש)|שעון\s+עולמי|day\s+change|מתי\s+מתחלף\s+יום/i.test(
     text,
   ) && !isWeatherQuery(text);
 
@@ -126,11 +148,13 @@ export const isPlacesQuery = (text: string): boolean =>
       /(?:ליד|near|by|at|ב|של|שדה\s+תעופה|airport|הית'?רו|heathrow)/i.test(text)));
 
 export const isNewsQuery = (text: string): boolean =>
-  /(?:חדשות|news|headline|כותרת\s+ראשית|main\s+headline|breaking)/i.test(text) ||
-  /(?:bbc|cnn|ynet)/i.test(text);
+  !isRedditQuery(text) &&
+  (/(?:חדשות|news|headline|כותרת\s+ראשית|main\s+headline|breaking)/i.test(text) ||
+    /(?:bbc|cnn|ynet)/i.test(text));
 
 export const isAviationQuery = (text: string): boolean =>
-  /(?:מטוס|מטוסים|aircraft|airplane|plane|adsb|opensky|תעבורה\s+אווירית|טיסות\s+מעל)/i.test(text);
+  /(?:מטוס|מטוסים|aircraft|airplane|plane|adsb|opensky|תעבורה\s+אווירית|טיסות\s+מעל)/i.test(text) ||
+  /(?:כמה\s+)?(?:מהם|מאלה)\s*(?:הם\s+)?(?:צבאיים|military|מסחריים)?/i.test(text);
 
 export const isSatelliteQuery = (text: string): boolean =>
   /(?:iss|תחנת\s+חלל|לוויין|לווינים|satellite|חלל\s+בינלאומ)/i.test(text) &&
@@ -161,7 +185,8 @@ export const isHuggingFaceQuery = (text: string): boolean =>
 
 export const isGitHubQuery = (text: string): boolean =>
   /github|גיטהב|repository|repositories|\brepo\b|open\s*source|קוד\s*פתוח/i.test(text) ||
-  /פרויקט\s*(?:קוד|open)/i.test(text);
+  /פרויקט\s*(?:קוד|open)/i.test(text) ||
+  /(?:פופולרי|popular|trending).*(?:github|גיטהב)/i.test(text);
 
 export const isTechQuery = (text: string): boolean =>
   isGitHubQuery(text) ||
@@ -171,6 +196,18 @@ export const isTechQuery = (text: string): boolean =>
 
 export const classifySearchIntents = (query: string): SearchIntent[] => {
   const intents: SearchIntent[] = [];
+
+  if (isMarketPriceQuery(query)) intents.push("market");
+  if (isRedditQuery(query)) intents.push("reddit");
+  if (isHackerNewsQuery(query)) intents.push("hackernews");
+  if (isArxivQuery(query)) intents.push("arxiv");
+  if (isGeneralWebSearchQuery(query)) intents.push("searx");
+
+  if (intents.some((i) => ["market", "reddit", "hackernews", "arxiv"].includes(i))) {
+    if (isGeneralWebSearchQuery(query)) intents.push("searx");
+    return [...new Set(intents)];
+  }
+
   if (isWorldTimeQuery(query)) intents.push("worldtime");
   if (isWeatherQuery(query)) intents.push("weather");
   if (isMarineQuery(query)) intents.push("marine");
@@ -190,23 +227,31 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   if (isGitHubQuery(query) || isTechQuery(query)) intents.push("github");
   if (isHuggingFaceQuery(query)) intents.push("huggingface");
 
-  const structured = intents.some((i) =>
+  const structuredData = intents.some((i) =>
     [
       "worldtime", "weather", "marine", "earthquake", "currency", "holiday", "government",
       "country", "distance", "places", "news", "aviation", "satellite", "spaceweather",
-      "alerts", "disaster",
+      "alerts", "disaster", "market", "reddit", "hackernews", "arxiv",
     ].includes(i),
   );
 
   const needsWiki =
-    !structured &&
+    !structuredData &&
+    !intents.includes("wikipedia") &&
+    !isMarketPriceQuery(query) &&
+    !isRedditQuery(query) &&
+    !isHackerNewsQuery(query) &&
+    !isArxivQuery(query) &&
     (userRequestsSearch(query) || isFactualKnowledgeQuery(query) || needsWebSearch(query));
 
   if (needsWiki) {
     intents.push("wikipedia");
+    if (userRequestsSearch(query) || isGeneralWebSearchQuery(query)) {
+      intents.push("searx");
+    }
   }
 
-  if (!intents.length && needsWebSearch(query)) {
+  if (!intents.length && needsWebSearch(query) && !isMarketPriceQuery(query) && !isRedditQuery(query)) {
     intents.push("wikipedia");
   }
 
@@ -226,6 +271,9 @@ export const buildGitHubSearchQuery = (query: string): string => {
   if (/ניטור|monitoring/i.test(raw)) parts.push("monitoring");
   if (/קוד\s*פתוח|open\s*source/i.test(raw)) parts.push("open source");
   if (/מודל|llm|ai/i.test(raw)) parts.push("llm language model");
+  if (/github|גיטהב/i.test(raw) && /(?:פופולרי|popular|trending|השבוע|this\s+week)/i.test(raw)) {
+    return "stars:>100 pushed:>2024-01-01";
+  }
   if (/github|גיטהב/i.test(raw) && parts.length) return parts.join(" ").slice(0, 256);
   if (parts.join(" ").length >= 6) return parts.join(" ").slice(0, 256);
   return "";

@@ -86,6 +86,7 @@ import {
   migrateGemmaSystemPrompt,
   buildLanguageReplyDirective,
   WEB_SEARCH_GROUNDING_APPEND,
+  WEB_SEARCH_NO_RESULTS_APPEND,
   GAME_SEARCH_GROUNDING_APPEND,
   GAME_SEARCH_NO_RESULTS_APPEND,
 } from "./characterPrompts";
@@ -319,12 +320,17 @@ const defaultGemmaSettings: TunableModelSettings = {
   systemPrompt: GROVEE_CHAT_SYSTEM,
 };
 
-const defaultAppSettings = (): AppSettings => ({
-  hfRemoteHost: "",
-  inferenceBackend: "auto",
-  gemma: { ...defaultGemmaSettings },
-  vision: { ...DEFAULT_VISION_SETTINGS },
-});
+const defaultAppSettings = (): AppSettings => {
+  const onStaticPages =
+    typeof window !== "undefined" &&
+    (window.location.hostname.endsWith("github.io") || window.location.protocol === "file:");
+  return {
+    hfRemoteHost: "",
+    inferenceBackend: onStaticPages ? "wasm" : "auto",
+    gemma: { ...defaultGemmaSettings },
+    vision: { ...DEFAULT_VISION_SETTINGS },
+  };
+};
 
 const loadSettings = (): AppSettings => {
   try {
@@ -2509,7 +2515,11 @@ function App() {
     if (shouldRunWebSearch) {
       setStatus("מחפש מידע…");
       try {
-        const searchResult = await runWebSearch(effectivePrompt);
+        const recentUserText = priorTurns
+          .filter((t) => t.role === "user")
+          .slice(-4)
+          .map((t) => t.content);
+        const searchResult = await runWebSearch(effectivePrompt, { recentUserText });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
         pendingWebSearchRef.current = {
@@ -2835,8 +2845,11 @@ function App() {
         detail: `${prevChatTopic} → ${chatTopic}: "${trimmed}"`,
       });
     }
-    if (webContext.trim()) {
+    const searchHadLiveData = pendingWebSearchRef.current?.sources.some((s) => s.ok && s.text.trim()) ?? false;
+    if (searchHadLiveData) {
       systemPrompt = `${systemPrompt}\n\n${WEB_SEARCH_GROUNDING_APPEND}`;
+    } else if (shouldRunWebSearch) {
+      systemPrompt = `${systemPrompt}\n\n${WEB_SEARCH_NO_RESULTS_APPEND}`;
     }
     if (gameNoResults) {
       systemPrompt = `${systemPrompt}\n\n${GAME_SEARCH_NO_RESULTS_APPEND}`;

@@ -40,7 +40,13 @@ import { fetchGovernmentSearch } from "./providers/wikidataGov";
 
 import { fetchWorldTimeSearch } from "./providers/worldTime";
 
-import type { SearchSourceResult, WebSearchResult } from "./types";
+import { fetchSearxSearch } from "./providers/searxng";
+import { fetchRedditSearch } from "./providers/reddit";
+import { fetchHackerNewsSearch } from "./providers/hackernews";
+import { fetchArxivSearch } from "./providers/arxiv";
+import { fetchCoinGeckoSearch } from "./providers/coingecko";
+
+import type { SearchSourceResult, WebSearchResult, WebSearchOptions, SearchIntent } from "./types";
 
 
 
@@ -86,9 +92,35 @@ export const summarizeSearchResult = (sources: SearchSourceResult[], intents: st
 
 
 
-/** Run routed parallel search — typically 1–5 s total. */
+export const formatWebSearchNoResultsContext = (): string =>
+  `[WEB SEARCH — NO LIVE DATA]
+The app tried live providers but none returned usable data for this question (timeout, CORS, or unsupported source).
+RULES:
+1. Say clearly in Hebrew that live data could not be loaded right now.
+2. Do NOT invent numbers, prices, weather, places, repo names, or headlines.
+3. Do NOT say you "cannot browse" — say the fetch failed or this data type is not supported in-browser yet.
+[/WEB SEARCH — NO LIVE DATA]`;
 
-export const runWebSearch = async (query: string): Promise<WebSearchResult> => {
+const STRUCTURED_INTENTS: SearchIntent[] = [
+  "worldtime", "weather", "marine", "earthquake", "currency", "holiday", "government",
+  "country", "distance", "places", "news", "aviation", "satellite", "spaceweather",
+  "alerts", "disaster", "market", "reddit", "hackernews", "arxiv",
+];
+
+const runWikiSearxFallback = async (query: string): Promise<SearchSourceResult[]> => {
+  const wikiQ = stripSearchVerb(query);
+  const tasks: Promise<SearchSourceResult>[] = [
+    fetchWikipediaSearch(wikiQ, "en"),
+    fetchSearxSearch(query),
+  ];
+  if (/[\u0590-\u05FF]/.test(query)) {
+    tasks.push(fetchWikipediaSearch(wikiQ, "he"));
+  }
+  return Promise.all(tasks);
+};
+
+/** Run routed parallel search — typically 1–5 s total. */
+export const runWebSearch = async (query: string, options?: WebSearchOptions): Promise<WebSearchResult> => {
 
   const q = query.trim();
 
@@ -114,7 +146,7 @@ export const runWebSearch = async (query: string): Promise<WebSearchResult> => {
 
   if (intents.includes("news")) tasks.push(fetchNewsSearch(q));
 
-  if (intents.includes("aviation")) tasks.push(fetchAviationSearch(q));
+  if (intents.includes("aviation")) tasks.push(fetchAviationSearch(q, options?.recentUserText ?? []));
 
   if (intents.includes("satellite")) tasks.push(fetchIssSearch(q));
 
@@ -131,6 +163,15 @@ export const runWebSearch = async (query: string): Promise<WebSearchResult> => {
   if (intents.includes("government")) tasks.push(fetchGovernmentSearch(q));
 
   if (intents.includes("github")) tasks.push(fetchGitHubSearch(q));
+
+  if (intents.includes("market")) {
+    tasks.push(fetchCoinGeckoSearch(q));
+    tasks.push(fetchSearxSearch(q));
+  }
+  if (intents.includes("reddit")) tasks.push(fetchRedditSearch(q));
+  if (intents.includes("hackernews")) tasks.push(fetchHackerNewsSearch(q));
+  if (intents.includes("arxiv")) tasks.push(fetchArxivSearch(q));
+  if (intents.includes("searx")) tasks.push(fetchSearxSearch(q));
 
   if (intents.includes("huggingface")) {
 
@@ -156,9 +197,21 @@ export const runWebSearch = async (query: string): Promise<WebSearchResult> => {
 
 
 
-  const settled = await Promise.all(tasks);
+  const settled = tasks.length ? await Promise.all(tasks) : [];
 
-  const contextText = formatWebContext(settled);
+  const hasLiveData = settled.some((s) => s.ok && s.text.trim());
+  const hadStructuredOnly =
+    intents.some((i) => STRUCTURED_INTENTS.includes(i)) &&
+    !intents.includes("wikipedia") &&
+    !intents.includes("searx");
+
+  if (!hasLiveData && hadStructuredOnly) {
+    const fallbacks = await runWikiSearxFallback(q);
+    settled.push(...fallbacks);
+  }
+
+  const okContext = formatWebContext(settled);
+  const contextText = okContext.trim() ? okContext : formatWebSearchNoResultsContext();
 
   return {
 

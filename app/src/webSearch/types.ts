@@ -21,7 +21,12 @@ export type SearchProviderId =
   | "iss-tracker"
   | "noaa-space"
   | "israel-alerts"
-  | "gdacs-disasters";
+  | "gdacs-disasters"
+  | "searxng"
+  | "reddit"
+  | "hackernews"
+  | "arxiv"
+  | "coingecko";
 
 export type SearchSourceResult = {
   provider: SearchProviderId;
@@ -61,9 +66,19 @@ export type SearchIntent =
   | "satellite"
   | "spaceweather"
   | "alerts"
-  | "disaster";
+  | "disaster"
+  | "searx"
+  | "reddit"
+  | "hackernews"
+  | "arxiv"
+  | "market";
 
 export type FetchJsonOptions = {
   timeoutMs?: number;
   headers?: Record<string, string>;
+};
+
+export type WebSearchOptions = {
+  /** Recent user messages — used for aviation region / follow-up context. */
+  recentUserText?: string[];
 };

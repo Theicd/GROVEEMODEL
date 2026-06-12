@@ -190,6 +190,14 @@ export const CAMERA_CHAT_WORLD_HINT = `World memory below is background for YOU 
 
 export const TOPIC_SHIFT_CHAT_APPEND = `When a TOPIC SHIFT note appears below, treat it as authoritative: answer the user's NEW question fresh. Ignore stale context from earlier turns unless they explicitly refer back.`;
 
+export const WEB_SEARCH_NO_RESULTS_APPEND = `[WEB SEARCH — NO LIVE DATA]
+Live search ran but returned no usable facts for this question.
+RULES:
+1. Tell the user clearly in Hebrew that live data could not be fetched (timeout / blocked / not supported in browser).
+2. Do NOT invent numbers, prices, weather, headlines, repo names, or places.
+3. Do NOT give generic advice as if it were live data.
+4. For stock quotes (e.g. NVIDIA): only trust SearXNG/CoinGecko blocks if present; otherwise say live market data failed.`;
+
 export const WEB_SEARCH_GROUNDING_APPEND = `A [WEB SEARCH RESULTS] block may appear below with LIVE fetched data.
 RULES:
 1. Answer using ONLY facts from that block for the user's question (weather numbers, earthquake list, repo names, etc.).

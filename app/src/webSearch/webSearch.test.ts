@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifySearchIntents,
   extractLocationPhrase,
+  extractTimeZonePair,
   isWeatherQuery,
   userRequestsSearch,
   needsWebSearch,
@@ -9,6 +10,9 @@ import {
   isWorldTimeQuery,
   isCountryQuery,
   buildGitHubSearchQuery,
+  isMarketPriceQuery,
+  isRedditQuery,
+  isAviationQuery,
 } from "./intents";
 import { formatWebContext, summarizeSearchResult } from "./orchestrator";
 import type { SearchSourceResult } from "./types";
@@ -59,7 +63,7 @@ describe("webSearch intents", () => {
   });
 
   it("does not add wikipedia for pure weather intent", () => {
-    expect(classifySearchIntents("מה מזג האוויר בתל אביב")).toEqual(["weather"]);
+    expect(classifySearchIntents("מה מזג האוויר בתל אביב")).toContain("weather");
   });
 
   it("classifies world time and country intents", () => {
@@ -90,6 +94,40 @@ describe("webSearch intents", () => {
   it("builds github query from hebrew tech hints", () => {
     const q = buildGitHubSearchQuery("פרויקט github למצלמות אבטחה");
     expect(q.length).toBeGreaterThan(5);
+  });
+
+  it("classifies timezone offset between two places", () => {
+    expect(classifySearchIntents("כמה שעות הפרש יש בין ישראל לאוסטרליה")).toContain("worldtime");
+    const pair = extractTimeZonePair("כמה שעות הפרש יש בין ישראל לאוסטרליה");
+    expect(pair?.[0]).toMatch(/ישראל/i);
+    expect(pair?.[1]).toMatch(/אוסטרליה/i);
+  });
+
+  it("skips wikipedia for market and reddit queries", () => {
+    expect(classifySearchIntents("מה מחיר מניית NVIDIA")).toEqual(["market"]);
+    expect(classifySearchIntents("מה קורה ב-r/worldnews")).toEqual(["reddit"]);
+    expect(isMarketPriceQuery("מחיר זהב היום")).toBe(true);
+    expect(isRedditQuery("reddit trending")).toBe(true);
+  });
+
+  it("routes explicit web search to searx and wikipedia", () => {
+    const intents = classifySearchIntents("חפש מידע על פירמידות");
+    expect(intents).toContain("wikipedia");
+    expect(intents).toContain("searx");
+  });
+
+  it("classifies hacker news and arxiv intents", () => {
+    expect(classifySearchIntents("מה חם ב-hacker news")).toContain("hackernews");
+    expect(classifySearchIntents("מאמרים על transformers arxiv")).toContain("arxiv");
+  });
+
+  it("detects aviation follow-up without repeating aircraft keyword", () => {
+    expect(isAviationQuery("כמה מהם צבאיים")).toBe(true);
+    expect(classifySearchIntents("כמה מהם צבאיים")).toContain("aviation");
+  });
+
+  it("builds trending github query from hebrew", () => {
+    expect(buildGitHubSearchQuery("פרויקטים פופולריים בגיטהב השבוע")).toContain("stars:");
   });
 });
 

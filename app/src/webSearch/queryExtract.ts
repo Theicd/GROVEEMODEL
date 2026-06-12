@@ -51,6 +51,8 @@ export const extractLocationPhrase = (query: string): string | null => {
     /(?:what\s+)?time\s+(?:is\s+it\s+)?(?:in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:מזג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:מה\s+)?(?:מזג\s*האוויר|מז"?\s*א)\s+(?:ב|ב־|של)?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:גשם|שלג|מעונן|גשום|rain|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:צפוי|forecast|expect)\s+(?:גשם|rain|שלג|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:wave\s*height|גובה\s*גלים|גלים)\s+(?:in|at|near|ב|ב־|ליד)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:ב|in|at)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,40})(?:[?!.]?$)/i,
   ];
@@ -75,9 +77,9 @@ export const extractLocationPhrase = (query: string): string | null => {
 export const extractTimeZonePair = (query: string): [string, string] | null => {
   const q = query.trim();
   const patterns = [
-    /(?:פרש|הפרש)\s+(?:ה)?שע(?:ות)?\s+(?:בין|between)\s+(.+?)\s+(?:ל|ו|to|and)\s+(.+?)(?:[?!.]?$)/i,
-    /time\s+(?:zone\s+)?(?:difference|offset)\s+(?:between|from)\s+(.+?)\s+(?:and|to)\s+(.+?)(?:[?!.]?$)/i,
-    /(?:between|between)\s+(.+?)\s+and\s+(.+?)(?:[?!.]?$)/i,
+    /(?:כמה\s+)?(?:שעות?\s+)?(?:ה)?(?:פרש|הפרש)\s+(?:יש\s+)?(?:בין|between)\s+(.+?)\s+(?:ל|ו|to|and)\s*(.+?)(?:[?!.]?$)/i,
+    /(?:פרש|הפרש)\s+(?:ה)?שע(?:ות)?\s+(?:בין|between)\s+(.+?)\s+(?:ל|ו|to|and)\s*(.+?)(?:[?!.]?$)/i,
+    /time\s+(?:zone\s+)?(?:difference|offset)\s+(?:between|from)\s+(.+?)\s+(?:and|to)\s*(.+?)(?:[?!.]?$)/i,
   ];
   for (const re of patterns) {
     const m = q.match(re);

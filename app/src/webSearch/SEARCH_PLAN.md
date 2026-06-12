@@ -50,8 +50,9 @@
 ## Phase 4 — מקורות עתידיים (TODO)
 
 - [ ] **4.1** Open-Meteo Air Quality
-- [ ] **4.2** Hacker News / arXiv
-- [ ] **4.3** CoinGecko (קריפטו) — rate limit
+- [x] **4.2** Hacker News / arXiv
+- [x] **4.3** CoinGecko (קריפטו/זהב) — rate limit
+- [x] **4.11** SearXNG (public instances) + Reddit JSON
 - [ ] **4.4** Finnhub / Alpha Vantage (בורסות) — דורש API key
 - [ ] **4.5** OpenSky (טיסות) — CORS + rate limits
 - [ ] **4.6** NASA APOD / NeoWs (חלל)

@@ -82,6 +82,16 @@ export const fetchWeatherSearch = async (query: string): Promise<SearchSourceRes
 
     const cur = forecast.current;
     const daily = forecast.daily;
+    if (cur?.temperature_2m == null && !(daily?.time?.length ?? 0)) {
+      return {
+        provider,
+        label,
+        ok: false,
+        text: "",
+        error: "אין נתוני מזג אוויר עדכניים למיקום",
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
     const placeLabel = formatPlaceLabel(place);
     const desc =
       cur?.weather_code != null ? (WMO_HE[cur.weather_code] ?? `קוד ${cur.weather_code}`) : "—";

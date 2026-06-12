@@ -1,5 +1,5 @@
 import type { FetchJsonOptions } from "./types";
-import { proxyAwareFetch } from "./proxyFetch";
+import { defaultFetchTimeoutMs, proxyAwareFetch } from "./proxyFetch";
 
 export class FetchTimeoutError extends Error {
   constructor(url: string) {
@@ -13,7 +13,7 @@ export async function fetchJson<T>(
   init?: RequestInit,
   options: FetchJsonOptions = {},
 ): Promise<T> {
-  const timeoutMs = options.timeoutMs ?? 9_000;
+  const timeoutMs = options.timeoutMs ?? defaultFetchTimeoutMs();
   const controller = new AbortController();
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -45,7 +45,7 @@ export async function fetchText(
   init?: RequestInit,
   options: FetchJsonOptions = {},
 ): Promise<string> {
-  const timeoutMs = options.timeoutMs ?? 9_000;
+  const timeoutMs = options.timeoutMs ?? defaultFetchTimeoutMs();
   const controller = new AbortController();
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try {

@@ -1,30 +1,42 @@
-/** Browser-safe fetch — dev proxy, multi-relay on GitHub Pages / static hosts. */
+/** Browser-safe fetch — dev proxy, direct CORS where allowed, parallel relays on static hosts. */
 
-const PROXY_HOSTS = new Set([
+const PROXY_REQUIRED = new Set([
   "nominatim.openstreetmap.org",
   "router.project-osrm.org",
-  "countriesnow.space",
-  "www.wikidata.org",
-  "query.wikidata.org",
   "opensky-network.org",
   "www.oref.org.il",
   "api.tzevaadom.co.il",
-  "date.nager.at",
   "feeds.bbci.co.uk",
   "rss.cnn.com",
-  "earthquake.usgs.gov",
-  "api.open-meteo.com",
-  "services.swpc.noaa.gov",
-  "www.gdacs.org",
-  "www.seismicportal.eu",
-  "api.weather.gov",
-  "eonet.gsfc.nasa.gov",
-  "meri.digitraffic.fi",
-  "wttr.in",
-  "api.wheretheiss.at",
-  "celestrak.org",
-  "airplanes.live",
+  "www.reddit.com",
+  "export.arxiv.org",
+  "searx.be",
+  "search.bus-hit.me",
+  "searx.tiekoetter.com",
 ]);
+
+/** These APIs allow browser CORS — prefer direct fetch (fast, reliable on GitHub Pages). */
+const CORS_DIRECT_SUFFIXES = [
+  ".wikipedia.org",
+  "api.open-meteo.com",
+  "geocoding-api.open-meteo.com",
+  "marine-api.open-meteo.com",
+  "api.airplanes.live",
+  "api.github.com",
+  "timeapi.io",
+  "api.wheretheiss.at",
+  "earthquake.usgs.gov",
+  "api.frankfurter.app",
+  "restcountries.com",
+  "date.nager.at",
+  "query.wikidata.org",
+  "www.wikidata.org",
+  "eonet.gsfc.nasa.gov",
+  "www.gdacs.org",
+  "api.open-notify.org",
+  "api.coingecko.com",
+  "hn.algolia.com",
+];
 
 export function isStaticWebHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -45,15 +57,26 @@ const isCrossOrigin = (url: string): boolean => {
   }
 };
 
-const needsProxy = (url: string): boolean => {
+const hostOf = (url: string): string => {
   try {
-    const host = new URL(url).hostname;
-    if (PROXY_HOSTS.has(host)) return true;
-    if (isStaticWebHost() && isCrossOrigin(url)) return true;
-    return false;
+    return new URL(url).hostname;
   } catch {
-    return isStaticWebHost();
+    return "";
   }
+};
+
+export const hasDirectCors = (url: string): boolean => {
+  const host = hostOf(url);
+  if (!host) return false;
+  return CORS_DIRECT_SUFFIXES.some((s) => host === s || host.endsWith(s));
+};
+
+export const needsProxy = (url: string): boolean => {
+  const host = hostOf(url);
+  if (!host) return isStaticWebHost();
+  if (hasDirectCors(url)) return false;
+  if (PROXY_REQUIRED.has(host)) return true;
+  return isStaticWebHost() && isCrossOrigin(url);
 };
 
 const PUBLIC_RELAYS = [
@@ -70,20 +93,20 @@ async function fetchViaRelays(url: string, init?: RequestInit): Promise<Response
     Accept: "application/json, application/xml, text/plain, */*",
     ...(init?.headers as Record<string, string> | undefined),
   };
-  let lastErr: unknown;
-  for (const relay of PUBLIC_RELAYS) {
-    try {
-      const r = await fetch(relay(url), {
-        ...init,
-        method: "GET",
-        headers,
-      });
-      if (r.ok) return r;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(`All CORS relays failed for ${url}`);
+  const signal = init?.signal;
+
+  const tryRelay = async (relay: (t: string) => string): Promise<Response> => {
+    const r = await fetch(relay(url), { method: "GET", headers, signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r;
+  };
+
+  const results = await Promise.allSettled(PUBLIC_RELAYS.map((relay) => tryRelay(relay)));
+  const ok = results.find((r) => r.status === "fulfilled");
+  if (ok?.status === "fulfilled") return ok.value;
+
+  const err = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+  throw err?.reason instanceof Error ? err.reason : new Error(`All CORS relays failed for ${url}`);
 }
 
 export async function proxyAwareFetch(
@@ -92,7 +115,6 @@ export async function proxyAwareFetch(
 ): Promise<Response> {
   const inBrowser = typeof window !== "undefined";
   const method = init?.method ?? "GET";
-  const forceProxy = inBrowser && needsProxy(url);
 
   if (!inBrowser) {
     return fetch(url, init);
@@ -111,12 +133,13 @@ export async function proxyAwareFetch(
     return fetch(buildDevProxyUrl(url), init);
   }
 
-  if (!forceProxy) {
+  const preferDirect = hasDirectCors(url) || !needsProxy(url);
+  if (preferDirect) {
     try {
       const r = await fetch(url, init);
       if (r.ok) return r;
     } catch {
-      /* retry via relay */
+      /* retry via relay if cross-origin */
     }
   }
 
@@ -124,5 +147,13 @@ export async function proxyAwareFetch(
     return fetch(url, init);
   }
 
-  return fetchViaRelays(url, init);
+  if (needsProxy(url) || !preferDirect) {
+    return fetchViaRelays(url, init);
+  }
+
+  return fetch(url, init);
+}
+
+export function defaultFetchTimeoutMs(): number {
+  return isStaticWebHost() ? 22_000 : 9_000;
 }
