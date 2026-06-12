@@ -261,6 +261,11 @@ type WorkerOutMessage =
 const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const WEBGPU_BLOCKED_KEY = "grovee-webgpu-blocked";
+
+const isWebGpuInferenceError = (msg: string) =>
+  /WebGPU|bad_alloc|Can't create a session|GatherBlockQuantized|node_embedding_Quant|ERROR_CODE:\s*[69]|Could not find an implementation/i.test(
+    msg,
+  );
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
 
 /** Dev-only: ?qa=vision skips Gemma gate for automated face/emotion QA. */
@@ -326,19 +331,27 @@ const defaultGemmaSettings: TunableModelSettings = {
   systemPrompt: GROVEE_CHAT_SYSTEM,
 };
 
-const defaultAppSettings = (): AppSettings => {
-  const onStaticPages =
-    typeof window !== "undefined" &&
-    (window.location.hostname.endsWith("github.io") || window.location.protocol === "file:");
-  const webGpuBlocked =
-    typeof window !== "undefined" && localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1";
-  return {
-    hfRemoteHost: "",
-    inferenceBackend: onStaticPages || webGpuBlocked ? "wasm" : "auto",
-    gemma: { ...defaultGemmaSettings },
-    vision: { ...DEFAULT_VISION_SETTINGS },
-  };
+/** Gemma q4 on WebGPU often fails (GatherBlockQuantized) — WASM is the reliable default on Pages and prod builds. */
+const normalizeInferenceBackend = (
+  parsed: InferenceBackendPreference | undefined,
+): InferenceBackendPreference => {
+  if (typeof window !== "undefined") {
+    if (localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1") return "wasm";
+    if (window.location.hostname.endsWith("github.io")) return "wasm";
+  }
+  if (parsed === "wasm") return "wasm";
+  if (import.meta.env.DEV) {
+    return parsed === "webgpu" || parsed === "auto" ? parsed : "auto";
+  }
+  return "wasm";
 };
+
+const defaultAppSettings = (): AppSettings => ({
+  hfRemoteHost: "",
+  inferenceBackend: normalizeInferenceBackend(undefined),
+  gemma: { ...defaultGemmaSettings },
+  vision: { ...DEFAULT_VISION_SETTINGS },
+});
 
 const loadSettings = (): AppSettings => {
   try {
@@ -350,19 +363,18 @@ const loadSettings = (): AppSettings => {
       typeof mergedGemma.systemPrompt === "string" ? mergedGemma.systemPrompt : GROVEE_CHAT_SYSTEM,
     );
     const gemma = { ...mergedGemma, systemPrompt };
+    const inferenceBackend = normalizeInferenceBackend(parsed.inferenceBackend);
     const settings: AppSettings = {
       ...defaultAppSettings(),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
-      inferenceBackend:
-        localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1"
-          ? "wasm"
-          : parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
-            ? parsed.inferenceBackend
-            : "auto",
+      inferenceBackend,
       gemma,
       vision: mergeVisionSettings(parsed.vision),
     };
-    if (systemPrompt !== mergedGemma.systemPrompt) {
+    const shouldPersist =
+      systemPrompt !== mergedGemma.systemPrompt ||
+      inferenceBackend !== parsed.inferenceBackend;
+    if (shouldPersist) {
       saveSettings(settings);
     }
     return settings;
@@ -974,6 +986,7 @@ function App() {
   const messagesListRef = useRef<HTMLDivElement | null>(null);
   const continueModeRef = useRef(false);
   const loadingFileRef = useRef("");
+  const wasmBootRetryRef = useRef(false);
 
   useEffect(() => {
     appSettingsRef.current = appSettings;
@@ -2142,7 +2155,7 @@ function App() {
           detail: msg.error,
         });
         const isChatError = msg.scope === "chat" || isGeneratingRef.current;
-        if (/WebGPU|bad_alloc|Can't create a session|GatherBlockQuantized/i.test(msg.error)) {
+        if (isWebGpuInferenceError(msg.error)) {
           try {
             localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
           } catch {
@@ -2163,10 +2176,31 @@ function App() {
           setStatus(`שגיאה: ${msg.error}`);
           cameraLoopRef.current?.releaseAfterChat();
         } else {
+          const errText = msg.error;
+          if (isWebGpuInferenceError(errText) && !wasmBootRetryRef.current && workerRef.current) {
+            wasmBootRetryRef.current = true;
+            setWorkerBootError(null);
+            setIsLoading(true);
+            setProgress(0);
+            setStatus("WebGPU לא נתמך במחשב זה — טוען מחדש ב-WASM (CPU)…");
+            queueMicrotask(() => {
+              workerRef.current?.postMessage({ type: "configure_inference", backend: "wasm" });
+              workerRef.current?.postMessage({
+                type: "load",
+                modelId: GEMMA_MODEL_ID,
+                dtype: "q4",
+              });
+            });
+            return;
+          }
           setIsLoading(false);
           setProgress(0);
-          setStatus(`Error: ${msg.error}`);
-          setWorkerBootError(msg.error);
+          setStatus(`Error: ${errText}`);
+          setWorkerBootError(
+            isWebGpuInferenceError(errText)
+              ? `${errText} — לחץ «טען ב-WASM» למטה, או הגדרות → Inference → WASM, נקה מטמון, והתחל שוב.`
+              : errText,
+          );
         }
       } else if (msg.type === "scene_analysis") {
         workerInferenceBusyRef.current = false;
@@ -2299,24 +2333,37 @@ function App() {
     });
   }, [isLoaded, isGenerating]);
 
-  const loadModel = () => {
+  const loadModel = (opts?: { forceWasm?: boolean }) => {
     if (!workerRef.current) return;
+    if (!opts?.forceWasm) wasmBootRetryRef.current = false;
     setWorkerBootError(null);
     setIsLoading(true);
     setIsLoaded(false);
-    setStatus("Loading Gemma 4 E2B…");
+    setStatus(opts?.forceWasm ? "טוען מודל ב-WASM (CPU)…" : "Loading Gemma 4 E2B…");
     setProgress(0);
     setLoadingPhase("download");
     setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
     setLoadingTipIndex(0);
     loadingFileRef.current = "";
+    const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
+    if (opts?.forceWasm && appSettingsRef.current.inferenceBackend !== "wasm") {
+      const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
+      appSettingsRef.current = next;
+      setAppSettings(next);
+      saveSettings(next);
+      try {
+        localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
+      } catch {
+        /* ignore */
+      }
+    }
     workerRef.current.postMessage({
       type: "configure_hub",
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
     });
     workerRef.current.postMessage({
       type: "configure_inference",
-      backend: appSettingsRef.current.inferenceBackend,
+      backend,
     });
     workerRef.current.postMessage({
       type: "load",
@@ -2324,6 +2371,8 @@ function App() {
       dtype: "q4",
     });
   };
+
+  const retryWasmLoad = () => loadModel({ forceWasm: true });
 
   const clearModelCache = async () => {
     if (isGenerating || cacheClearing) return;
@@ -3249,6 +3298,17 @@ function App() {
       {workerBootError ? (
         <div className="worker-boot-banner" role="alert">
           <strong>שגיאה:</strong> {workerBootError}
+          {isWebGpuInferenceError(workerBootError) ? (
+            <button
+              type="button"
+              className="subtle-btn"
+              style={{ marginInlineStart: 12 }}
+              onClick={retryWasmLoad}
+              disabled={isLoading}
+            >
+              טען ב-WASM
+            </button>
+          ) : null}
           <button
             type="button"
             className="subtle-btn"
@@ -3380,11 +3440,21 @@ function App() {
                 <button
                   type="button"
                   className="load-btn"
-                  onClick={loadModel}
-                  disabled={isLoading || isGenerating || !!workerBootError}
+                  onClick={() => loadModel()}
+                  disabled={isLoading || isGenerating}
                 >
                   טען מודל מקומי
                 </button>
+                {isWebGpuInferenceError(workerBootError ?? "") ? (
+                  <button
+                    type="button"
+                    className="learn-link"
+                    onClick={retryWasmLoad}
+                    disabled={isLoading || isGenerating}
+                  >
+                    טען ב-WASM (CPU)
+                  </button>
+                ) : null}
                 <button type="button" className="learn-link" onClick={() => setInfoModalOpen(true)}>
                   איך זה עובד?
                 </button>

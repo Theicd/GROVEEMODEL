@@ -126,7 +126,7 @@ let chatBusy = false;
 let sceneBusy = false;
 let abortRequested = false;
 let activeInterrupt: InterruptableStoppingCriteria | null = null;
-let inferenceBackend: InferenceBackend = "auto";
+let inferenceBackend: InferenceBackend = "wasm";
 
 const isWorkerBusy = () => chatBusy || sceneBusy;
 
@@ -134,7 +134,7 @@ const isWebGpuRuntimeError = (err: unknown): boolean => {
   const msg = err instanceof Error ? err.message : String(err);
   return (
     /webgpu|OrtRun|GPUBuffer|mapAsync|Device.*is lost|device is lost|external Instance/i.test(msg) ||
-    /GatherBlockQuantized|Can't create a session|bad_alloc|ERROR_CODE:\s*[69]|Could not find an implementation/i.test(
+    /GatherBlockQuantized|node_embedding_Quant|Can't create a session|bad_alloc|ERROR_CODE:\s*[69]|Could not find an implementation/i.test(
       msg,
     )
   );
@@ -708,12 +708,27 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
       }
-      const loaded = await loadMultimodalModel(message.modelId, message.dtype);
-      chatSlot.model = loaded.model;
-      chatSlot.processor = loaded.processor;
-      chatSlot.device = loaded.device;
-      chatSlot.modelId = message.modelId;
-      post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+      try {
+        const loaded = await loadMultimodalModel(message.modelId, message.dtype);
+        chatSlot.model = loaded.model;
+        chatSlot.processor = loaded.processor;
+        chatSlot.device = loaded.device;
+        chatSlot.modelId = message.modelId;
+        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+      } catch (loadErr) {
+        if (!isWebGpuRuntimeError(loadErr)) throw loadErr;
+        webGpuOnnxBlocked = true;
+        post({
+          type: "status",
+          text: "WebGPU נכשל בטעינה — עובר ל-WASM (CPU)…",
+        });
+        const switched = await forceReloadWasm(message.modelId);
+        chatSlot.model = switched.model;
+        chatSlot.processor = switched.processor;
+        chatSlot.device = switched.device;
+        chatSlot.modelId = message.modelId;
+        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+      }
       return;
     }
 
