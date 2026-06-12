@@ -25,6 +25,8 @@ type LoadMessage = {
   type: "load";
   modelId: string;
   dtype: "q4" | "q8" | "fp16" | "fp32";
+  /** Apply backend atomically with load — avoids configure+load race in the worker. */
+  backend?: InferenceBackend;
 };
 
 export type WorkerImagePayload = {
@@ -205,9 +207,22 @@ const waitForSceneIdle = async (maxMs = 180_000): Promise<boolean> => {
 
 let webGpuAdapterProbe: boolean | null = null;
 
-const resetInferenceRuntime = () => {
+const resetWebGpuProbe = () => {
   webGpuAdapterProbe = null;
-  webGpuOnnxBlocked = false;
+};
+
+/** When switching to WASM after a GPU failure, keep the block flag so Auto won't retry WebGPU. */
+const applyInferenceBackend = (next: InferenceBackend) => {
+  if (next === inferenceBackend) return;
+  inferenceBackend = next;
+  resetWebGpuProbe();
+  if (next === "wasm") {
+    webGpuOnnxBlocked = true;
+  } else {
+    webGpuOnnxBlocked = false;
+  }
+  modelCache.clear();
+  clearModelSlots();
 };
 
 const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
@@ -495,11 +510,11 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   if (cached) {
     if (cached.device === "webgpu" && webGpuOnnxBlocked) {
       modelCache.delete(modelId);
-    } else if (pref === "auto") {
+    } else if (pref === "wasm" && cached.device === "wasm") {
       return cached;
     } else if (pref === "webgpu" && cached.device === "webgpu") {
       return cached;
-    } else if (pref === "wasm" && cached.device === "wasm") {
+    } else if (pref === "auto" && !(cached.device === "webgpu" && webGpuOnnxBlocked)) {
       return cached;
     } else {
       modelCache.delete(modelId);
@@ -688,13 +703,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
     }
 
     if (message.type === "configure_inference") {
-      const next = message.backend;
-      if (next !== inferenceBackend) {
-        inferenceBackend = next;
-        resetInferenceRuntime();
-        modelCache.clear();
-        clearModelSlots();
-      }
+      applyInferenceBackend(message.backend);
       return;
     }
 
@@ -704,9 +713,18 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         return;
       }
 
-      if (chatSlot.model && message.modelId === chatSlot.modelId) {
+      if (message.backend && message.backend !== inferenceBackend) {
+        applyInferenceBackend(message.backend);
+      } else if (message.backend === "wasm") {
+        webGpuOnnxBlocked = true;
+      }
+
+      if (chatSlot.model && message.modelId === chatSlot.modelId && chatSlot.device !== "webgpu") {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
+      }
+      if (chatSlot.device === "webgpu" && (webGpuOnnxBlocked || inferenceBackend === "wasm")) {
+        clearModelSlots();
       }
       try {
         const loaded = await loadMultimodalModel(message.modelId, message.dtype);
@@ -717,10 +735,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
       } catch (loadErr) {
         if (!isWebGpuRuntimeError(loadErr)) throw loadErr;
-        webGpuOnnxBlocked = true;
         post({
           type: "status",
-          text: "WebGPU נכשל בטעינה — עובר ל-WASM (CPU)…",
+          text: "WebGPU לא תומך ב-Gemma q4 במחשב זה — טוען ב-WASM (CPU)…",
         });
         const switched = await forceReloadWasm(message.modelId);
         chatSlot.model = switched.model;
