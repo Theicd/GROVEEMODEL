@@ -1,7 +1,12 @@
 import { geocodePlace, formatPlaceLabel } from "../geoResolve";
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
-import { extractLocationPhrase, extractTimeZonePair } from "../queryExtract";
+import {
+  extractCountryPhrase,
+  extractLocationPhrase,
+  extractTimeZonePair,
+  sanitizeSearchQuery,
+} from "../queryExtract";
 
 type TimeApiZone = {
   timeZone?: string;
@@ -13,6 +18,20 @@ type TimeApiZone = {
 };
 
 const DAY_HE = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+const KNOWN_TZ: Record<string, string> = {
+  israel: "Asia/Jerusalem",
+  ישrael: "Asia/Jerusalem",
+  ישראל: "Asia/Jerusalem",
+  tokyo: "Asia/Tokyo",
+  טוקיו: "Asia/Tokyo",
+  london: "Europe/London",
+  לונדון: "Europe/London",
+  "new york": "America/New_York",
+  "ניו יורק": "America/New_York",
+  paris: "Europe/Paris",
+  פריז: "Europe/Paris",
+};
 
 const fetchTimezone = async (timezone: string): Promise<TimeApiZone> =>
   fetchJson<TimeApiZone>(
@@ -43,12 +62,32 @@ const formatLocalTime = (iso: string | undefined): string => {
   }
 };
 
+const resolveTimeLocation = (query: string): string | null => {
+  const cleaned = sanitizeSearchQuery(query);
+  const fromClean = extractLocationPhrase(cleaned);
+  if (fromClean && fromClean.length <= 48) return fromClean;
+
+  const fromRaw = extractLocationPhrase(query);
+  if (fromRaw && fromRaw.length <= 48) return fromRaw;
+
+  const country = extractCountryPhrase(cleaned) ?? extractCountryPhrase(query);
+  if (country) return country;
+
+  const lower = cleaned.toLowerCase();
+  for (const [key, _tz] of Object.entries(KNOWN_TZ)) {
+    if (lower.includes(key.toLowerCase()) || cleaned.includes(key)) return key;
+  }
+
+  if (/יש(?:rael|ר(?:א|a)el)|israel/i.test(query)) return "Israel";
+  return null;
+};
+
 export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "world-time" as const;
   const label = "שעון עולמי (TimeAPI.io)";
   try {
-    const pair = extractTimeZonePair(query);
+    const pair = extractTimeZonePair(sanitizeSearchQuery(query)) ?? extractTimeZonePair(query);
     if (pair) {
       const [aName, bName] = pair;
       const placeA = await geocodePlace(aName);
@@ -88,8 +127,30 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
       };
     }
 
-    const location = extractLocationPhrase(query) ?? query.trim();
-    const place = await geocodePlace(location);
+    const location = resolveTimeLocation(query);
+    if (!location) {
+      return {
+        provider,
+        label,
+        ok: false,
+        text: "",
+        error: "לא זוהה מיקום בשאלה — נסה: «מה השעה בטוקיו»",
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
+
+    const tzDirect = KNOWN_TZ[location.toLowerCase()] ?? KNOWN_TZ[location];
+    let place = await geocodePlace(location);
+    if (!place?.timezone && tzDirect) {
+      place = {
+        name: location,
+        timezone: tzDirect,
+        latitude: 0,
+        longitude: 0,
+        country_code: "",
+      };
+    }
+
     if (!place?.timezone) {
       return {
         provider,
@@ -108,6 +169,7 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
       `מיקום: ${formatPlaceLabel(place)}`,
       `אזור זמן: ${time.timeZone ?? place.timezone}`,
       `שעה מקומית: ${formatLocalTime(time.currentLocalTime)}`,
+      `תאריך: ${d ? d.toLocaleDateString("he-IL") : "—"}`,
       `UTC offset: ${formatOffset(time.currentUtcOffset?.seconds)}${time.isDayLightSavingActive ? " (DST פעיל)" : ""}`,
       ...(d ? [`יום: ${DAY_HE[dayIdx] ?? dayIdx}`] : []),
     ];

@@ -1,96 +1,61 @@
-import { classifySearchIntents, stripSearchVerb } from "./intents";
-
-import { fetchCurrencySearch } from "./providers/frankfurter";
-
-import { fetchDistanceSearch } from "./providers/distance";
-
-import { fetchEarthquakeSearch } from "./providers/usgsEarthquake";
-
-import { fetchGitHubSearch } from "./providers/github";
-
 import {
-
-  fetchHuggingFaceDatasetsSearch,
-
-  fetchHuggingFaceModelsSearch,
-
-} from "./providers/huggingface";
-
+  classifySearchIntents,
+  isFlightStatusQuery,
+  isIssQuery,
+  isMarketPriceQuery,
+  isRedditQuery,
+  isSatelliteCatalogQuery,
+  isYouTubeQuery,
+  sanitizeSearchQuery,
+  stripSearchVerb,
+} from "./intents";
+import { fetchCurrencySearch } from "./providers/frankfurter";
+import { fetchDistanceSearch } from "./providers/distance";
+import { fetchEarthquakeSearch } from "./providers/usgsEarthquake";
+import { fetchGitHubSearch } from "./providers/github";
+import { fetchHuggingFaceDatasetsSearch, fetchHuggingFaceModelsSearch } from "./providers/huggingface";
 import { fetchHolidaySearch } from "./providers/nagerHolidays";
-
 import { fetchPlacesSearch } from "./providers/nominatimPlaces";
-
 import { fetchNewsSearch } from "./providers/newsRss";
-
 import { fetchAviationSearch } from "../realityData/providers/aviation";
+import { fetchShipsSearch } from "../realityData/providers/ships";
+import { fetchSatelliteCatalogSearch } from "../realityData/providers/satelliteCatalog";
 import { fetchIssSearch } from "../realityData/providers/iss";
 import { fetchSpaceWeatherSearch } from "../realityData/providers/spaceWeather";
 import { fetchIsraelAlertsSearch } from "../realityData/providers/israelAlerts";
 import { fetchDisasterSearch } from "../realityData/providers/disasters";
-
 import { fetchMarineSearch } from "./providers/openMeteoMarine";
-
 import { fetchWeatherSearch } from "./providers/openMeteo";
-
 import { fetchCountrySearch } from "./providers/restCountries";
-
 import { fetchWikipediaSearch } from "./providers/wikipedia";
-
 import { fetchGovernmentSearch } from "./providers/wikidataGov";
-
 import { fetchWorldTimeSearch } from "./providers/worldTime";
-
-import { fetchSearxSearch } from "./providers/searxng";
-import { fetchRedditSearch } from "./providers/reddit";
-import { fetchHackerNewsSearch } from "./providers/hackernews";
-import { fetchArxivSearch } from "./providers/arxiv";
 import { fetchCoinGeckoSearch } from "./providers/coingecko";
+import { fetchCommoditySearch, fetchMarketQuoteSearch } from "./providers/marketQuotes";
+import { fetchHackerNewsSearch } from "./providers/hackerNews";
+import { fetchSpaceXLaunchSearch } from "./providers/spacexLaunch";
+import { fetchUnsupportedSource } from "./providers/unsupported";
+import { buildSearchBrief, formatSearchBriefContext } from "./searchBrief";
+import type { SearchSourceResult, WebSearchResult, WebSearchOptions } from "./types";
 
-import type { SearchSourceResult, WebSearchResult, WebSearchOptions, SearchIntent } from "./types";
-
-
-
-const GROUNDING_HEADER = `[WEB SEARCH RESULTS — authoritative live data. Use ONLY this block for factual answers.
-
-If data is missing, say so clearly. Cite source names. Do NOT invent numbers or URLs.]`;
-
-
-
+/** @deprecated Use formatSearchBriefContext via runWebSearch */
 export const formatWebContext = (sources: SearchSourceResult[]): string => {
-
   const ok = sources.filter((s) => s.ok && s.text.trim());
-
   if (!ok.length) return "";
-
-  const blocks = ok.map((s) => `## ${s.label}\n${s.text}${s.url ? `\nSource: ${s.url}` : ""}`);
-
-  return `${GROUNDING_HEADER}\n\n${blocks.join("\n\n")}\n\n[/WEB SEARCH RESULTS]`;
-
+  const brief = buildSearchBrief(ok, [], "");
+  return formatSearchBriefContext(brief, "", 800);
 };
-
-
 
 export const summarizeSearchResult = (sources: SearchSourceResult[], intents: string[]): string => {
-
   const ok = sources.filter((s) => s.ok);
-
   const failed = sources.filter((s) => !s.ok);
-
   if (!ok.length) {
-
     return failed.length
-
       ? `חיפוש: אין תוצאות (${failed.map((f) => f.label).join(", ")})`
-
       : "חיפוש: אין תוצאות";
-
   }
-
   return `חיפוש: ${ok.length} מקורות (${ok.map((s) => s.label).join(" · ")}) · ${intents.join(", ")}`;
-
 };
-
-
 
 export const formatWebSearchNoResultsContext = (): string =>
   `[WEB SEARCH — NO LIVE DATA]
@@ -101,145 +66,132 @@ RULES:
 3. Do NOT say you "cannot browse" — say the fetch failed or this data type is not supported in-browser yet.
 [/WEB SEARCH — NO LIVE DATA]`;
 
-const STRUCTURED_INTENTS: SearchIntent[] = [
-  "worldtime", "weather", "marine", "earthquake", "currency", "holiday", "government",
-  "country", "distance", "places", "news", "aviation", "satellite", "spaceweather",
-  "alerts", "disaster", "market", "reddit", "hackernews", "arxiv",
-];
-
-const runWikiSearxFallback = async (query: string): Promise<SearchSourceResult[]> => {
-  const wikiQ = stripSearchVerb(query);
-  const tasks: Promise<SearchSourceResult>[] = [
-    fetchWikipediaSearch(wikiQ, "en"),
-    fetchSearxSearch(query),
-  ];
-  if (/[\u0590-\u05FF]/.test(query)) {
-    tasks.push(fetchWikipediaSearch(wikiQ, "he"));
-  }
-  return Promise.all(tasks);
+const trackTask = (
+  task: Promise<SearchSourceResult>,
+  options: WebSearchOptions | undefined,
+): Promise<SearchSourceResult> => {
+  if (!options?.onProgress) return task;
+  return task.then((result) => {
+    options.onProgress?.({ type: "provider_done", result });
+    return result;
+  });
 };
 
 /** Run routed parallel search — typically 1–5 s total. */
 export const runWebSearch = async (query: string, options?: WebSearchOptions): Promise<WebSearchResult> => {
-
-  const q = query.trim();
-
+  const q = sanitizeSearchQuery(query);
   const intents = classifySearchIntents(q);
-
   const tasks: Promise<SearchSourceResult>[] = [];
 
+  options?.onProgress?.({ type: "start", intents, query: q });
 
-
-  if (intents.includes("worldtime")) tasks.push(fetchWorldTimeSearch(q));
-
-  if (intents.includes("weather")) tasks.push(fetchWeatherSearch(q));
-
-  if (intents.includes("marine")) tasks.push(fetchMarineSearch(q));
-
-  if (intents.includes("earthquake")) tasks.push(fetchEarthquakeSearch(q));
-
-  if (intents.includes("currency")) tasks.push(fetchCurrencySearch(q));
-
-  if (intents.includes("distance")) tasks.push(fetchDistanceSearch(q));
-
-  if (intents.includes("places")) tasks.push(fetchPlacesSearch(q));
-
-  if (intents.includes("news")) tasks.push(fetchNewsSearch(q));
-
-  if (intents.includes("aviation")) tasks.push(fetchAviationSearch(q, options?.recentUserText ?? []));
-
-  if (intents.includes("satellite")) tasks.push(fetchIssSearch(q));
-
-  if (intents.includes("spaceweather")) tasks.push(fetchSpaceWeatherSearch(q));
-
-  if (intents.includes("alerts")) tasks.push(fetchIsraelAlertsSearch(q));
-
-  if (intents.includes("disaster")) tasks.push(fetchDisasterSearch(q));
-
-  if (intents.includes("country")) tasks.push(fetchCountrySearch(q));
-
-  if (intents.includes("holiday")) tasks.push(fetchHolidaySearch(q));
-
-  if (intents.includes("government")) tasks.push(fetchGovernmentSearch(q));
-
-  if (intents.includes("github")) tasks.push(fetchGitHubSearch(q));
-
-  if (intents.includes("market")) {
-    tasks.push(fetchCoinGeckoSearch(q));
-    tasks.push(fetchSearxSearch(q));
-  }
-  if (intents.includes("reddit")) tasks.push(fetchRedditSearch(q));
-  if (intents.includes("hackernews")) tasks.push(fetchHackerNewsSearch(q));
-  if (intents.includes("arxiv")) tasks.push(fetchArxivSearch(q));
-  if (intents.includes("searx")) tasks.push(fetchSearxSearch(q));
-
-  if (intents.includes("huggingface")) {
-
-    tasks.push(fetchHuggingFaceModelsSearch(q));
-
-    tasks.push(fetchHuggingFaceDatasetsSearch(q));
-
-  }
-
-  if (intents.includes("wikipedia")) {
-
-    const wikiQ = stripSearchVerb(q);
-
-    tasks.push(fetchWikipediaSearch(wikiQ, "en"));
-
-    if (/[\u0590-\u05FF]/.test(q)) {
-
-      tasks.push(fetchWikipediaSearch(wikiQ, "he"));
-
+  if (intents.includes("worldtime")) tasks.push(trackTask(fetchWorldTimeSearch(q), options));
+  if (intents.includes("weather")) tasks.push(trackTask(fetchWeatherSearch(q), options));
+  if (intents.includes("marine")) tasks.push(trackTask(fetchMarineSearch(q), options));
+  if (intents.includes("earthquake")) tasks.push(trackTask(fetchEarthquakeSearch(q), options));
+  if (intents.includes("currency")) tasks.push(trackTask(fetchCurrencySearch(q), options));
+  if (intents.includes("distance")) tasks.push(trackTask(fetchDistanceSearch(q), options));
+  if (intents.includes("places")) tasks.push(trackTask(fetchPlacesSearch(q), options));
+  if (intents.includes("ships")) tasks.push(trackTask(fetchShipsSearch(q), options));
+  if (intents.includes("news")) tasks.push(trackTask(fetchNewsSearch(q), options));
+  if (intents.includes("aviation")) tasks.push(trackTask(fetchAviationSearch(q, options?.recentUserText ?? []), options));
+  if (intents.includes("satellite")) {
+    if (isSatelliteCatalogQuery(q) || !isIssQuery(q)) {
+      tasks.push(trackTask(fetchSatelliteCatalogSearch(q), options));
     }
-
+    if (isIssQuery(q)) tasks.push(trackTask(fetchIssSearch(q), options));
+  }
+  if (intents.includes("spacex")) tasks.push(trackTask(fetchSpaceXLaunchSearch(q), options));
+  if (intents.includes("spaceweather")) tasks.push(trackTask(fetchSpaceWeatherSearch(q), options));
+  if (intents.includes("alerts")) tasks.push(trackTask(fetchIsraelAlertsSearch(q), options));
+  if (intents.includes("disaster")) tasks.push(trackTask(fetchDisasterSearch(q), options));
+  if (intents.includes("country")) tasks.push(trackTask(fetchCountrySearch(q), options));
+  if (intents.includes("holiday")) tasks.push(trackTask(fetchHolidaySearch(q), options));
+  if (intents.includes("government")) tasks.push(trackTask(fetchGovernmentSearch(q), options));
+  if (intents.includes("github")) tasks.push(trackTask(fetchGitHubSearch(q), options));
+  if (intents.includes("huggingface")) {
+    tasks.push(trackTask(fetchHuggingFaceModelsSearch(q), options));
+    tasks.push(trackTask(fetchHuggingFaceDatasetsSearch(q), options));
+  }
+  if (intents.includes("crypto")) tasks.push(trackTask(fetchCoinGeckoSearch(q), options));
+  if (intents.includes("commodity")) tasks.push(trackTask(fetchCommoditySearch(q), options));
+  if (intents.includes("market")) tasks.push(trackTask(fetchMarketQuoteSearch(q), options));
+  if (intents.includes("hackernews")) tasks.push(trackTask(fetchHackerNewsSearch(q), options));
+  if (isMarketPriceQuery(q) && !intents.includes("market")) {
+    tasks.push(trackTask(fetchMarketQuoteSearch(q), options));
+  }
+  if (isRedditQuery(q)) {
+    tasks.push(
+      trackTask(
+        Promise.resolve(
+          fetchUnsupportedSource(
+            "reddit",
+            "Reddit",
+            "Reddit API דורש OAuth — לא מחובר בדפדפן; נסה Hacker News או חיפוש כללי",
+          ),
+        ),
+        options,
+      ),
+    );
+  }
+  if (isFlightStatusQuery(q)) {
+    tasks.push(
+      trackTask(
+        Promise.resolve(
+          fetchUnsupportedSource(
+            "flight-status",
+            "סטטוס טיסות",
+            "סטטוס טיסות בנמל (JFK וכו') דורש AviationStack/FlightAware API — לא מחובר; בדוק אתר הנמל או FlightAware",
+          ),
+        ),
+        options,
+      ),
+    );
+  }
+  if (isYouTubeQuery(q)) {
+    tasks.push(
+      trackTask(
+        Promise.resolve(
+          fetchUnsupportedSource(
+            "youtube",
+            "YouTube",
+            "YouTube Data API דורש API key — לא מחובר בדפדפן; חפש ישירות ב-youtube.com או נסה שאלה על Hacker News / GitHub",
+          ),
+        ),
+        options,
+      ),
+    );
+  }
+  if (intents.includes("wikipedia")) {
+    const wikiQ = stripSearchVerb(q);
+    tasks.push(trackTask(fetchWikipediaSearch(wikiQ, "en"), options));
+    if (/[\u0590-\u05FF]/.test(q)) {
+      tasks.push(trackTask(fetchWikipediaSearch(wikiQ, "he"), options));
+    }
   }
 
+  let settled = tasks.length ? await Promise.all(tasks) : [];
 
+  const brief = buildSearchBrief(settled, intents, q);
+  const okContext = formatSearchBriefContext(brief, q);
+  const contextText = okContext.trim() && settled.some((s) => s.ok && s.text.trim())
+    ? okContext
+    : formatWebSearchNoResultsContext();
 
-  const settled = tasks.length ? await Promise.all(tasks) : [];
-
-  const hasLiveData = settled.some((s) => s.ok && s.text.trim());
-  const hadStructuredOnly =
-    intents.some((i) => STRUCTURED_INTENTS.includes(i)) &&
-    !intents.includes("wikipedia") &&
-    !intents.includes("searx");
-
-  if (!hasLiveData && hadStructuredOnly) {
-    const fallbacks = await runWikiSearxFallback(q);
-    settled.push(...fallbacks);
-  }
-
-  const okContext = formatWebContext(settled);
-  const contextText = okContext.trim() ? okContext : formatWebSearchNoResultsContext();
+  options?.onProgress?.({ type: "complete", sources: settled });
 
   return {
-
     contextText,
-
     sources: settled,
-
     summaryHe: summarizeSearchResult(settled, intents),
-
     intents,
-
+    brief,
   };
-
 };
-
-
-
-/** Back-compat wrapper — returns context string only. */
 
 export const fetchWebContext = async (query: string): Promise<string> => {
-
   const result = await runWebSearch(query);
-
   return result.contextText;
-
 };
 
-
-
 export { userRequestsSearch } from "./intents";
-

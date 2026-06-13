@@ -132,6 +132,7 @@ export class GroveeVisionRunner {
   private visibilityBound = false;
   private lastUiEmit = 0;
   private lastCoachDispatch = { intent: "none" as string, at: 0 };
+  private pausedForChat = false;
 
   constructor(
     world: WorldMemory,
@@ -246,14 +247,17 @@ export class GroveeVisionRunner {
   }
 
   /**
-   * Legacy hook — vision models are never auto-paused (user toggles only).
+   * Pause vision pipeline during chat inference to reduce GPU/CPU contention.
    */
   pauseForChatInference(): void {
-    this.callbacks.onCameraStatus?.("👁 Character · צופה (כל המודלים פעילים)");
+    this.pausedForChat = true;
+    this.pipeline.stop();
+    this.callbacks.onCameraStatus?.("👁 Character · מושהה לצ'אט");
   }
 
-  /** Legacy hook — no-op; models stay running. */
+  /** Resume vision after chat inference completes. */
   resumeAfterChatInference(): void {
+    this.pausedForChat = false;
     const video = this.video;
     if (video && video.readyState >= 2) {
       const last = this.pipeline.getLastFrameAt();
@@ -368,6 +372,7 @@ export class GroveeVisionRunner {
   };
 
   private onUiTick(): void {
+    if (this.pausedForChat) return;
     const result = this.getLatestResult();
     if (!result) return;
 

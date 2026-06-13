@@ -10,12 +10,13 @@ import {
   isWorldTimeQuery,
   isCountryQuery,
   buildGitHubSearchQuery,
-  isMarketPriceQuery,
+  buildHuggingFaceSearchQuery,
+  isCommodityPriceQuery,
   isRedditQuery,
   isAviationQuery,
 } from "./intents";
+import { extractCurrencyPair, sanitizeSearchQuery } from "./queryExtract";
 import { formatWebContext, summarizeSearchResult } from "./orchestrator";
-import { buildWeatherCannedReply } from "./weatherReply";
 import type { SearchSourceResult } from "./types";
 
 describe("webSearch intents", () => {
@@ -25,9 +26,9 @@ describe("webSearch intents", () => {
     expect(isWeatherQuery("hello")).toBe(false);
   });
 
-  it("extracts location from temperature question", () => {
-    expect(extractLocationPhrase("מה הטמפרטורה עכשיו בברזיל")).toMatch(/ברזיל/i);
-    expect(extractLocationPhrase("מה מזג האוויר בתל אביב")).toBeTruthy();
+  it("extracts location from weather question", () => {
+    expect(extractLocationPhrase("מה מזג האוויר בניו יורק")).toBeTruthy();
+    expect(extractLocationPhrase("weather in Paris")).toBeTruthy();
   });
 
   it("classifies weather intent", () => {
@@ -39,8 +40,9 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("רעידות אדמה אחרונות")).toContain("earthquake");
   });
 
-  it("adds wikipedia fallback for general queries", () => {
-    expect(classifySearchIntents("מי היה אinstein")).toContain("wikipedia");
+  it("does not add wikipedia without explicit search request", () => {
+    expect(classifySearchIntents("מי היה אinstein")).toEqual([]);
+    expect(classifySearchIntents("חפש מידע על איינשטיין")).toContain("wikipedia");
   });
 
   it("detects explicit search request", () => {
@@ -56,16 +58,21 @@ describe("webSearch intents", () => {
     expect(needsWebSearch("שלום")).toBe(false);
   });
 
-  it("enables web search for factual and live queries", () => {
+  it("auto search only for live or explicit lookup — not static facts", () => {
     expect(needsWebSearch("מה מזג האוויר בתל אביב")).toBe(true);
     expect(needsWebSearch("מה גובה הגלים בחיפה")).toBe(true);
-    expect(needsWebSearch("מי היה אinstein")).toBe(true);
+    expect(needsWebSearch("מה השעה בלונדון")).toBe(true);
+    expect(needsWebSearch("כמה מטוסים נמצאים כרגע מעל ישראל?")).toBe(true);
     expect(needsWebSearch("חפש מידע על ברמודה")).toBe(true);
+    expect(needsWebSearch("מי היה אinstein")).toBe(false);
+    expect(needsWebSearch("מה בירת יפן?")).toBe(false);
+    expect(needsWebSearch("מה המטבע של ברזיל?")).toBe(false);
+    expect(needsWebSearch('כמה ק"מ בין ירושלים לחיפה?')).toBe(false);
+    expect(needsWebSearch("מי ראש הממשלה של בריטניה?")).toBe(true);
+    expect(needsWebSearch("מה מחיר חבית נפט Brent?")).toBe(true);
   });
 
-  it("detects Hebrew temperature questions", () => {
-    expect(isWeatherQuery("מה הטמפרטורה עכשיו בברזיל")).toBe(true);
-    expect(classifySearchIntents("מה הטמפרטורה עכשיו בברזיל")).toContain("weather");
+  it("does not add wikipedia for pure weather intent", () => {
     expect(classifySearchIntents("מה מזג האוויר בתל אביב")).toEqual(["weather"]);
   });
 
@@ -83,9 +90,9 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("מה הכותרת הראשית באתר BBC עכשיו")).toContain("news");
   });
 
-  it("detects new query types for needsWebSearch", () => {
+  it("detects live query types for needsWebSearch", () => {
     expect(needsWebSearch("מה השעה בלונדון")).toBe(true);
-    expect(needsWebSearch("מה הבירה של צרפת")).toBe(true);
+    expect(needsWebSearch("מה הבירה של צרפת")).toBe(false);
     expect(isWorldTimeQuery("what time in Tokyo")).toBe(true);
     expect(isCountryQuery("population of Israel")).toBe(true);
   });
@@ -108,20 +115,9 @@ describe("webSearch intents", () => {
 
   it("skips wikipedia for market and reddit queries", () => {
     expect(classifySearchIntents("מה מחיר מניית NVIDIA")).toEqual(["market"]);
-    expect(classifySearchIntents("מה קורה ב-r/worldnews")).toEqual(["reddit"]);
-    expect(isMarketPriceQuery("מחיר זהב היום")).toBe(true);
+    expect(classifySearchIntents("מה קורה ב-r/worldnews")).toEqual([]);
+    expect(isCommodityPriceQuery("מחיר זהב היום")).toBe(true);
     expect(isRedditQuery("reddit trending")).toBe(true);
-  });
-
-  it("routes explicit web search to searx and wikipedia", () => {
-    const intents = classifySearchIntents("חפש מידע על פירמידות");
-    expect(intents).toContain("wikipedia");
-    expect(intents).toContain("searx");
-  });
-
-  it("classifies hacker news and arxiv intents", () => {
-    expect(classifySearchIntents("מה חם ב-hacker news")).toContain("hackernews");
-    expect(classifySearchIntents("מאמרים על transformers arxiv")).toContain("arxiv");
   });
 
   it("detects aviation follow-up without repeating aircraft keyword", () => {
@@ -129,8 +125,108 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("כמה מהם צבאיים")).toContain("aviation");
   });
 
+  it("does not add wikipedia for github trending query", () => {
+    expect(classifySearchIntents("פרויקטים פופולריים בגיטהב השבוע")).toEqual(["github"]);
+  });
+
+  it("sanitizes greeting from time query location", () => {
+    const cleaned = sanitizeSearchQuery("בוקר טוב מר גרובי, איזה יום ומה השעה בישראל");
+    expect(cleaned).not.toMatch(/בוקר\s+טוב/i);
+    expect(cleaned).toMatch(/ישrael|ישראל/i);
+  });
+
   it("builds trending github query from hebrew", () => {
     expect(buildGitHubSearchQuery("פרויקטים פופולריים בגיטהב השבוע")).toContain("stars:");
+  });
+
+  it("routes currency conversion without wikipedia", () => {
+    expect(classifySearchIntents("כמה יורו שווים 1000 שקלים?")).toEqual(["currency"]);
+    expect(classifySearchIntents("כמה שקלים שווים 100 דולר?")).toEqual(["currency"]);
+    expect(classifySearchIntents("כמה BRL מקבלים עבור 1 דולר?")).toEqual(["currency"]);
+  });
+
+  it("extracts currency pair with amount from natural hebrew", () => {
+    expect(extractCurrencyPair("כמה יורו שווים 1000 שקלים?")).toEqual({
+      from: "ILS",
+      to: "EUR",
+      amount: 1000,
+    });
+    expect(extractCurrencyPair("כמה BRL מקבלים עבור 1 דולר?")).toEqual({
+      from: "USD",
+      to: "BRL",
+      amount: 1,
+    });
+  });
+
+  it("routes population question to country provider, not wikipedia", () => {
+    expect(classifySearchIntents("כמה תושבים יש בקנדה?")).toEqual(["country"]);
+  });
+
+  it("does not misroute generic 'מהם' questions to aviation", () => {
+    expect(isAviationQuery("מהם 10 הנושאים המסוקרים ביותר בעולם כרגע?")).toBe(false);
+    expect(classifySearchIntents("מהם 10 הנושאים המסוקרים ביותר בעולם כרגע?")).not.toContain("aviation");
+    expect(classifySearchIntents("מהם מודלי התמונה הפופולריים ביותר השבוע?")).toEqual(["huggingface"]);
+  });
+
+  it("extracts location from wind speed question", () => {
+    expect(extractLocationPhrase("מה מהירות הרוח בפריז?")).toMatch(/פריז|paris/i);
+  });
+
+  it("extracts Madrid from Hebrew forecast question", () => {
+    expect(extractLocationPhrase("מהי תחזית מזג האוויר במדריד למחר?")).toMatch(/מדריד|madrid/i);
+  });
+
+  it("classifies OCR search to huggingface and github", () => {
+    expect(classifySearchIntents("חפש מודלים ל-OCR")).toEqual(
+      expect.arrayContaining(["huggingface", "github"]),
+    );
+  });
+
+  it("routes AI tech news to hackernews", () => {
+    expect(needsWebSearch("מה קורה כרגע בתחום הבינה המלאכותית?")).toBe(true);
+    expect(classifySearchIntents("מה קורה כרגע בתחום הבינה המלאכותית?")).toContain("hackernews");
+  });
+
+  it("routes flight status at airport", () => {
+    expect(needsWebSearch("מה מצב הטיסות בנמל התעופה JFK?")).toBe(true);
+    expect(classifySearchIntents("Nearest train station Eiffel Tower")).toContain("places");
+  });
+
+  it("routes ships in Suez and satellite catalog", () => {
+    expect(classifySearchIntents("אילו ספינות בתעלת סואץ")).toContain("ships");
+    expect(classifySearchIntents("כמה לוויינים פעילים יש כיום?")).toContain("satellite");
+    expect(classifySearchIntents("מהו השיגור הקרוב של SpaceX?")).toContain("spacex");
+    expect(classifySearchIntents("מהו הפוסט הפופולרי ביותר ב-Hacker News כרגע?")).toContain("hackernews");
+  });
+
+  it("does not add wikipedia for crypto price query", () => {
+    expect(classifySearchIntents("מה מחיר הביטקוין עכשיו?")).toEqual(["crypto"]);
+  });
+
+  it("routes commodity prices and current government leaders to live search", () => {
+    expect(isCommodityPriceQuery("מה מחיר חבית נפט Brent?")).toBe(true);
+    expect(classifySearchIntents("מה מחיר חבית נפט Brent?")).toContain("commodity");
+    expect(classifySearchIntents("מי ראש הממשלה של בריטניה?")).toContain("government");
+    expect(classifySearchIntents("מה מצב מדד S&P 500?")).toEqual(["market"]);
+    expect(needsWebSearch("מה מצב מדד S&P 500?")).toBe(true);
+  });
+
+  it("builds huggingface image model query", () => {
+    expect(buildHuggingFaceSearchQuery("מהם מודלי התמונה הפופולריים ביותר השבוע?")).toBe("stable-diffusion");
+  });
+
+  it("does not treat earthquake duration as world time", () => {
+    expect(isWorldTimeQuery("האם הייתה רעידת אדמה ביפן ב-48 השעות האחרונות?")).toBe(false);
+    const intents = classifySearchIntents("האם הייתה רעידת אדמה ביפן ב-48 השעות האחרונות?");
+    expect(intents).toContain("earthquake");
+    expect(intents).not.toContain("worldtime");
+    expect(classifySearchIntents("האם הייתה רעידת אדמה בישראל השבוע?")).toContain("earthquake");
+  });
+
+  it("does not classify Hacker News as BBC news", () => {
+    const intents = classifySearchIntents("מהו הפוסט הפופולרי ביותר ב-Hacker News כרגע?");
+    expect(intents).toContain("hackernews");
+    expect(intents).not.toContain("news");
   });
 });
 
@@ -141,15 +237,14 @@ describe("formatWebContext", () => {
         provider: "open-meteo",
         label: "מזג אוויר",
         ok: true,
-        text: "טמפרטורה: 22°C",
+        text: "טמפרatura: 22°C",
         url: "https://open-meteo.com",
         latencyMs: 100,
       },
     ];
     const ctx = formatWebContext(sources);
-    expect(ctx).toContain("WEB SEARCH RESULTS");
+    expect(ctx).toContain("SEARCH BRIEF");
     expect(ctx).toContain("22°C");
-    expect(ctx).toContain("open-meteo.com");
   });
 
   it("returns empty when all failed", () => {
@@ -181,20 +276,5 @@ describe("formatWebContext", () => {
       ["weather"],
     );
     expect(s).toContain("1 מקורות");
-  });
-});
-
-describe("weatherReply", () => {
-  it("builds direct weather reply from open-meteo source", () => {
-    const source: SearchSourceResult = {
-      provider: "open-meteo",
-      label: "מזג אוויר",
-      ok: true,
-      text: "מיקום: Brazil\nטמפרטורה: 28°C (מרגיש 30°C)\nמצב: מעונן",
-      latencyMs: 100,
-    };
-    const reply = buildWeatherCannedReply(source);
-    expect(reply).toContain("28°C");
-    expect(reply).toContain("Brazil");
   });
 });

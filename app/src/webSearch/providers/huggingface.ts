@@ -1,6 +1,6 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
-import { buildHuggingFaceSearchQuery } from "../intents";
+import { buildHuggingFaceSearchQuery, isHuggingFaceImageQuery } from "../intents";
 
 type HfModel = {
   id: string;
@@ -26,8 +26,10 @@ export const fetchHuggingFaceModelsSearch = async (query: string): Promise<Searc
     };
   }
   try {
+    const imageModels = isHuggingFaceImageQuery(query);
+    const pipeline = imageModels ? "&pipeline_tag=text-to-image" : "";
     const data = await fetchJson<HfModel[]>(
-      `https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=6&sort=downloads&direction=-1`,
+      `https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=6&sort=downloads&direction=-1${pipeline}`,
     );
     if (!Array.isArray(data) || !data.length) {
       return {

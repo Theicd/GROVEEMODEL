@@ -8,11 +8,9 @@ const PROXY_REQUIRED = new Set([
   "api.tzevaadom.co.il",
   "feeds.bbci.co.uk",
   "rss.cnn.com",
-  "www.reddit.com",
-  "export.arxiv.org",
-  "searx.be",
-  "search.bus-hit.me",
-  "searx.tiekoetter.com",
+  "stooq.com",
+  "query1.finance.yahoo.com",
+  "finance.yahoo.com",
 ]);
 
 /** These APIs allow browser CORS — prefer direct fetch (fast, reliable on GitHub Pages). */
@@ -23,6 +21,11 @@ const CORS_DIRECT_SUFFIXES = [
   "marine-api.open-meteo.com",
   "api.airplanes.live",
   "api.github.com",
+  "huggingface.co",
+  "api-inference.huggingface.co",
+  "meri.digitraffic.fi",
+  "celestrak.org",
+  "ll.thespacedevs.com",
   "timeapi.io",
   "api.wheretheiss.at",
   "earthquake.usgs.gov",
@@ -34,8 +37,6 @@ const CORS_DIRECT_SUFFIXES = [
   "eonet.gsfc.nasa.gov",
   "www.gdacs.org",
   "api.open-notify.org",
-  "api.coingecko.com",
-  "hn.algolia.com",
 ];
 
 export function isStaticWebHost(): boolean {

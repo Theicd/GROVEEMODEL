@@ -1,5 +1,5 @@
 import type { GlobeCommand } from "./bridge";
-import { normalizeCountrySearchName, extractLocationPhrase } from "../webSearch/queryExtract";
+import { normalizeCountrySearchName } from "../webSearch/queryExtract";
 
 const PLACE_PATTERNS = [
   /(?:הצג(?:ה|י)?|הראה|תציג|הציג|show)\s+(?:לי\s+|me\s+|א(?:ת|ת ה)?\s*)?(.+?)(?:\s+על\s+המפה|\s+on\s+the\s+map|\?|$)/i,
@@ -77,6 +77,7 @@ const GLOBE_INTENTS = new Set([
   "earthquake",
   "aviation",
   "satellite",
+  "ships",
   "places",
   "distance",
   "weather",
@@ -89,10 +90,38 @@ const GLOBE_INTENTS = new Set([
 export function shouldOpenGlobePanel(query: string, intents: string[] = []): boolean {
   const q = query.trim();
   if (!q) return false;
-  if (intents.some((i) => GLOBE_INTENTS.has(i))) return true;
-  return /גלובוס|עולם\s*חי|על\s+המפה|reality|real.?time\s*map|show.*map|איפה|היכן|where\s+is|הראה\s+לי|הצג|הציג|תציג|רעיד|earthquake|מטוס|aircraft|לוויין|satellite|iss|התרע|צבע\s*אדום|סופה|hurricane|typhoon/i.test(
-    q,
-  );
+
+  if (isGlobePresentationQuery(q) || /על\s+המפה|on\s+the\s+map/i.test(q)) {
+    return true;
+  }
+
+  if (/גלובוס|עולם\s*חי|reality|real.?time\s*map|show.*map/i.test(q)) {
+    return true;
+  }
+
+  // Earthquake / aviation / ISS: data goes to chat — globe only on explicit map request.
+  if (/רעיד|earthquake|רעש\s*אדמה|seismic/i.test(q) || intents.includes("earthquake")) {
+    return isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג|show\s+.*map)/i.test(q);
+  }
+  // Aviation / ISS: answer via search data — open globe only when user asks for the map.
+  if (/מטוס|aircraft|adsb|תעבורה\s+אווירית/i.test(q) || intents.includes("aviation")) {
+    return isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג|show\s+.*map)/i.test(q);
+  }
+  if (/\biss\b|לוויין|satellite|חלל/i.test(q) || intents.includes("satellite")) {
+    return isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג)/i.test(q);
+  }
+  if (/ספינ|אוני|ship|vessel|ais|סואץ|suez/i.test(q) || intents.includes("ships")) {
+    return isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג)/i.test(q);
+  }
+  if (/התרע|צבע\s*אדום|tzeva|oref/i.test(q) || intents.includes("alerts")) {
+    return true;
+  }
+
+  if (intents.some((i) => GLOBE_INTENTS.has(i))) {
+    return isGlobePresentationQuery(q) || /הראה|הצג|show\s+me|where\s+is|איפה|היכן/i.test(q);
+  }
+
+  return false;
 }
 
 export function buildGlobeCommand(query: string, intents: string[] = []): GlobeCommand | null {
@@ -100,29 +129,36 @@ export function buildGlobeCommand(query: string, intents: string[] = []): GlobeC
   if (!q) return null;
 
   if (/רעיד|earthquake|רעש\s*אדמה|seismic/i.test(q) || intents.includes("earthquake")) {
-    return { type: "focusEarthquakes" };
+    if (isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג)/i.test(q)) {
+      return { type: "focusEarthquakes" };
+    }
+    return null;
   }
   if (/מטוס|aircraft|adsb|תעופה|plane/i.test(q) || intents.includes("aviation")) {
-    return { type: "showLayer", layer: "aviation" };
+    if (isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג)/i.test(q)) {
+      return { type: "showLayer", layer: "aviation" };
+    }
+    return null;
   }
   if (/\biss\b|לוויין|satellite|חלל/i.test(q) || intents.includes("satellite")) {
-    return { type: "showLayer", layer: "iss" };
+    if (isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג)/i.test(q)) {
+      return { type: "showLayer", layer: "satellite" };
+    }
+    return null;
+  }
+  if (/ספינ|אוני|ship|vessel|ais|סואץ|suez/i.test(q) || intents.includes("ships")) {
+    if (isGlobePresentationQuery(q) || /(?:על\s+המפה|on\s+the\s+map|הראה|הצג)/i.test(q)) {
+      return { type: "showLayer", layer: "ships" };
+    }
+    return null;
   }
   if (/התרע|צבע\s*אדום|tzeva|oref/i.test(q) || intents.includes("israel-alerts")) {
     return { type: "focusIsrael" };
   }
-  if (/סופה|הurricane|typhoon|מזג\s*אוויר|weather|טמפרטור|temperature/i.test(q) || intents.includes("weather")) {
-    const loc = extractLocationPhrase(q);
-    if (loc) {
-      return {
-        type: "focusPlaceQuiet",
-        name: normalizeCountrySearchName(loc),
-        presentation: false,
-      };
-    }
+  if (/סופה|הurricane|typhoon|מזג\s*אוויר|weather/i.test(q) || intents.includes("weather")) {
     return { type: "showLayer", layer: "weather" };
   }
-  if (/ספינ|ship|marine|ים/i.test(q) || intents.includes("marine")) {
+  if (/גלים|wave|גובה\s*גל/i.test(q) || intents.includes("marine")) {
     return { type: "showLayer", layer: "marine" };
   }
 

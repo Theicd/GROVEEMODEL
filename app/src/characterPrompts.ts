@@ -14,23 +14,15 @@ export function buildLanguageReplyDirective(userText: string): string {
   const hebrew = /[\u0590-\u05FF]/.test(userText);
   const latin = /[a-zA-Z]/.test(userText);
   if (hebrew && !latin) {
-    return `${LANGUAGE_MATCH_APPEND}
-
-THIS TURN — CRITICAL: The user wrote in Hebrew. Your entire reply MUST be in Hebrew only. No English sentences, no "Hey there", no "Absolutely".`;
+    return `THIS TURN — CRITICAL: The user wrote in Hebrew. Your entire reply MUST be in Hebrew only. No English sentences, no "Hey there", no "Absolutely".`;
   }
   if (hebrew && latin) {
-    return `${LANGUAGE_MATCH_APPEND}
-
-THIS TURN: Mixed Hebrew/English — reply in Hebrew (dominant language for this app).`;
+    return `THIS TURN: Mixed Hebrew/English — reply in Hebrew (dominant language for this app).`;
   }
   if (latin) {
-    return `${LANGUAGE_MATCH_APPEND}
-
-THIS TURN: The user wrote in English. Reply in English.`;
+    return `THIS TURN: The user wrote in English. Reply in English.`;
   }
-  return `${LANGUAGE_MATCH_APPEND}
-
-THIS TURN: No clear language — reply in Hebrew.`;
+  return `THIS TURN: No clear language — reply in Hebrew.`;
 }
 
 export const GROVEE_CHAT_SYSTEM = `${LANGUAGE_MATCH_APPEND}
@@ -196,7 +188,7 @@ RULES:
 1. Tell the user clearly in Hebrew that live data could not be fetched (timeout / blocked / not supported in browser).
 2. Do NOT invent numbers, prices, weather, headlines, repo names, or places.
 3. Do NOT give generic advice as if it were live data.
-4. For stock quotes (e.g. NVIDIA): only trust SearXNG/CoinGecko blocks if present; otherwise say live market data failed.`;
+4. For stock/gold/Reddit questions: say these live sources are not wired yet in the browser app.`;
 
 export const WEB_SEARCH_GROUNDING_APPEND = `A [WEB SEARCH RESULTS] block may appear below with LIVE fetched data.
 RULES:

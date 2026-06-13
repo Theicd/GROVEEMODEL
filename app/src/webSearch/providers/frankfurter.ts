@@ -41,8 +41,12 @@ export const fetchCurrencySearch = async (query: string): Promise<SearchSourceRe
       };
     }
 
+    const amount = pair.amount;
     const lines = [
       `תאריך: ${data.date}`,
+      ...(amount != null && amount !== 1
+        ? [`${amount} ${pair.from} = ${(rate * amount).toFixed(2)} ${pair.to}`]
+        : []),
       `1 ${pair.from} = ${rate} ${pair.to}`,
       `100 ${pair.from} = ${(rate * 100).toFixed(4)} ${pair.to}`,
       `מקור: European Central Bank via Frankfurter`,

@@ -1,4 +1,4 @@
-export type { SearchIntent, SearchProviderId, SearchSourceResult, WebSearchResult } from "./types";
+export type { SearchIntent, SearchProviderId, SearchSourceResult, WebSearchResult, SearchBrief, SearchProgressEvent } from "./types";
 export {
   classifySearchIntents,
   userRequestsSearch,

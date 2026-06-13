@@ -157,13 +157,18 @@ import {
 import { intervalsFromMode } from "./vision-lab/core/schedule";
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
 import { appendModelActivity, type ModelActivityEntry } from "./modelActivityLog";
-import { SearchSourcesBlock } from "./SearchSourcesBlock";
-import { runWebSearch, needsWebSearch, type SearchSourceResult } from "./webSearch";
+import { SearchProgressPanel } from "./SearchProgressPanel";
+import { ContextRing, type ContextUsage } from "./ContextRing";
+import { prepareChatContext } from "./chatResourceBudget";
 import {
-  buildWeatherCannedReply,
-  findOpenMeteoSource,
-  isPureWeatherTurn,
-} from "./webSearch/weatherReply";
+  detectChatHardwareProfile,
+  getProfileBudgets,
+  listChatProfiles,
+  loadChatProfileOverride,
+  saveChatProfileOverride,
+  type ChatHardwareProfileId,
+} from "./chatHardwareProfile";
+import { runWebSearch, needsWebSearch, type SearchSourceResult, type SearchBrief } from "./webSearch";
 import { GamesPanel } from "./GamesPanel";
 import { GameSpotlightDock } from "./GameSpotlightDock";
 import { GlobePanel } from "./GlobePanel";
@@ -233,7 +238,6 @@ type WorkerOutMessage =
       file?: string;
     }
   | { type: "loaded"; modelId: string; device: string }
-  | { type: "webgpu_blocked" }
   | { type: "token"; text: string }
   | { type: "done" }
   | { type: "aborted" }
@@ -261,12 +265,6 @@ type WorkerOutMessage =
 
 const GEMMA_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
 const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
-const WEBGPU_BLOCKED_KEY = "grovee-webgpu-blocked";
-
-const isWebGpuInferenceError = (msg: string) =>
-  /WebGPU|bad_alloc|Can't create a session|GatherBlockQuantized|node_embedding_Quant|ERROR_CODE:\s*[69]|Could not find an implementation/i.test(
-    msg,
-  );
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
 
 /** Dev-only: ?qa=vision skips Gemma gate for automated face/emotion QA. */
@@ -326,64 +324,23 @@ type AppSettings = {
 
 const defaultGemmaSettings: TunableModelSettings = {
   temperature: 0.45,
-  maxNewTokens: 2048,
+  maxNewTokens: 768,
   repetitionPenalty: 1.12,
   topP: 0.9,
   systemPrompt: GROVEE_CHAT_SYSTEM,
 };
 
-/** Respect saved preference; default Auto (GPU→CPU fallback). Only pin WASM if this GPU already failed WebGPU. */
-const normalizeInferenceBackend = (
-  parsed: InferenceBackendPreference | undefined,
-): InferenceBackendPreference => {
-  if (typeof window !== "undefined" && localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1") {
-    /* Keep Auto in settings — worker skips GPU via webGpuBlocked flag. Force WASM only if user chose it. */
-    if (parsed === "wasm") return "wasm";
-    if (parsed === "webgpu") return "webgpu";
-    return "auto";
-  }
-  if (parsed === "webgpu" || parsed === "wasm" || parsed === "auto") return parsed;
-  return "auto";
+const defaultAppSettings = (): AppSettings => {
+  const onStaticPages =
+    typeof window !== "undefined" &&
+    (window.location.hostname.endsWith("github.io") || window.location.protocol === "file:");
+  return {
+    hfRemoteHost: "",
+    inferenceBackend: onStaticPages ? "wasm" : "auto",
+    gemma: { ...defaultGemmaSettings },
+    vision: { ...DEFAULT_VISION_SETTINGS },
+  };
 };
-
-const readWebGpuBlocked = (): boolean => {
-  try {
-    return localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1";
-  } catch {
-    return false;
-  }
-};
-
-const markWebGpuBlocked = () => {
-  try {
-    localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
-  } catch {
-    /* ignore */
-  }
-};
-
-const clearWebGpuBlocked = () => {
-  try {
-    localStorage.removeItem(WEBGPU_BLOCKED_KEY);
-  } catch {
-    /* ignore */
-  }
-};
-
-const postConfigureInference = (
-  worker: Worker,
-  backend: InferenceBackendPreference,
-  webGpuBlocked = readWebGpuBlocked(),
-) => {
-  worker.postMessage({ type: "configure_inference", backend, webGpuBlocked });
-};
-
-const defaultAppSettings = (): AppSettings => ({
-  hfRemoteHost: "",
-  inferenceBackend: normalizeInferenceBackend(undefined),
-  gemma: { ...defaultGemmaSettings },
-  vision: { ...DEFAULT_VISION_SETTINGS },
-});
 
 const loadSettings = (): AppSettings => {
   try {
@@ -395,18 +352,17 @@ const loadSettings = (): AppSettings => {
       typeof mergedGemma.systemPrompt === "string" ? mergedGemma.systemPrompt : GROVEE_CHAT_SYSTEM,
     );
     const gemma = { ...mergedGemma, systemPrompt };
-    const inferenceBackend = normalizeInferenceBackend(parsed.inferenceBackend);
     const settings: AppSettings = {
       ...defaultAppSettings(),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
-      inferenceBackend,
+      inferenceBackend:
+        parsed.inferenceBackend === "webgpu" || parsed.inferenceBackend === "wasm" || parsed.inferenceBackend === "auto"
+          ? parsed.inferenceBackend
+          : "auto",
       gemma,
       vision: mergeVisionSettings(parsed.vision),
     };
-    const shouldPersist =
-      systemPrompt !== mergedGemma.systemPrompt ||
-      inferenceBackend !== parsed.inferenceBackend;
-    if (shouldPersist) {
+    if (systemPrompt !== mergedGemma.systemPrompt) {
       saveSettings(settings);
     }
     return settings;
@@ -493,8 +449,8 @@ const saveChatSessionsState = (state: ChatSessionsState) => {
 
 const formatInferenceDevice = (device: string): string => {
   const d = device.toLowerCase();
-  if (d === "webgpu") return "GPU (WebGPU)";
-  if (d === "wasm") return "CPU (WASM)";
+  if (d === "webgpu") return "WebGPU (GPU)";
+  if (d === "wasm") return "WASM (CPU)";
   if (d === "cache") return "cache";
   return device;
 };
@@ -672,6 +628,9 @@ function SettingsModal({
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
   const [settingsTab, setSettingsTab] = useState<"gemma" | "vision">("gemma");
+  const [chatProfile, setChatProfile] = useState<ChatHardwareProfileId>(
+    () => loadChatProfileOverride() ?? detectChatHardwareProfile(),
+  );
 
   if (!open) return null;
 
@@ -830,6 +789,33 @@ function SettingsModal({
           </label>
         </section>
 
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            פרופיל אוויר בשיחה
+          </h3>
+          <p className="settings-danger-note" style={{ marginBottom: 12 }}>
+            תקציב prompt ו-max tokens לחיפוש — לפי RAM (Chrome מדווח buckets).
+          </p>
+          <div className="settings-backend-pills" role="radiogroup" aria-label="פרופיל חומרה">
+            {listChatProfiles().map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={chatProfile === p.id}
+                className={`settings-backend-pill ${chatProfile === p.id ? "active" : ""}`}
+                onClick={() => setChatProfile(p.id)}
+              >
+                <span className="settings-backend-pill-label">{p.labelHe}</span>
+                <span className="settings-backend-pill-hint">
+                  ~{(p.totalPromptChars / 1000).toFixed(0)}k chars · search {p.maxNewTokensSearch} tok
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="settings-card settings-card--danger">
           <h3 className="settings-card-title">
             <span className="settings-card-dot settings-card-dot--warn" aria-hidden="true" />
@@ -851,6 +837,7 @@ function SettingsModal({
             type="button"
             className="settings-btn-save"
             onClick={() => {
+              saveChatProfileOverride(chatProfile);
               onSave(draft);
               onClose();
             }}
@@ -931,7 +918,11 @@ function App() {
   const [streamingSearchSources, setStreamingSearchSources] = useState<{
     sources: SearchSourceResult[];
     summary: string;
+    query?: string;
+    brief?: SearchBrief;
+    active?: boolean;
   } | null>(null);
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [gamesPanelOpen, setGamesPanelOpen] = useState(false);
   const [globePanelOpen, setGlobePanelOpen] = useState(false);
   const [globeCommand, setGlobeCommand] = useState<GlobeCommand | null>(null);
@@ -1015,10 +1006,10 @@ function App() {
   const visionResultRef = useRef(visionResult);
   const isLoadingRef = useRef(isLoading);
   const isGeneratingRef = useRef(isGenerating);
+  const lastChatSignalRef = useRef(0);
   const messagesListRef = useRef<HTMLDivElement | null>(null);
   const continueModeRef = useRef(false);
   const loadingFileRef = useRef("");
-  const wasmBootRetryRef = useRef(false);
 
   useEffect(() => {
     appSettingsRef.current = appSettings;
@@ -1988,6 +1979,34 @@ function App() {
     setStatus("עוצר…");
   }, [isGenerating]);
 
+  /** Watchdog: if the worker goes silent mid-generation (GPU crash, dead worker),
+   *  recover the UI instead of leaving the chat stuck and ignoring new messages. */
+  useEffect(() => {
+    if (!isGenerating) return;
+    lastChatSignalRef.current = Date.now();
+    const STALL_MS = 180_000;
+    const timer = window.setInterval(() => {
+      if (!isGeneratingRef.current) return;
+      if (Date.now() - lastChatSignalRef.current < STALL_MS) return;
+      workerRef.current?.postMessage({ type: "abort" });
+      pushActivity({
+        direction: "in",
+        kind: "error",
+        title: "Watchdog · יצירה נתקעה",
+        detail: `אין אות מה-worker מעל ${Math.round(STALL_MS / 1000)} שניות — משחרר את הצ'אט`,
+      });
+      if (!assistantBufferRef.current.trim()) {
+        const recoveryMsg =
+          "⚠️ התשובה נתקעה ולא הושלמה (ייתכן עומס זיכרון GPU). נסה לשלוח שוב; אם זה חוזר — עבור ל-WASM בהגדרות או פתח שיחה חדשה.";
+        assistantBufferRef.current = recoveryMsg;
+        setAssistantBuffer(recoveryMsg);
+      }
+      finalizeAssistantReply(true);
+      setStatus("היצירה נתקעה ושוחררה — אפשר לשלוח שוב");
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [isGenerating, finalizeAssistantReply, pushActivity]);
+
   useEffect(() => {
     if (phase !== "ready") return;
     if (generationChatOnlyDocumentRef.current) {
@@ -2106,6 +2125,7 @@ function App() {
 
     worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
       const msg = event.data;
+      lastChatSignalRef.current = Date.now();
       if (msg.type === "status") {
         setStatus(msg.text);
       } else if (msg.type === "progress") {
@@ -2133,13 +2153,10 @@ function App() {
         }
       } else if (msg.type === "loaded") {
         setWorkerBootError(null);
-        wasmBootRetryRef.current = false;
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
-        setStatus(`Gemma מוכן — ${formatInferenceDevice(msg.device)}`);
-      } else if (msg.type === "webgpu_blocked") {
-        markWebGpuBlocked();
+        setStatus(`Gemma ready on ${formatInferenceDevice(msg.device)}`);
       } else if (msg.type === "token") {
         if (globeHeadlineModeRef.current) {
           globeHeadlineBufferRef.current += msg.text;
@@ -2190,19 +2207,24 @@ function App() {
           detail: msg.error,
         });
         const isChatError = msg.scope === "chat" || isGeneratingRef.current;
-        if (isWebGpuInferenceError(msg.error)) {
-          markWebGpuBlocked();
-          workerRef.current?.postMessage({
-            type: "configure_inference",
-            backend: appSettingsRef.current.inferenceBackend,
-            webGpuBlocked: true,
-          });
-        }
         if (isChatError) {
           isGeneratingRef.current = false;
           setIsGenerating(false);
           syncVisionBusy();
-          setStatus(`שגיאה: ${msg.error}`);
+          const errText = msg.error.trim();
+          const recovery =
+            /unaligned|alignment/i.test(errText)
+              ? "השיחה ארוכה מדי לעיבוד — נסה צ'אט חדש או שאלה קצרה יותר."
+              : errText;
+          setAssistantBuffer((prev) => {
+            const next = prev.trim()
+              ? `${prev.trim()}\n\n⚠️ ${recovery}`
+              : `⚠️ ${recovery}`;
+            assistantBufferRef.current = next;
+            return next;
+          });
+          finalizeAssistantReply(true);
+          setStatus(`שגיאה: ${errText.slice(0, 120)}`);
           cameraLoopRef.current?.releaseAfterChat();
         } else {
           setIsLoading(false);
@@ -2288,7 +2310,10 @@ function App() {
       type: "configure_hub",
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
     });
-    postConfigureInference(worker, appSettingsRef.current.inferenceBackend);
+    worker.postMessage({
+      type: "configure_inference",
+      backend: appSettingsRef.current.inferenceBackend,
+    });
     void (async () => {
       const r = await requestPersistentStorage();
       console.info("[GROVEE] storage.persist:", r);
@@ -2307,8 +2332,10 @@ function App() {
   }, [appSettings.hfRemoteHost]);
 
   useEffect(() => {
-    if (!workerRef.current) return;
-    postConfigureInference(workerRef.current, appSettings.inferenceBackend);
+    workerRef.current?.postMessage({
+      type: "configure_inference",
+      backend: appSettings.inferenceBackend,
+    });
   }, [appSettings.inferenceBackend]);
 
   useEffect(() => {
@@ -2336,42 +2363,31 @@ function App() {
     });
   }, [isLoaded, isGenerating]);
 
-  const loadModel = (opts?: { forceWasm?: boolean }) => {
+  const loadModel = () => {
     if (!workerRef.current) return;
-    wasmBootRetryRef.current = false;
     setWorkerBootError(null);
     setIsLoading(true);
     setIsLoaded(false);
-    const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
-    setStatus(
-      backend === "webgpu"
-        ? "טוען Gemma על GPU (WebGPU)…"
-        : backend === "wasm"
-          ? "טוען Gemma על CPU (WASM)…"
-          : readWebGpuBlocked()
-            ? "Auto: GPU לא זמין במחשב זה — טוען על CPU…"
-            : "Auto: מנסה GPU, אם לא יציב — CPU…",
-    );
+    setStatus("Loading Gemma 4 E2B…");
     setProgress(0);
     setLoadingPhase("download");
     setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
     setLoadingTipIndex(0);
     loadingFileRef.current = "";
-    if (opts?.forceWasm) markWebGpuBlocked();
     workerRef.current.postMessage({
       type: "configure_hub",
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
     });
     workerRef.current.postMessage({
+      type: "configure_inference",
+      backend: appSettingsRef.current.inferenceBackend,
+    });
+    workerRef.current.postMessage({
       type: "load",
       modelId: GEMMA_MODEL_ID,
       dtype: "q4",
-      backend,
-      webGpuBlocked: readWebGpuBlocked(),
     });
   };
-
-  const retryWasmLoad = () => loadModel({ forceWasm: true });
 
   const clearModelCache = async () => {
     if (isGenerating || cacheClearing) return;
@@ -2466,7 +2482,6 @@ function App() {
       setIsLoading(false);
       setAssistantBuffer("");
       assistantBufferRef.current = "";
-      clearWebGpuBlocked();
       setWorkerReloadKey((k) => k + 1);
 
       const freedSummary =
@@ -2483,25 +2498,17 @@ function App() {
   };
 
   const persistSettings = (s: AppSettings) => {
-    if (s.inferenceBackend === "webgpu") clearWebGpuBlocked();
     setAppSettings((prev) => {
       if (s.inferenceBackend !== prev.inferenceBackend || s.hfRemoteHost !== prev.hfRemoteHost) {
         queueMicrotask(() => {
           setIsLoaded(false);
           setIsLoading(false);
-          setStatus("הגדרות השתנו — לחץ «טען מודל מקומי» כדי לטעון מחדש");
+          setStatus("הגדרות השתנו — לחץ «התחל» כדי לטעון מחדש");
         });
       }
       return s;
     });
     saveSettings(s);
-    if (workerRef.current) {
-      postConfigureInference(
-        workerRef.current,
-        s.inferenceBackend,
-        s.inferenceBackend === "webgpu" ? false : readWebGpuBlocked(),
-      );
-    }
   };
 
   type BeginGenerationOptions = {
@@ -2595,12 +2602,40 @@ function App() {
     let searchIntentsForGlobe: string[] = [];
     if (shouldRunWebSearch) {
       setStatus("מחפש מידע…");
+      setStreamingSearchSources({
+        sources: [],
+        summary: "מנתב שאילתה…",
+        query: effectivePrompt,
+        active: true,
+      });
       try {
         const recentUserText = priorTurns
           .filter((t) => t.role === "user")
           .slice(-4)
           .map((t) => t.content);
-        const searchResult = await runWebSearch(effectivePrompt, { recentUserText });
+        const searchResult = await runWebSearch(effectivePrompt, {
+          recentUserText,
+          onProgress: (ev) => {
+            if (ev.type === "provider_done") {
+              setStreamingSearchSources((prev) => {
+                if (!prev) return prev;
+                const rest = prev.sources.filter((s) => s.provider !== ev.result.provider);
+                return { ...prev, sources: [...rest, ev.result] };
+              });
+            }
+            if (ev.type === "complete") {
+              setStreamingSearchSources((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      sources: ev.sources,
+                      active: false,
+                    }
+                  : null,
+              );
+            }
+          },
+        });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
         pendingWebSearchRef.current = {
@@ -2610,6 +2645,9 @@ function App() {
         setStreamingSearchSources({
           sources: searchResult.sources,
           summary: searchResult.summaryHe,
+          query: effectivePrompt,
+          brief: searchResult.brief,
+          active: false,
         });
         if (!webContext.trim()) {
           searchHint = " · אין תוצאות חיפוש";
@@ -2638,11 +2676,15 @@ function App() {
 
     let globePlaceCannedReply: string | null = null;
     let globePlaceLabel = "";
-    if (
+    const openGlobe =
       !wantsGameSearch &&
       desktopLayout &&
-      shouldOpenGlobePanel(trimmed || effectivePrompt, searchIntentsForGlobe)
-    ) {
+      shouldOpenGlobePanel(trimmed || effectivePrompt, searchIntentsForGlobe);
+    if (!openGlobe) {
+      setGlobePanelOpen(false);
+      setGlobeCommand(null);
+    }
+    if (openGlobe) {
       const cmd = buildGlobeCommand(trimmed || effectivePrompt, searchIntentsForGlobe);
       if (cmd) {
         setGlobePanelOpen(true);
@@ -2735,42 +2777,6 @@ function App() {
       assistantBufferRef.current = gameSearchCannedReply;
       setAssistantBuffer(gameSearchCannedReply);
       setStatus("Ready");
-      finalizeAssistantReply(false);
-      return;
-    }
-
-    const weatherSource = findOpenMeteoSource(pendingWebSearchRef.current?.sources ?? []);
-    const weatherCannedReply =
-      weatherSource && isPureWeatherTurn(trimmed || effectivePrompt)
-        ? buildWeatherCannedReply(weatherSource)
-        : null;
-
-    if (
-      weatherCannedReply &&
-      !cameraActive &&
-      !hasAttachments &&
-      !continueCode &&
-      !documentTurn &&
-      !wantsGameSearch
-    ) {
-      if (desktopLayout && shouldOpenGlobePanel(trimmed || effectivePrompt, searchIntentsForGlobe)) {
-        const cmd = buildGlobeCommand(trimmed || effectivePrompt, searchIntentsForGlobe);
-        if (cmd) {
-          setGlobePanelOpen(true);
-          setGlobeCommand(cmd);
-          setArtifactOpen(false);
-          setGamesPanelOpen(false);
-        }
-      }
-      assistantBufferRef.current = weatherCannedReply;
-      setAssistantBuffer(weatherCannedReply);
-      setStatus("Ready");
-      pushActivity({
-        direction: "system",
-        kind: "web_search",
-        title: "Weather · direct reply",
-        detail: weatherCannedReply,
-      });
       finalizeAssistantReply(false);
       return;
     }
@@ -2908,7 +2914,7 @@ function App() {
       !factualCameraQuestion &&
       !conversationFirst &&
       (sceneInterpretation || consciousnessQuestion || greetingWithCamera || greetingCameraStarting);
-    const tokenBudget =
+    const tokenBudgetBase =
       greetingWithCamera || greetingCameraStarting
         ? 100
         : interpretiveCameraReply
@@ -2919,9 +2925,12 @@ function App() {
               ? Math.min(1536, g.maxNewTokens)
               : hasVisionInput
                 ? Math.min(1024, g.maxNewTokens)
-              : wantsLongOutput
-                ? Math.min(CODE_TOKEN_CAP, Math.max(g.maxNewTokens, CODE_TOKEN_FLOOR))
-                : g.maxNewTokens;
+                : shouldRunWebSearch && webContext.trim()
+                  ? Math.min(512, g.maxNewTokens)
+                  : wantsLongOutput
+                    ? Math.min(CODE_TOKEN_CAP, Math.max(g.maxNewTokens, CODE_TOKEN_FLOOR))
+                    : g.maxNewTokens;
+    let tokenBudget = tokenBudgetBase;
 
     let systemPrompt = cameraActive
       ? CAMERA_HAL_SYSTEM
@@ -3102,14 +3111,35 @@ function App() {
 
     systemPrompt = `${systemPrompt}\n\n${buildLanguageReplyDirective(effectivePrompt)}`;
 
-    const historyForWorker = trimHistoryForContext(priorTurns, undefined, continueCode);
-
     const currentImageBuffers = documentTurn
       ? attachmentBuffers
-      : [
-          ...attachmentBuffers,
-          ...cameraImageBuffers,
-        ];
+      : [...attachmentBuffers, ...cameraImageBuffers];
+
+    const historyForWorkerRaw = trimHistoryForContext(priorTurns, undefined, continueCode);
+
+    const chatProfileId = loadChatProfileOverride() ?? detectChatHardwareProfile();
+    const prepared = prepareChatContext({
+      history: historyForWorkerRaw,
+      webContext,
+      systemPrompt,
+      userPrompt: effectivePrompt,
+      imageCount: currentImageBuffers.length,
+      maxNewTokens: tokenBudget,
+      profileId: chatProfileId,
+      pinLastAssistant: continueCode,
+      isSearchTurn: shouldRunWebSearch && !!webContext.trim(),
+      isCodeTurn: wantsLongOutput || continueCode,
+    });
+    setContextUsage({
+      percent: prepared.staminaPercent,
+      usedChars: prepared.usedChars,
+      totalBudget: prepared.totalBudget,
+      profileLabel: getProfileBudgets(chatProfileId).labelHe,
+      breakdown: prepared.breakdown,
+    });
+    const historyForWorker = prepared.history;
+    webContext = prepared.webContext;
+    tokenBudget = prepared.maxNewTokens;
 
     const waitDeadline = Date.now() + 180_000;
     while (workerInferenceBusyRef.current && Date.now() < waitDeadline) {
@@ -3133,7 +3163,11 @@ function App() {
 
   const sendPrompt = async (e: FormEvent) => {
     e.preventDefault();
-    if (!workerRef.current || !isLoaded || isGenerating) return;
+    if (!workerRef.current || !isLoaded) return;
+    if (isGenerating) {
+      setStatus("עדיין עונה — המתן לסיום או לחץ עצור");
+      return;
+    }
     const trimmed = prompt.trim();
     const attachmentSnapshot = pendingAttachments;
     const hasAttachments = attachmentSnapshot.length > 0;
@@ -3306,17 +3340,6 @@ function App() {
       {workerBootError ? (
         <div className="worker-boot-banner" role="alert">
           <strong>שגיאה:</strong> {workerBootError}
-          {isWebGpuInferenceError(workerBootError) ? (
-            <button
-              type="button"
-              className="subtle-btn"
-              style={{ marginInlineStart: 12 }}
-              onClick={retryWasmLoad}
-              disabled={isLoading}
-            >
-              טען ב-WASM
-            </button>
-          ) : null}
           <button
             type="button"
             className="subtle-btn"
@@ -3448,21 +3471,11 @@ function App() {
                 <button
                   type="button"
                   className="load-btn"
-                  onClick={() => loadModel()}
-                  disabled={isLoading || isGenerating}
+                  onClick={loadModel}
+                  disabled={isLoading || isGenerating || !!workerBootError}
                 >
                   טען מודל מקומי
                 </button>
-                {isWebGpuInferenceError(workerBootError ?? "") ? (
-                  <button
-                    type="button"
-                    className="learn-link"
-                    onClick={retryWasmLoad}
-                    disabled={isLoading || isGenerating}
-                  >
-                    טען ב-WASM (CPU)
-                  </button>
-                ) : null}
                 <button type="button" className="learn-link" onClick={() => setInfoModalOpen(true)}>
                   איך זה עובד?
                 </button>
@@ -3851,7 +3864,8 @@ function App() {
                                   />
                                 ) : null}
                                 {msg.searchSources?.length ? (
-                                  <SearchSourcesBlock
+                                  <SearchProgressPanel
+                                    active={false}
                                     sources={msg.searchSources}
                                     summary={msg.searchSummary}
                                   />
@@ -3877,10 +3891,13 @@ function App() {
                     <article className="msg">
                       <div className="msg-icon ai">{cameraMode ? "HAL" : "AI"}</div>
                       <div className="msg-txt">
-                        {streamingSearchSources?.sources.length ? (
-                          <SearchSourcesBlock
+                        {streamingSearchSources ? (
+                          <SearchProgressPanel
+                            active={!!streamingSearchSources.active}
+                            query={streamingSearchSources.query}
                             sources={streamingSearchSources.sources}
                             summary={streamingSearchSources.summary}
+                            brief={streamingSearchSources.brief}
                           />
                         ) : null}
                         {streamingGameCategoryPicker ? (
@@ -3909,6 +3926,9 @@ function App() {
                 {showLanding ? <ChatLandingHeadline text={landingContent.headline} /> : null}
 
                 <div className="composer-modes">
+              {isLoaded && messages.length > 0 && contextUsage ? (
+                <ContextRing usage={contextUsage} />
+              ) : null}
               <label className="composer-mode-pill" title="מפעיל חשיבה native של Gemma 4 (<|think|>) — תהליך החשיבה יוצג לפני התשובה.">
                 <input
                   type="checkbox"

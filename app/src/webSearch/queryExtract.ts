@@ -1,7 +1,19 @@
 /** Shared phrase extraction for routed web search providers. */
 
+/** Strip greetings / persona noise before provider routing. */
+export const sanitizeSearchQuery = (query: string): string => {
+  let q = query.trim();
+  q = q.replace(
+    /^(?:בוקר\s+טוב|ערב\s+טוב|לילה\s+טוב|שלום|היי|הי+|good\s+(?:morning|evening|night)|hello|hi|hey)[\s,!.]*(?:מר\s+)?(?:גרובי|grobi|grovee)?[\s,!.]*/gi,
+    "",
+  );
+  q = q.replace(/(?:מר\s+)?(?:גרובי|grobi|grovee)[\s,!.]*/gi, " ");
+  q = q.replace(/\s{2,}/g, " ").trim();
+  return q || query.trim();
+};
+
 const KNOWN_PLACES =
-  /(?:ניו\s*יורק|תל\s*א(?:ביב|ב)?|ירושלים|חיפה|לונדון|פריז|paris|london|tokyo|טוקיו|berlin|ברlin|moscow|מוסקבה|rome|רומא|sydney|סידני|miami|מיאמי|los\s*angeles|לוס\s*אנgeles|california|קליפורניה|new\s*zealand|ניו\s*זילנד|אוסטרליה|australia|germany|גרמניה|france|צרפת|japan|יפן|israel|ישראל)/gi;
+  /(?:ניו\s*יורק|תל\s*א(?:ביב|ב)?|ירושלים|חיפה|לונדון|פריז|paris|london|tokyo|טוקיו|berlin|ברlin|moscow|מוסקבה|rome|רומא|madrid|מדריד|sydney|סידני|miami|מיאמי|los\s*angeles|לוס\s*אנgeles|california|קליפורניה|new\s*zealand|ניו\s*זילנד|אוסטרליה|australia|germany|גרמניה|france|צרפת|japan|יפן|israel|ישראל)/gi;
 
 const COUNTRY_ALIASES: Record<string, string> = {
   ישראל: "Israel",
@@ -45,26 +57,39 @@ export const normalizeCountrySearchName = (raw: string): string => {
 
 /** Place/city/country name from time, weather, marine queries. */
 export const extractLocationPhrase = (query: string): string | null => {
-  const q = query.trim();
+  const q = sanitizeSearchQuery(query);
   const patterns: RegExp[] = [
+    /(?:מה\s+)?(?:ה)?(?:תאריך|date)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:מה\s+)?(?:ה)?שע(?:ה|ת)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
+    /(?:מה\s+)?(?:ה)?שע(?:ה|ת)\s+(?:ב)?(יש(?:rael|ר(?:א|a)el)|israel)(?:[?!.]?$)/i,
+    /(?:what\s+)?(?:date|time)\s+(?:in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:what\s+)?time\s+(?:is\s+it\s+)?(?:in|at|for)\s+(.+?)(?:[?!.]?$)/i,
-    /(?:מה\s+)?(?:ה)?טמפרטור(?:ה)?\s+(?:עכשיו\s+)?(?:ב|ב־|in|at|for)\s*(.+?)(?:[?!.]?$)/i,
-    /(?:what(?:'s| is) the )?(?:temperature|temp)\s+(?:now\s+)?(?:in|at|for)\s*(.+?)(?:[?!.]?$)/i,
-    /(?:מזג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s*(.+?)(?:[?!.]?$)/i,
+    /(?:מזג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:מה\s+)?(?:מזג\s*האוויר|מז"?\s*א)\s+(?:ב|ב־|של)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:גשם|שלג|מעונן|גשום|rain|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:צפוי|forecast|expect)\s+(?:גשם|rain|שלג|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:wave\s*height|גובה\s*גלים|גלים)\s+(?:in|at|near|ב|ב־|ליד)?\s*(.+?)(?:[?!.]?$)/i,
-    /(?:ב|in|at)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,40})(?:[?!.]?$)/i,
+    /(?:מהירות\s+(?:ה)?רוח|wind\s+speed)\s+(?:ב|ב־|in|at|of|ל)?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:מה\s+)?(?:ה)?(?:טמפרטור(?:ה|ה)|temperature)\s+(?:עכשיו|כרגע|now)?\s*(?:ב|ב־|in|at|of|של)?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:תחזית|forecast)\s+(?:מזג\s*האוויר|weather)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
+    /(?:מהי|מה\s+ה)?(?:תחזית|forecast)\s+(?:מזג\s*האוויר|weather)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
+    /^([A-Za-z\u0590-\u05FF][\w\s\-'".]{1,40})\s+(?:weather|forecast|temperature|מזג|תחזית)/i,
+    /(?:ב|ב־|in|at)\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,40})(?:[?!.]?$)/i,
   ];
+  const NOISE_SUFFIX =
+    /\s+(temperature|wind|humidity|forecast|today|now|tomorrow|רוח|טמפרטור\S*|timezone|time|היום|עכשיו|כרגע|מחר|weather|מזג)[?!.]*$/i;
   for (const re of patterns) {
     const m = q.match(re);
     let loc = m?.[1]?.trim().replace(/[?!.]+$/, "").trim();
+    if (!loc && /יש(?:rael|ר(?:א|a)el)|israel/i.test(q) && /שע(?:ה|ת)|time|date/i.test(q)) {
+      loc = "Israel";
+    }
     if (loc) {
-      loc = loc
-        .replace(/\s+(temperature|wind|humidity|forecast|today|now|רוח|טמפרatur.*|timezone|time)$/i, "")
-        .trim();
+      let prev = "";
+      while (prev !== loc) {
+        prev = loc;
+        loc = loc.replace(NOISE_SUFFIX, "").trim();
+      }
     }
     if (loc && loc.length >= 2 && !/^(היום|עכשיו|today|now)$/i.test(loc)) {
       return loc;
@@ -96,14 +121,16 @@ export const extractTimeZonePair = (query: string): [string, string] | null => {
 export const extractCountryPhrase = (query: string): string | null => {
   const q = query.trim();
   const patterns: RegExp[] = [
+    /(?:תושבים|אוכלוסי(?:ה|יה)|population)\s+(?:יש\s+)?(?:ב|ב־|in|of)\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
+    /ביר(?:ה|ת)\s+(?:של\s+)?([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:ב|ב־|in|of|for)\s+(?:מדינת\s+)?([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:מדינ(?:ה|ת)|country)\s+(?:של|of)?\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
-    /(?:בירה|capital|population|currency|מטבע|אוכלוסיה|דגל|flag)\s+(?:של|of)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
+    /(?:ביר(?:ה|ת)|capital|population|currency|מטבע|אוכלוסי(?:ה|יה)|תושבים|דגל|flag)\s+(?:של|of)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:ראש\s+(?:הממשלה|ממשלה|מדינה|המדינה)|נשיא|prime\s+minister|president)\s+(?:של|of|in)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:מי\s+)?(?:נשיא|ראש\s+(?:הממשלה|ממשלה))\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:חג|חגים|holiday|holidays)\s+(?:ב|ב־|in)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:האם\s+)?(?:ה)?יום\s+חג\s+(?:ב|ב־|in)\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
-    /(?:ב|ב־)([א-ת][א-ת\s\-'".]{2,34})(?:[?!.]?$)/,
+    /(?:^|\s)(?:ב|ב־)([א-ת][א-ת\s\-'".]{2,34})(?:[?!.]?$)/,
     /(?:מידע|info|facts)\s+(?:על|about|on)\s+(?:מדינת\s+)?([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
   ];
   for (const re of patterns) {
@@ -160,7 +187,7 @@ const CURRENCY_ALIASES: Record<string, string> = {
 };
 
 const resolveCurrencyToken = (raw: string): string | null => {
-  const t = raw.trim();
+  const t = raw.trim().replace(/^[\s,.!?"'־-]+|[\s,.!?"'־-]+$/g, "");
   if (!t) return null;
   const upper = t.toUpperCase();
   if (/^[A-Z]{3}$/.test(upper)) return upper;
@@ -178,13 +205,39 @@ const collectCurrencyCodes = (query: string): string[] => {
     found.add(m[1]);
   }
   for (const [alias, code] of Object.entries(CURRENCY_ALIASES)) {
-    const re = new RegExp(`(?:^|[\\s,;])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[\\s,;]|$)`, "i");
+    const re = new RegExp(
+      `(?:^|[\\s,;.!?־-])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[\\s,;.!?־-]|$)`,
+      "i",
+    );
     if (re.test(query)) found.add(code);
   }
   return [...found];
 };
 
-export const extractCurrencyPair = (query: string): { from: string; to: string } | null => {
+export type CurrencyPair = { from: string; to: string; amount?: number };
+
+const parseAmount = (raw: string | undefined): number | undefined => {
+  if (!raw) return undefined;
+  const n = Number(raw.replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+/**
+ * "כמה יורו שווים 1000 שקלים?" / "כמה BRL מקבלים עבור 1 דולר?" —
+ * target currency first, amount + source currency after the verb.
+ */
+const matchHowMuchWorth = (q: string): CurrencyPair | null => {
+  const m = q.match(
+    /(?:כמה|how\s+(?:much|many))\s+([A-Za-z\u0590-\u05FF"']{2,15})\s+(?:שוו(?:ה|ים)|אקבל|מקבל(?:ים)?|נקבל|יוצא(?:ים)?|worth|equals?|do\s+(?:I|you)\s+get|for)\s+(?:עבור\s*|תמורת\s*|ב-?\s*|for\s+|per\s+)?([\d.,]+)?\s*([A-Za-z\u0590-\u05FF"']{2,15})/i,
+  );
+  if (!m) return null;
+  const to = resolveCurrencyToken(m[1]);
+  const from = resolveCurrencyToken(m[3]);
+  if (!from || !to || from === to) return null;
+  return { from, to, amount: parseAmount(m[2]) };
+};
+
+export const extractCurrencyPair = (query: string): CurrencyPair | null => {
   const q = query;
   const upper = q.toUpperCase();
 
@@ -194,18 +247,22 @@ export const extractCurrencyPair = (query: string): { from: string; to: string }
   const m2 = upper.match(/(?:שער|RATE|EXCHANGE)\s+(?:OF\s+)?([A-Z]{3})\s+(?:TO|ל)\s+([A-Z]{3})/i);
   if (m2) return { from: m2[1].toUpperCase(), to: m2[2].toUpperCase() };
 
+  const worth = matchHowMuchWorth(q);
+  if (worth) return worth;
+
   if (/(?:דולר|DOLLAR|USD).*(?:שקל|SHEKEL|ILS|NIS)|(?:שקל|SHEKEL|ILS).*(?:דולר|DOLLAR|USD)/i.test(q)) {
-    return { from: "USD", to: "ILS" };
+    const amount = parseAmount(q.match(/([\d.,]+)\s*(?:דולר|dollars?|usd)/i)?.[1]);
+    return { from: "USD", to: "ILS", amount };
   }
 
   // "כמה BRL אני קונה ב-1 דולר" / "1 dollar to BRL"
   const buyMatch = q.match(
-    /(?:כמה|how\s+many)\s+([A-Za-z\u0590-\u05FF]{2,12})\s+(?:אני\s+)?(?:קונה|buy|get).*(?:ב|ב־|for|with)\s*(?:1|אחד|one)\s*([A-Za-z\u0590-\u05FF]{2,12})/i,
+    /(?:כמה|how\s+many)\s+([A-Za-z\u0590-\u05FF]{2,12})\s+(?:אני\s+)?(?:קונה|מקבל(?:ים)?|buy|get).*(?:עבור|ב|ב־|for|with)\s*([\d.,]+|אחד|one)\s*([A-Za-z\u0590-\u05FF]{2,12})/i,
   );
   if (buyMatch) {
     const to = resolveCurrencyToken(buyMatch[1]);
-    const from = resolveCurrencyToken(buyMatch[2]);
-    if (from && to) return { from, to };
+    const from = resolveCurrencyToken(buyMatch[3]);
+    if (from && to) return { from, to, amount: parseAmount(buyMatch[2]) ?? 1 };
   }
 
   const reverseBuy = q.match(
@@ -263,6 +320,7 @@ export const extractPoiNearQuery = (query: string): { poi: string; near: string 
     { re: /(?:מצא|find|search\s+for|where\s+is)\s+(.+?)\s+(?:ליד|קרוב\s+ל|near|around|by)\s+(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(.+?)\s+(?:ליד|קרוב\s+ל|near|around|by)\s+(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(?:אילו|what|which)\s+(.+?)\s+(?:יש|are\s+there|near)\s+(?:ליד|near|at|by)?\s*(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
+    { re: /(?:nearest|closest|הכי\s+קרוב(?:ה|ים)?)\s+(.+?)\s+(?:to|near|by|ל(?:יד)?\s+)?(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
   ];
   for (const { re, poi, near } of patterns) {
     const m = q.match(re);
@@ -280,6 +338,12 @@ export const extractNewsSite = (query: string): string | null => {
   if (/bbc/i.test(query)) return "bbc";
   if (/cnn/i.test(query)) return "cnn";
   if (/ynet|ynetnews/i.test(query)) return "ynet";
+  if (
+    /(?:artificial\s+intelligence|\bai\b|machine\s+learning|בינה\s+מלאכותית|openai|llm)/i.test(query) &&
+    /(?:חדשות|news|headline|קורה|כרגע|היום)/i.test(query)
+  ) {
+    return null;
+  }
   if (/חדשות|news|headline|כותרת\s+ראש/i.test(query)) return "bbc";
   return null;
 };

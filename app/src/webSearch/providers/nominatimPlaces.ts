@@ -51,6 +51,9 @@ const translatePoi = (poi: string): string => {
 };
 
 const LANDMARK_ALIASES: Record<string, string> = {
+  "מוזיאון הלובר": "Louvre Museum Paris France",
+  "מוזיאון לובר": "Louvre Museum Paris France",
+  louvre: "Louvre Museum Paris France",
   "מגדל אייפel": "Eiffel Tower Paris France",
   "eiffel tower": "Eiffel Tower Paris France",
   "הית'רo": "London Heathrow Airport UK",
@@ -62,6 +65,7 @@ const LANDMARK_ALIASES: Record<string, string> = {
 
 const translateLandmark = (near: string): string => {
   const t = near.trim();
+  if (/לובר|louvre/i.test(t)) return "Louvre Museum Paris France";
   if (/אייפel|eiffel/i.test(t)) return "Eiffel Tower Paris France";
   if (/heathrow|הית.?ר[owו]/i.test(t)) return "London Heathrow Airport UK";
   if (/בן.?גוריון|ben.?gurion/i.test(t)) return "Ben Gurion Airport Israel";
@@ -91,6 +95,15 @@ const buildPlaceSearchQueries = (query: string, parsed: { poi: string; near: str
   }
   if (/אייפ|eiffel/i.test(query) && /בית\s+חולים|hospital/i.test(query)) {
     out.push("hospital near Eiffel Tower Paris");
+  }
+  if (/אייפ|eiffel/i.test(query) && /(?:רכ|train|railway|station|תחנ)/i.test(query)) {
+    out.push("Bir-Hakeim metro station Paris");
+    out.push("Champ de Mars Tour Eiffel station Paris");
+    out.push("railway station near Eiffel Tower Paris");
+  }
+  if (/לובר|louvre/i.test(query) && /(?:מלון|hotel)/i.test(query)) {
+    out.push("hotel near Louvre Museum Paris");
+    out.push("Hotel Regina Louvre Paris");
   }
   return [...new Set(out.filter(Boolean))];
 };

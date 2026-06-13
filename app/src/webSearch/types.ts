@@ -22,30 +22,17 @@ export type SearchProviderId =
   | "noaa-space"
   | "israel-alerts"
   | "gdacs-disasters"
-  | "searxng"
+  | "coingecko"
+  | "stooq-commodity"
+  | "yahoo-finance"
+  | "hacker-news"
+  | "market-stocks"
   | "reddit"
-  | "hackernews"
-  | "arxiv"
-  | "coingecko";
-
-export type SearchSourceResult = {
-  provider: SearchProviderId;
-  label: string;
-  ok: boolean;
-  text: string;
-  url?: string;
-  error?: string;
-  latencyMs: number;
-};
-
-export type WebSearchResult = {
-  /** Flat text injected into the LLM system prompt. */
-  contextText: string;
-  sources: SearchSourceResult[];
-  /** Short Hebrew summary for status / UI header. */
-  summaryHe: string;
-  intents: SearchIntent[];
-};
+  | "flight-status"
+  | "youtube"
+  | "ais-ships"
+  | "celestrak"
+  | "spacex-launches";
 
 export type SearchIntent =
   | "weather"
@@ -67,11 +54,47 @@ export type SearchIntent =
   | "spaceweather"
   | "alerts"
   | "disaster"
-  | "searx"
-  | "reddit"
+  | "crypto"
+  | "commodity"
+  | "market"
   | "hackernews"
-  | "arxiv"
-  | "market";
+  | "youtube"
+  | "ships"
+  | "spacex";
+
+export type SearchBriefLink = { label: string; url: string };
+
+export type SearchBrief = {
+  facts: string[];
+  links: SearchBriefLink[];
+  gaps: string[];
+  intents: SearchIntent[];
+};
+
+export type SearchSourceResult = {
+  provider: SearchProviderId;
+  label: string;
+  ok: boolean;
+  text: string;
+  url?: string;
+  error?: string;
+  latencyMs: number;
+};
+
+export type SearchProgressEvent =
+  | { type: "start"; intents: SearchIntent[]; query: string }
+  | { type: "provider_done"; result: SearchSourceResult }
+  | { type: "complete"; sources: SearchSourceResult[] };
+
+export type WebSearchResult = {
+  /** Compact brief injected into the LLM system prompt. */
+  contextText: string;
+  sources: SearchSourceResult[];
+  /** Short Hebrew summary for status / UI header. */
+  summaryHe: string;
+  intents: SearchIntent[];
+  brief?: SearchBrief;
+};
 
 export type FetchJsonOptions = {
   timeoutMs?: number;
@@ -81,4 +104,5 @@ export type FetchJsonOptions = {
 export type WebSearchOptions = {
   /** Recent user messages — used for aviation region / follow-up context. */
   recentUserText?: string[];
+  onProgress?: (event: SearchProgressEvent) => void;
 };

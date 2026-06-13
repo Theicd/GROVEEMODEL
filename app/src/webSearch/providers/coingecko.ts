@@ -1,71 +1,56 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
 
-type CoinSpec = { id: string; label: string };
-
-const COIN_HINTS: Array<{ re: RegExp; coin: CoinSpec }> = [
-  { re: /bitcoin|ביטקוין|btc/i, coin: { id: "bitcoin", label: "Bitcoin" } },
-  { re: /\bethereum\b|את(?:ריום)?|eth\b/i, coin: { id: "ethereum", label: "Ethereum" } },
-  { re: /solana|\bsol\b/i, coin: { id: "solana", label: "Solana" } },
-  { re: /dogecoin|\bdoge\b/i, coin: { id: "dogecoin", label: "Dogecoin" } },
-  { re: /(?:מחיר|price).*(?:זהב|gold)|\bgold\b|xau/i, coin: { id: "pax-gold", label: "Gold (PAXG proxy)" } },
-  { re: /crypto|קריפטו|מטבע(?:ות)?\s*דיגיט/i, coin: { id: "bitcoin", label: "Bitcoin" } },
-];
-
-const extractCoins = (query: string): CoinSpec[] => {
-  const found = new Map<string, CoinSpec>();
-  for (const { re, coin } of COIN_HINTS) {
-    if (re.test(query)) found.set(coin.id, coin);
-  }
-  return [...found.values()];
+const COIN_IDS: Record<string, string> = {
+  bitcoin: "bitcoin",
+  ביטקוין: "bitcoin",
+  btc: "bitcoin",
+  ethereum: "ethereum",
+  eth: "ethereum",
+  איתריום: "ethereum",
 };
 
 export const fetchCoinGeckoSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "coingecko" as const;
-  const label = "CoinGecko";
-  const coins = extractCoins(query);
-  if (!coins.length) {
-    return {
-      provider,
-      label,
-      ok: false,
-      text: "",
-      error: "לא זוהה נכס קריפטו/זהב — נסה SearXNG למניות",
-      latencyMs: Math.round(performance.now() - started),
-    };
-  }
-
+  const label = "CoinGecko (קריפטו)";
   try {
-    const ids = coins.map((c) => c.id).join(",");
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,ils&include_24hr_change=true`;
-    const data = await fetchJson<Record<string, { usd?: number; ils?: number; usd_24h_change?: number }>>(url);
-    const lines: string[] = [];
-    for (const coin of coins) {
-      const row = data[coin.id];
-      if (!row?.usd) continue;
-      const ch = row.usd_24h_change != null ? ` (${row.usd_24h_change >= 0 ? "+" : ""}${row.usd_24h_change.toFixed(2)}% 24h)` : "";
-      lines.push(
-        `- ${coin.label}: $${row.usd.toLocaleString("en-US")}${row.ils ? ` · ₪${row.ils.toLocaleString("he-IL")}` : ""}${ch}`,
-      );
+    const lower = query.toLowerCase();
+    let coinId = "bitcoin";
+    for (const [key, id] of Object.entries(COIN_IDS)) {
+      if (lower.includes(key)) {
+        coinId = id;
+        break;
+      }
     }
-    if (!lines.length) {
+
+    const data = await fetchJson<Record<string, { usd?: number; ils?: number; usd_24h_change?: number }>>(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd,ils&include_24hr_change=true`,
+    );
+    const row = data[coinId];
+    if (!row?.usd) {
       return {
         provider,
         label,
         ok: false,
         text: "",
-        error: "CoinGecko לא החזיר מחיר",
+        error: "לא נמצא מחיר",
         latencyMs: Math.round(performance.now() - started),
       };
     }
+
+    const lines = [
+      `${coinId}: $${row.usd} USD`,
+      row.ils != null ? `≈ ₪${row.ils.toLocaleString("he-IL")}` : "",
+      row.usd_24h_change != null ? `שינוי 24h: ${row.usd_24h_change.toFixed(2)}%` : "",
+    ].filter(Boolean);
 
     return {
       provider,
       label,
       ok: true,
       text: lines.join("\n"),
-      url: `https://www.coingecko.com/en/coins/${coins[0].id}`,
+      url: `https://www.coingecko.com/en/coins/${coinId}`,
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {
