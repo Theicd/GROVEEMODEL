@@ -216,7 +216,6 @@ let webGpuAdapterProbe: boolean | null = null;
 
 const resetInferenceRuntime = () => {
   webGpuAdapterProbe = null;
-  webGpuOnnxBlocked = false;
 };
 
 const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
@@ -725,6 +724,9 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       const next = message.backend;
       if (next !== inferenceBackend) {
         inferenceBackend = next;
+        if (next === "auto" || next === "webgpu") {
+          webGpuOnnxBlocked = false;
+        }
         resetInferenceRuntime();
         modelCache.clear();
         clearModelSlots();
@@ -742,12 +744,29 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
         return;
       }
-      const loaded = await loadMultimodalModel(message.modelId, message.dtype);
-      chatSlot.model = loaded.model;
-      chatSlot.processor = loaded.processor;
-      chatSlot.device = loaded.device;
-      chatSlot.modelId = message.modelId;
-      post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+      try {
+        const loaded = await loadMultimodalModel(message.modelId, message.dtype);
+        chatSlot.model = loaded.model;
+        chatSlot.processor = loaded.processor;
+        chatSlot.device = loaded.device;
+        chatSlot.modelId = message.modelId;
+        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+      } catch (err) {
+        if (isWebGpuRuntimeError(err) && inferenceBackend !== "wasm") {
+          post({
+            type: "status",
+            text: "WebGPU error — reloading on WASM (CPU)…",
+          });
+          const loaded = await forceReloadWasm(message.modelId);
+          chatSlot.model = loaded.model;
+          chatSlot.processor = loaded.processor;
+          chatSlot.device = loaded.device;
+          chatSlot.modelId = message.modelId;
+          post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+          return;
+        }
+        throw err;
+      }
       return;
     }
 
