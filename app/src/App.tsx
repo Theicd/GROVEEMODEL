@@ -2259,20 +2259,10 @@ function App() {
           cameraLoopRef.current?.releaseAfterChat();
         } else {
           const errText = msg.error;
-          if (isWebGpuInferenceError(errText) && !wasmBootRetryRef.current && workerRef.current) {
+          if (isWebGpuInferenceError(errText) && !wasmBootRetryRef.current) {
             wasmBootRetryRef.current = true;
             setWorkerBootError(null);
-            setIsLoading(true);
-            setProgress(0);
-            setStatus("WebGPU לא נתמך במחשב זה — טוען מחדש ב-WASM (CPU)…");
-            queueMicrotask(() => {
-              workerRef.current?.postMessage({ type: "configure_inference", backend: "wasm" });
-              workerRef.current?.postMessage({
-                type: "load",
-                modelId: GEMMA_MODEL_ID,
-                dtype: "q4",
-              });
-            });
+            loadModel({ forceWasm: true });
             return;
           }
           setIsLoading(false);
@@ -2444,13 +2434,10 @@ function App() {
       remoteHost: appSettingsRef.current.hfRemoteHost ?? "",
     });
     workerRef.current.postMessage({
-      type: "configure_inference",
-      backend,
-    });
-    workerRef.current.postMessage({
       type: "load",
       modelId: GEMMA_MODEL_ID,
       dtype: "q4",
+      backend,
     });
   };
 

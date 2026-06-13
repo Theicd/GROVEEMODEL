@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 /** Build dist/ for GitHub Pages when the site is served from /docs/ on main. */
+import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 process.env.VITE_BASE = "/GROVEEMODEL/docs/";
-execSync("npm run build", { stdio: "inherit", env: process.env });
+execSync("npm run build", { stdio: "inherit", env: process.env, cwd: root });
+
+const dist = path.join(root, "dist");
+const docs = path.join(root, "docs");
+if (!existsSync(docs)) mkdirSync(docs, { recursive: true });
+cpSync(dist, docs, { recursive: true, force: true });
+console.log("[build-pages-docs] synced dist/ → docs/");
