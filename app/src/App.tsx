@@ -336,19 +336,15 @@ const defaultGemmaSettings: TunableModelSettings = {
   systemPrompt: GROVEE_CHAT_SYSTEM,
 };
 
-/** Gemma q4 on WebGPU often fails (GatherBlockQuantized) — WASM is the reliable default on Pages and prod builds. */
+/** Auto: WebGPU when the GPU supports Gemma q4, WASM fallback on failure. WASM only when chosen or after a confirmed GPU block. */
 const normalizeInferenceBackend = (
   parsed: InferenceBackendPreference | undefined,
 ): InferenceBackendPreference => {
-  if (typeof window !== "undefined") {
-    if (localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1") return "wasm";
-    if (window.location.hostname.endsWith("github.io")) return "wasm";
+  if (parsed === "wasm" || parsed === "webgpu" || parsed === "auto") return parsed;
+  if (typeof window !== "undefined" && localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1") {
+    return "wasm";
   }
-  if (parsed === "wasm") return "wasm";
-  if (import.meta.env.DEV) {
-    return parsed === "webgpu" || parsed === "auto" ? parsed : "auto";
-  }
-  return "wasm";
+  return "auto";
 };
 
 const defaultAppSettings = (): AppSettings => ({
@@ -368,7 +364,20 @@ const loadSettings = (): AppSettings => {
       typeof mergedGemma.systemPrompt === "string" ? mergedGemma.systemPrompt : GROVEE_CHAT_SYSTEM,
     );
     const gemma = { ...mergedGemma, systemPrompt };
-    const inferenceBackend = normalizeInferenceBackend(parsed.inferenceBackend);
+    let inferenceBackend = normalizeInferenceBackend(parsed.inferenceBackend);
+    // Recover Auto after mistaken forced-WASM on GitHub Pages — try WebGPU again on capable GPUs.
+    if (
+      typeof window !== "undefined" &&
+      localStorage.getItem(WEBGPU_BLOCKED_KEY) === "1" &&
+      parsed.inferenceBackend === "wasm"
+    ) {
+      try {
+        localStorage.removeItem(WEBGPU_BLOCKED_KEY);
+      } catch {
+        /* ignore */
+      }
+      inferenceBackend = "auto";
+    }
     const settings: AppSettings = {
       ...defaultAppSettings(),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
@@ -2224,20 +2233,6 @@ function App() {
           detail: msg.error,
         });
         const isChatError = msg.scope === "chat" || isGeneratingRef.current;
-        if (isWebGpuInferenceError(msg.error)) {
-          try {
-            localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
-          } catch {
-            /* ignore */
-          }
-          if (appSettingsRef.current.inferenceBackend !== "wasm") {
-            const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
-            appSettingsRef.current = next;
-            setAppSettings(next);
-            saveSettings(next);
-            workerRef.current?.postMessage({ type: "configure_inference", backend: "wasm" });
-          }
-        }
         if (isChatError) {
           isGeneratingRef.current = false;
           setIsGenerating(false);
@@ -2262,8 +2257,16 @@ function App() {
           if (isWebGpuInferenceError(errText) && !wasmBootRetryRef.current) {
             wasmBootRetryRef.current = true;
             setWorkerBootError(null);
+            setStatus("WebGPU לא זמין — ממשיך ב-WASM (CPU)…");
             loadModel({ forceWasm: true });
             return;
+          }
+          if (isWebGpuInferenceError(errText)) {
+            try {
+              localStorage.setItem(WEBGPU_BLOCKED_KEY, "1");
+            } catch {
+              /* ignore */
+            }
           }
           setIsLoading(false);
           setProgress(0);
@@ -2405,7 +2408,7 @@ function App() {
     });
   }, [isLoaded, isGenerating]);
 
-  const loadModel = (opts?: { forceWasm?: boolean }) => {
+  const loadModel = (opts?: { forceWasm?: boolean; persistWasm?: boolean }) => {
     if (!workerRef.current) return;
     if (!opts?.forceWasm) wasmBootRetryRef.current = false;
     setWorkerBootError(null);
@@ -2418,7 +2421,7 @@ function App() {
     setLoadingTipIndex(0);
     loadingFileRef.current = "";
     const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
-    if (opts?.forceWasm && appSettingsRef.current.inferenceBackend !== "wasm") {
+    if (opts?.forceWasm && opts?.persistWasm && appSettingsRef.current.inferenceBackend !== "wasm") {
       const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
       appSettingsRef.current = next;
       setAppSettings(next);
@@ -2441,7 +2444,7 @@ function App() {
     });
   };
 
-  const retryWasmLoad = () => loadModel({ forceWasm: true });
+  const retryWasmLoad = () => loadModel({ forceWasm: true, persistWasm: true });
 
   const clearModelCache = async () => {
     if (isGenerating || cacheClearing) return;
@@ -2537,6 +2540,12 @@ function App() {
       setAssistantBuffer("");
       assistantBufferRef.current = "";
       setWorkerReloadKey((k) => k + 1);
+
+      try {
+        localStorage.removeItem(WEBGPU_BLOCKED_KEY);
+      } catch {
+        /* ignore */
+      }
 
       const freedSummary =
         before >= 0 && after >= 0

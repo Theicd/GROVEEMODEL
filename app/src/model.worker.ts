@@ -154,19 +154,6 @@ const isInferenceRuntimeError = (err: unknown): boolean => {
 /** Remember GPUs that advertise WebGPU but lack quantized ONNX ops (e.g. GatherBlockQuantized). */
 let webGpuOnnxBlocked = false;
 
-const isGitHubPagesHost = (): boolean => {
-  try {
-    return self.location.hostname.endsWith("github.io");
-  } catch {
-    return false;
-  }
-};
-
-if (isGitHubPagesHost()) {
-  inferenceBackend = "wasm";
-  webGpuOnnxBlocked = true;
-}
-
 const ensureChatSlot = async (modelId: string): Promise<{ model: Gemma4Model; processor: Gemma4Processor }> => {
   if (!chatSlot.model || !chatSlot.processor || chatSlot.modelId !== modelId) {
     const switched = await loadMultimodalModel(modelId, "q4");
@@ -312,7 +299,7 @@ const formatHubLoadError = (err: unknown): string => {
     lower.includes("could not find an implementation") ||
     lower.includes("can't create a session")
   ) {
-    return `${raw} — WebGPU on this GPU cannot run the quantized Gemma model. Settings → Inference → WASM, then Clear cache → Start again.`;
+    return `${raw} — WebGPU failed for this GPU; Auto will retry on WASM (CPU), or pick WASM in Settings.`;
   }
   if (lower.includes("unaligned") || lower.includes("alignment")) {
     return `${raw} — ONNX WASM alignment error (context too large). Start a new chat or reduce history; Settings → Inference → WASM if needed.`;
