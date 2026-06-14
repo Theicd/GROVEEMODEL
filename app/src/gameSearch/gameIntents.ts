@@ -38,7 +38,19 @@ const isRecommendedBrowse = (text: string): boolean =>
   /מ+?ו?לצ|recommended|האם\s+יש.*משחק/i.test(text) ||
   (/אילו\s+משחקים/i.test(text) && /מ+?ו?לצ|המלצ/i.test(text));
 
-export const isGameSearchRequest = (text: string): boolean => GAME_SEARCH_RE.test(text.trim());
+const NOT_ARCHIVE_GAME_RE =
+  /משחק\s*(?:חשיבה|שחמט|כדורגל|מונופול|קלפים)|thinking\s+game|logic\s+game|riddle|חיד(?:ה|ות)|שחמט|chess\b|board\s+game(?!\s+search)/i;
+
+export const isGameSearchRequest = (text: string): boolean => {
+  const t = text.trim();
+  if (
+    NOT_ARCHIVE_GAME_RE.test(t) &&
+    !/(?:חפש|מצא|ארכיון|archive|internet\s+archive|און\s*ליין|online\s+game|משחקים?\s*מ+?ו?לצ)/i.test(t)
+  ) {
+    return false;
+  }
+  return GAME_SEARCH_RE.test(t);
+};
 
 export const detectGameCategory = (text: string): GameCategoryId | null => {
   const fromLabels = detectCategoryFromText(text);

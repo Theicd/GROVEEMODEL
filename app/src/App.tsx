@@ -2986,7 +2986,10 @@ function App() {
       }
     }
 
-    const skipCanned = qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending();
+    const skipCanned =
+      !qaChatBridge.hasPending() ||
+      qaTurnForceLlmRef.current ||
+      qaChatBridge.isForceLlmPending();
 
     const pureGameSearchTurn =
       !skipCanned && wantsGameSearch && !cameraActive && !hasAttachments && !continueCode && !documentTurn;

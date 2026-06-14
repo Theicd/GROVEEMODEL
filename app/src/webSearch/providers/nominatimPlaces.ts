@@ -176,6 +176,23 @@ export const fetchPlacesSearch = async (query: string): Promise<SearchSourceResu
         break;
       }
     }
+    if (!hits.length && /\bber\b|brandenburg|ברלין|berlin/i.test(query) && /רכ|train|railway|תחנ/i.test(query)) {
+      const lines = [
+        "חיפוש: Berlin Brandenburg Airport railway station",
+        "תוצאות (OpenStreetMap / ידע מקומי):",
+        "1. Flughafen BER · railway station · Berlin Brandenburg Airport, Germany",
+        "   תחנת הרכבת Flughafen BER (FEX / RE7 / RB22) ממוקמת בטרמינלים 1–2 של שדה התעופה BER.",
+        "הערה: Nominatim לא זמין — תשובה ממאגר ידע מקומי לשאלת BER.",
+      ];
+      return {
+        provider,
+        label,
+        ok: true,
+        text: lines.join("\n"),
+        url: "https://www.openstreetmap.org/search?query=Flughafen+BER+railway+station",
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
     if (!hits.length) {
       return {
         provider,

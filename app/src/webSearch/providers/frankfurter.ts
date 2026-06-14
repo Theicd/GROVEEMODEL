@@ -1,4 +1,5 @@
 import { fetchJson } from "../fetchJson";
+import { isStaticWebHost } from "../proxyFetch";
 import type { SearchSourceResult } from "../types";
 import { extractCurrencyPair, type CurrencyPair } from "../queryExtract";
 
@@ -70,8 +71,11 @@ export const fetchCurrencySearch = async (query: string): Promise<SearchSourceRe
       };
     }
 
+    const fetchers = isStaticWebHost()
+      ? [fetchErApi, fetchFrankfurter]
+      : [fetchFrankfurter, fetchErApi];
     let hit: { rate: number; date: string; label: string } | null = null;
-    for (const fetcher of [fetchFrankfurter, fetchErApi]) {
+    for (const fetcher of fetchers) {
       try {
         hit = await fetcher(pair);
         if (hit) break;

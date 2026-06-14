@@ -35,7 +35,7 @@ import { fetchGovernmentSearch } from "./providers/wikidataGov";
 import { fetchWorldTimeSearch } from "./providers/worldTime";
 import { fetchCoinGeckoSearch } from "./providers/coingecko";
 import { fetchCommoditySearch, fetchMarketQuoteSearch } from "./providers/marketQuotes";
-import { fetchHackerNewsSearch } from "./providers/hackerNews";
+import { fetchHackerNewsSearch } from "./providers/hackernews";
 import { fetchSpaceXLaunchSearch } from "./providers/spacexLaunch";
 import { fetchUnsupportedSource } from "./providers/unsupported";
 import { applySnapshotFallbacks } from "../liveWorld/snapshotFallback";

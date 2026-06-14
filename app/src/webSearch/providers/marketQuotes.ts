@@ -1,4 +1,5 @@
 import { fetchJson, fetchText } from "../fetchJson";
+import { isStaticWebHost } from "../proxyFetch";
 import type { SearchSourceResult } from "../types";
 
 type YahooChart = {
@@ -94,21 +95,33 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
     let name = picked.label;
     let sourceLabel = "Yahoo Finance";
 
-    try {
-      const data = await fetchYahooQuote(picked);
-      const meta = data.chart?.result?.[0]?.meta;
-      if (meta?.regularMarketPrice != null && Number.isFinite(meta.regularMarketPrice)) {
-        price = meta.regularMarketPrice;
-        prev = meta.previousClose ?? null;
-        symbol = meta.symbol ?? picked.symbol;
-        name = meta.shortName ?? meta.longName ?? picked.label;
-        when =
-          meta.regularMarketTime != null
-            ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
-            : "—";
+    if (isStaticWebHost()) {
+      const stooq = await fetchStooqQuote(picked);
+      if (stooq) {
+        price = stooq.price;
+        when = stooq.when;
+        sourceLabel = "Stooq";
       }
-    } catch {
-      /* stooq fallback */
+    }
+
+    if (price == null) {
+      try {
+        const data = await fetchYahooQuote(picked);
+        const meta = data.chart?.result?.[0]?.meta;
+        if (meta?.regularMarketPrice != null && Number.isFinite(meta.regularMarketPrice)) {
+          price = meta.regularMarketPrice;
+          prev = meta.previousClose ?? null;
+          symbol = meta.symbol ?? picked.symbol;
+          name = meta.shortName ?? meta.longName ?? picked.label;
+          when =
+            meta.regularMarketTime != null
+              ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
+              : "—";
+          sourceLabel = "Yahoo Finance";
+        }
+      } catch {
+        /* stooq fallback below */
+      }
     }
 
     if (price == null) {

@@ -1,4 +1,5 @@
 import { fetchJson } from "../fetchJson";
+import { isStaticWebHost } from "../proxyFetch";
 import type { SearchSourceResult } from "../types";
 
 const COIN_IDS: Record<string, string> = {
@@ -40,18 +41,36 @@ export const fetchCoinGeckoSearch = async (query: string): Promise<SearchSourceR
     let change24: number | undefined;
     let sourceNote = "CoinGecko";
 
-    try {
-      const data = await fetchJson<Record<string, { usd?: number; ils?: number; usd_24h_change?: number }>>(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd,ils&include_24hr_change=true`,
-      );
-      const row = data[coinId];
-      if (row?.usd) {
-        usd = row.usd;
-        ils = row.ils ?? null;
-        change24 = row.usd_24h_change;
+    if (isStaticWebHost()) {
+      usd = await fetchBinanceUsd(coinId);
+      if (usd != null) {
+        sourceNote = "Binance (BTCUSDT/ETHUSDT)";
+        try {
+          const fx = await fetchJson<{ rates?: { ILS?: number } }>(
+            "https://open.er-api.com/v6/latest/USD",
+          );
+          const ilsRate = fx.rates?.ILS;
+          if (ilsRate != null) ils = Math.round(usd * ilsRate);
+        } catch {
+          /* USD only */
+        }
       }
-    } catch {
-      /* fallback below */
+    }
+
+    if (usd == null) {
+      try {
+        const data = await fetchJson<Record<string, { usd?: number; ils?: number; usd_24h_change?: number }>>(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd,ils&include_24hr_change=true`,
+        );
+        const row = data[coinId];
+        if (row?.usd) {
+          usd = row.usd;
+          ils = row.ils ?? null;
+          change24 = row.usd_24h_change;
+        }
+      } catch {
+        /* fallback below */
+      }
     }
 
     if (usd == null) {

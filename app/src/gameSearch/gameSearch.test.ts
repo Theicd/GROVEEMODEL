@@ -16,6 +16,12 @@ describe("gameIntents", () => {
     expect(isGameSearchRequest("hello")).toBe(false);
   });
 
+  it("does not treat thinking-game chat as archive search", () => {
+    expect(isGameSearchRequest("בוא נשחק משחק חשיבה")).toBe(false);
+    expect(isGameSearchRequest("let's play a thinking game")).toBe(false);
+    expect(shouldOpenGamePanel("בוא נשחק משחק חשיבה", "")).toBe(false);
+  });
+
   it("detects decade and recommendation browse requests", () => {
     expect(isGameSearchRequest("חפש משחקים משנות ה80 ותציג אותם")).toBe(true);
     expect(isGameSearchRequest("האם יש משחקים מומלצים?")).toBe(true);
