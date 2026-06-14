@@ -99,6 +99,28 @@
     return [];
   }
 
+  function buildLiveSnapshotPayload() {
+    const payload = {};
+    if (typeof live === 'undefined') return payload;
+    if (live.earthquake) payload.earthquake = live.earthquake;
+    if (live.iss) payload.iss = live.iss;
+    if (live.ships) payload.ships = live.ships;
+    if (live.aviation) payload.aviation = live.aviation;
+    return payload;
+  }
+
+  function postLiveSnapshot(requestId) {
+    window.parent.postMessage(
+      {
+        source: 'reality-core',
+        type: 'live_snapshot',
+        requestId,
+        payload: buildLiveSnapshotPayload(),
+      },
+      '*',
+    );
+  }
+
   async function handleCommand(type, payload = {}) {
     const p = payload.payload || payload;
 
@@ -193,6 +215,10 @@
 
   window.addEventListener('message', (e) => {
     if (!e.data || e.data.source !== 'grovee') return;
+    if (e.data.type === 'getLiveSnapshot') {
+      postLiveSnapshot(e.data.requestId);
+      return;
+    }
     void handleCommand(e.data.type, e.data.payload || e.data);
   });
 

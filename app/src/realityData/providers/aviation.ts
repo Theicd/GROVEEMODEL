@@ -78,7 +78,7 @@ export const fetchAviationSearch = async (
   const context = [query, ...recentUserText].join(" ");
 
   const snap = getCachedLiveWorldSnapshot(120_000);
-  if (snap?.aviation?.items?.length && isMilitaryAviationQuery(query)) {
+  if (snap?.aviation?.items?.length) {
     const text = buildMilitaryAviationText(query, snap);
     if (text) {
       return {
@@ -94,21 +94,73 @@ export const fetchAviationSearch = async (
 
   const wantGlobal = GLOBAL_RE.test(context) || isMilitaryAviationQuery(query);
 
+  const buildRegionalResult = async (): Promise<SearchSourceResult> => {
+    const region = pickRegion(context);
+    const data = await fetchJson<AdsbResponse>(
+      `https://api.airplanes.live/v2/point/${region.lat}/${region.lon}/250`,
+    );
+    const mapped = mapAdsb(data.ac ?? []);
+    if (!mapped.length) {
+      return {
+        provider,
+        label,
+        ok: false,
+        text: "",
+        error: "אין מטוסים בטווח",
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
+    const milCount = mapped.filter((a) => a.cls.mil).length;
+    const lines = [
+      `אזור: ${region.label} · רדיוס 250km`,
+      `מטוסים בטווח: ${mapped.length}`,
+      ...(milCount ? [`מטוסים צבאיים (heuristic): ${milCount}`] : []),
+      ...mapped.slice(0, 12).map((a, i) => {
+        const tag = a.cls.mil ? ` · ${a.cls.label || "צבאי"}` : "";
+        return `${i + 1}. ${a.callsign || "לא ידוע"} · ${a.alt}ft${tag}`;
+      }),
+    ];
+    if (/צבאי|military|מהם.*מטוס/i.test(query)) {
+      lines.push("הערה: זיהוי צבאי heuristic — כמו שכבת תעופה בעולם חי.");
+    }
+    return {
+      provider,
+      label,
+      ok: true,
+      text: lines.join("\n"),
+      url: "https://api.airplanes.live",
+      latencyMs: Math.round(performance.now() - started),
+    };
+  };
+
   try {
     if (wantGlobal) {
-      const data = await fetchJson<OpenSkyResponse>("https://opensky-network.org/api/states/all", undefined, {
-        timeoutMs: 18_000,
-      });
-      const mapped = mapOpenSky(data.states);
+      let mapped: ReturnType<typeof mapOpenSky> = [];
+      try {
+        const data = await fetchJson<OpenSkyResponse>("https://opensky-network.org/api/states/all", undefined, {
+          timeoutMs: 18_000,
+        });
+        mapped = mapOpenSky(data.states);
+      } catch {
+        /* OpenSky often blocked on static hosts — fall through to cache/regional */
+      }
+
       if (!mapped.length) {
-        return {
-          provider,
-          label,
-          ok: false,
-          text: "",
-          error: "OpenSky לא החזיר מטוסים",
-          latencyMs: Math.round(performance.now() - started),
-        };
+        const cached = getCachedLiveWorldSnapshot(120_000);
+        if (cached?.aviation?.items?.length) {
+          const text = buildMilitaryAviationText(query, cached);
+          if (text) {
+            return {
+              provider,
+              label: "תעופה (עולם חי / ADS-B)",
+              ok: true,
+              text,
+              url: "https://api.airplanes.live",
+              latencyMs: Math.round(performance.now() - started),
+            };
+          }
+        }
+        return buildRegionalResult();
       }
 
       if (/\bawacs\b/i.test(query)) {
@@ -192,42 +244,7 @@ export const fetchAviationSearch = async (
       };
     }
 
-    const region = pickRegion(context);
-    const data = await fetchJson<AdsbResponse>(
-      `https://api.airplanes.live/v2/point/${region.lat}/${region.lon}/250`,
-    );
-    const mapped = mapAdsb(data.ac ?? []);
-    if (!mapped.length) {
-      return {
-        provider,
-        label,
-        ok: false,
-        text: "",
-        error: "אין מטוסים בטווח",
-        latencyMs: Math.round(performance.now() - started),
-      };
-    }
-    const milCount = mapped.filter((a) => a.cls.mil).length;
-    const lines = [
-      `אזור: ${region.label} · רדיוס 250km`,
-      `מטוסים בטווח: ${mapped.length}`,
-      ...(milCount ? [`מטוסים צבאיים (heuristic): ${milCount}`] : []),
-      ...mapped.slice(0, 12).map((a, i) => {
-        const tag = a.cls.mil ? ` · ${a.cls.label || "צבאי"}` : "";
-        return `${i + 1}. ${a.callsign || "לא ידוע"} · ${a.alt}ft${tag}`;
-      }),
-    ];
-    if (/צבאי|military|מהם.*מטוס/i.test(query)) {
-      lines.push("הערה: זיהוי צבאי heuristic — כמו שכבת תעופה בעולם חי.");
-    }
-    return {
-      provider,
-      label,
-      ok: true,
-      text: lines.join("\n"),
-      url: "https://api.airplanes.live",
-      latencyMs: Math.round(performance.now() - started),
-    };
+    return buildRegionalResult();
   } catch (err) {
     return {
       provider,

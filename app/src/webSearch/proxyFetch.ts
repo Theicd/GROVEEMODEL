@@ -88,8 +88,8 @@ export const needsProxy = (url: string): boolean => {
 };
 
 const PUBLIC_RELAYS = [
-  (target: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
   (target: string) => `https://corsproxy.io/?${encodeURIComponent(target)}`,
+  (target: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
   (target: string) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`,
 ];
 
@@ -142,12 +142,14 @@ export async function proxyAwareFetch(
   }
 
   const preferDirect = hasDirectCors(url) || !needsProxy(url);
+  let directFailed = false;
   if (preferDirect) {
     try {
       const r = await fetch(url, init);
       if (r.ok) return r;
+      directFailed = true;
     } catch {
-      /* retry via relay if cross-origin */
+      directFailed = true;
     }
   }
 
@@ -155,8 +157,17 @@ export async function proxyAwareFetch(
     return fetch(url, init);
   }
 
-  if (needsProxy(url) || !preferDirect) {
-    return fetchViaRelays(url, init);
+  const crossOrigin = isCrossOrigin(url);
+  const shouldRelay =
+    needsProxy(url) ||
+    (directFailed && crossOrigin && (isStaticWebHost() || !preferDirect));
+
+  if (shouldRelay) {
+    try {
+      return await fetchViaRelays(url, init);
+    } catch {
+      /* last-resort direct below */
+    }
   }
 
   return fetch(url, init);

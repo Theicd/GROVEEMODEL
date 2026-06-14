@@ -3301,7 +3301,7 @@ async function fetchPublicAviation() {
     if (os.length) chunks.push(os);
   } catch (e) { _logWarn('Aviation', `✗ OpenSky: ${e?.message||e}`); }
 
-  if (!_mergeAviationByIcao(chunks).length && !_isStaticWebHost()) {
+  if (!_mergeAviationByIcao(chunks).length) {
     try {
       const adsbItems = await _fetchAviationADSBLiveRegional();
       if (adsbItems.length) chunks.push(adsbItems);

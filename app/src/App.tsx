@@ -1068,7 +1068,11 @@ function App() {
   useEffect(() => {
     const off = registerGlobeLiveSnapshotListener();
     void warmLiveWorldCache();
-    return off;
+    const warmId = window.setInterval(() => void warmLiveWorldCache(), 90_000);
+    return () => {
+      off();
+      window.clearInterval(warmId);
+    };
   }, []);
 
   useEffect(() => {
@@ -2767,6 +2771,7 @@ function App() {
     let searchIntentsForGlobe: string[] = [];
 
     const finishCannedLive = (reply: string, ctx: string): boolean => {
+      if (!qaChatBridge.hasPending()) return false;
       if (qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending()) return false;
       if (cameraActive || hasAttachments || continueCode || documentTurn || wantsGameSearch) return false;
       const text = reply.trim();

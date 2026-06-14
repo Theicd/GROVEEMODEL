@@ -2,6 +2,7 @@ import { fetchEarthquakeSearch } from "../webSearch/providers/usgsEarthquake";
 import { fetchIssSearch } from "../realityData/providers/iss";
 import { fetchShipsSearch } from "../realityData/providers/ships";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
+import { fetchJson } from "../webSearch/fetchJson";
 import type { SearchSourceResult } from "../webSearch/types";
 import {
   getCachedLiveWorldSnapshot,
@@ -63,6 +64,52 @@ const parseShipsFromText = (text: string): LiveWorldSnapshot["ships"] | undefine
   return { regionLabel: region, count: count || items.length, items };
 };
 
+type AdsbAircraft = {
+  flight?: string;
+  hex?: string;
+  r?: string;
+  lat?: number;
+  lon?: number;
+  alt_baro?: number | string;
+  t?: string;
+  category?: string;
+};
+
+const fetchAviationItemsForCache = async (): Promise<LiveWorldSnapshot["aviation"] | undefined> => {
+  try {
+    const data = await fetchJson<{ ac?: AdsbAircraft[] }>(
+      "https://api.airplanes.live/v2/point/32.08/34.78/250",
+    );
+    const mapped = (data.ac ?? [])
+      .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon))
+      .map((a) =>
+        enrichAviationItem({
+          icao24: a.hex,
+          callsign: (a.flight ?? "").trim(),
+          country: a.r,
+          category: a.t ?? a.category,
+          geo: {
+            lat: a.lat,
+            lon: a.lon,
+            alt: typeof a.alt_baro === "number" ? a.alt_baro : undefined,
+          },
+        }),
+      );
+    if (!mapped.length) return undefined;
+    return {
+      count: mapped.length,
+      militaryCount: mapped.filter((i) => i.isMilitary).length,
+      awacsCount: mapped.filter((i) => i.awacsSuspect).length,
+      tankerCount: mapped.filter((i) => i.tankerSuspect).length,
+      regionLabel: "ישראל (מרכז) · רדיוס 250km",
+      sample: mapped.slice(0, 5).map(formatAviationSampleLine),
+      items: mapped,
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 const buildSnapshotFromResults = (
   results: SearchSourceResult[],
   source: LiveWorldSnapshot["source"],
@@ -107,14 +154,18 @@ export async function fetchLiveWorldSnapshot(force = false): Promise<LiveWorldSn
     av: "כמה מטוסים נמצאים כרגע מעל ישראל?",
   };
 
-  const [eq, iss, ships, av] = await Promise.all([
+  const [eq, iss, ships, av, avItems] = await Promise.all([
     fetchEarthquakeSearch(queries.eq),
     fetchIssSearch(queries.iss),
     fetchShipsSearch(queries.ships),
     fetchAviationSearch(queries.av, []),
+    fetchAviationItemsForCache(),
   ]);
 
   const snapshot = buildSnapshotFromResults([eq, iss, ships, av], "fetch");
+  if (avItems) {
+    snapshot.aviation = avItems;
+  }
   setLiveWorldSnapshot(snapshot);
   return snapshot;
 }
