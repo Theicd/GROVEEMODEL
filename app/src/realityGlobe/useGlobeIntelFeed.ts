@@ -106,7 +106,7 @@ export function useGlobeIntelFeed(active: boolean) {
       }
 
       if (e.data.type === "live_alert" && e.data.payload) {
-        const p = e.data.payload as IntelFlashAlert & { ts?: number };
+        const p = e.data.payload as IntelFlashAlert & { ts?: number; recommendedAction?: string };
         tryShowFlash(
           {
             id: p.id,
@@ -116,6 +116,12 @@ export function useGlobeIntelFeed(active: boolean) {
             category: p.category,
             lat: p.lat,
             lon: p.lon,
+            place: p.place,
+            magnitude: p.magnitude,
+            depth: p.depth,
+            source: p.source,
+            recommendedAction: p.recommendedAction,
+            eventTime: p.eventTime,
           },
           p.ts,
         );

@@ -28,6 +28,12 @@ export type IntelFlashAlert = {
   category: string;
   lat?: number;
   lon?: number;
+  place?: string;
+  magnitude?: number;
+  depth?: number;
+  source?: string;
+  recommendedAction?: string;
+  eventTime?: string;
 };
 
 export type GlobeIntelSnapshot = {

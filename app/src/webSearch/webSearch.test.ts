@@ -69,7 +69,19 @@ describe("webSearch intents", () => {
     expect(needsWebSearch("מה המטבע של ברזיל?")).toBe(false);
     expect(needsWebSearch('כמה ק"מ בין ירושלים לחיפה?')).toBe(false);
     expect(needsWebSearch("מי ראש הממשלה של בריטניה?")).toBe(true);
+    expect(needsWebSearch("מה הכותרת הראשית בעולם כרגע?")).toBe(true);
+    expect(classifySearchIntents("מה הכותרת הראשית בעולם כרגע?")).toContain("news");
+    expect(classifySearchIntents("מי ראש ממשלת בריטניה?")).toContain("government");
     expect(needsWebSearch("מה מחיר חבית נפט Brent?")).toBe(true);
+  });
+
+  it("always searches live-world queries (earthquake, ISS, ships)", () => {
+    expect(needsWebSearch("יש לך מידע על רעידות אדמה? למשל בישראל?")).toBe(true);
+    expect(needsWebSearch("איפה הייתה רעידת האדמה החזקה בעולם ב-24 השעות האחרונות?")).toBe(true);
+    expect(needsWebSearch("איפה תחנת החלל הבינלאומית עכשיו?")).toBe(true);
+    expect(needsWebSearch("כמה כלי שייט או אוניות יש במפרץ חיפה?")).toBe(true);
+    expect(classifySearchIntents("כמה כלי שייט או אוניות יש במפרץ חיפה?")).toContain("ships");
+    expect(classifySearchIntents("כמה מצופים במפרץ חיפה?")).toContain("marine-infra");
   });
 
   it("does not add wikipedia for pure weather intent", () => {
@@ -91,6 +103,8 @@ describe("webSearch intents", () => {
   });
 
   it("detects live query types for needsWebSearch", () => {
+    expect(needsWebSearch("מה השעה?")).toBe(false);
+    expect(needsWebSearch("what time is it")).toBe(false);
     expect(needsWebSearch("מה השעה בלונדון")).toBe(true);
     expect(needsWebSearch("מה הבירה של צרפת")).toBe(false);
     expect(isWorldTimeQuery("what time in Tokyo")).toBe(true);
@@ -137,6 +151,19 @@ describe("webSearch intents", () => {
 
   it("builds trending github query from hebrew", () => {
     expect(buildGitHubSearchQuery("פרויקטים פופולריים בגיטהב השבוע")).toContain("stars:");
+    expect(buildGitHubSearchQuery("פרויקטים פופולריים בגיטהב השבוע")).toContain("pushed:>");
+  });
+
+  it("does not reduce B16 to bare GitHub token", () => {
+    const q = buildGitHubSearchQuery("מהו הפרויקט הפופולרי ביותר היום ב-GitHub?");
+    expect(q).not.toBe("GitHub");
+    expect(q).toContain("stars:");
+    expect(q).toContain("archived:false");
+  });
+
+  it("does not classify B16 as Hacker News", () => {
+    expect(classifySearchIntents("מהו הפרויקט הפופולרי ביותר היום ב-GitHub?")).toContain("github");
+    expect(classifySearchIntents("מהו הפרויקט הפופולרי ביותר היום ב-GitHub?")).not.toContain("hackernews");
   });
 
   it("routes currency conversion without wikipedia", () => {

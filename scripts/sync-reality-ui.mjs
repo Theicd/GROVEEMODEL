@@ -23,6 +23,8 @@ const FILES = [
   "qa-system.js",
   "qa-diagnostics.js",
   "api-validator.js",
+  "med-ports.js",
+  "significant-alerts.js",
 ];
 
 function copyFile(src, dest) {

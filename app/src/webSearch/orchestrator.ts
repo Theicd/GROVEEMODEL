@@ -1,10 +1,12 @@
 import {
   classifySearchIntents,
+  isCrossSourceQuery,
   isFlightStatusQuery,
   isIssQuery,
   isMarketPriceQuery,
   isRedditQuery,
   isSatelliteCatalogQuery,
+  isStarlinkCountQuery,
   isYouTubeQuery,
   sanitizeSearchQuery,
   stripSearchVerb,
@@ -19,7 +21,8 @@ import { fetchPlacesSearch } from "./providers/nominatimPlaces";
 import { fetchNewsSearch } from "./providers/newsRss";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
 import { fetchShipsSearch } from "../realityData/providers/ships";
-import { fetchSatelliteCatalogSearch } from "../realityData/providers/satelliteCatalog";
+import { fetchOverpassMarineSearch } from "./providers/overpassMarine";
+import { fetchSatelliteCatalogSearch, fetchStarlinkCatalogSearch } from "../realityData/providers/satelliteCatalog";
 import { fetchIssSearch } from "../realityData/providers/iss";
 import { fetchSpaceWeatherSearch } from "../realityData/providers/spaceWeather";
 import { fetchIsraelAlertsSearch } from "../realityData/providers/israelAlerts";
@@ -35,6 +38,9 @@ import { fetchCommoditySearch, fetchMarketQuoteSearch } from "./providers/market
 import { fetchHackerNewsSearch } from "./providers/hackerNews";
 import { fetchSpaceXLaunchSearch } from "./providers/spacexLaunch";
 import { fetchUnsupportedSource } from "./providers/unsupported";
+import { applySnapshotFallbacks } from "../liveWorld/snapshotFallback";
+import { pingGlobeForLiveSnapshot } from "../liveWorld/bridge";
+import { buildCapabilityLiveReply } from "./capabilityReplyMessages";
 import { buildSearchBrief, formatSearchBriefContext } from "./searchBrief";
 import type { SearchSourceResult, WebSearchResult, WebSearchOptions } from "./types";
 
@@ -61,9 +67,11 @@ export const formatWebSearchNoResultsContext = (): string =>
   `[WEB SEARCH — NO LIVE DATA]
 The app tried live providers but none returned usable data for this question (timeout, CORS, or unsupported source).
 RULES:
-1. Say clearly in Hebrew that live data could not be loaded right now.
-2. Do NOT invent numbers, prices, weather, places, repo names, or headlines.
+1. Say clearly in Hebrew that live data could not be loaded right now (1–2 sentences).
+2. Do NOT invent numbers, prices, weather, places, repo names, headlines, or politician names.
 3. Do NOT say you "cannot browse" — say the fetch failed or this data type is not supported in-browser yet.
+4. Do NOT philosophize, speculate, or ask the user to clarify — state what failed and stop.
+5. Maximum 3 short sentences in Hebrew.
 [/WEB SEARCH — NO LIVE DATA]`;
 
 const trackTask = (
@@ -93,13 +101,21 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
   if (intents.includes("distance")) tasks.push(trackTask(fetchDistanceSearch(q), options));
   if (intents.includes("places")) tasks.push(trackTask(fetchPlacesSearch(q), options));
   if (intents.includes("ships")) tasks.push(trackTask(fetchShipsSearch(q), options));
+  if (intents.includes("marine-infra")) tasks.push(trackTask(fetchOverpassMarineSearch(q), options));
   if (intents.includes("news")) tasks.push(trackTask(fetchNewsSearch(q), options));
-  if (intents.includes("aviation")) tasks.push(trackTask(fetchAviationSearch(q, options?.recentUserText ?? []), options));
+  if (intents.includes("aviation") || /\bawacs\b/i.test(q)) {
+    tasks.push(trackTask(fetchAviationSearch(q, options?.recentUserText ?? []), options));
+  }
   if (intents.includes("satellite")) {
-    if (isSatelliteCatalogQuery(q) || !isIssQuery(q)) {
+    if (isStarlinkCountQuery(q)) {
+      tasks.push(trackTask(fetchStarlinkCatalogSearch(q), options));
+    } else if (isSatelliteCatalogQuery(q) || !isIssQuery(q)) {
       tasks.push(trackTask(fetchSatelliteCatalogSearch(q), options));
     }
-    if (isIssQuery(q)) tasks.push(trackTask(fetchIssSearch(q), options));
+    if (isIssQuery(q)) {
+      pingGlobeForLiveSnapshot();
+      tasks.push(trackTask(fetchIssSearch(q), options));
+    }
   }
   if (intents.includes("spacex")) tasks.push(trackTask(fetchSpaceXLaunchSearch(q), options));
   if (intents.includes("spaceweather")) tasks.push(trackTask(fetchSpaceWeatherSearch(q), options));
@@ -172,13 +188,18 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
 
   let settled = tasks.length ? await Promise.all(tasks) : [];
 
+  settled = applySnapshotFallbacks(q, intents, settled);
+
   const brief = buildSearchBrief(settled, intents, q);
-  const okContext = formatSearchBriefContext(brief, q);
+  const briefMax = isCrossSourceQuery(q) ? 1400 : 900;
+  const okContext = formatSearchBriefContext(brief, q, briefMax, settled);
   const contextText = okContext.trim() && settled.some((s) => s.ok && s.text.trim())
     ? okContext
     : formatWebSearchNoResultsContext();
 
   options?.onProgress?.({ type: "complete", sources: settled });
+
+  const cannedReply = buildCapabilityLiveReply(q, intents, settled);
 
   return {
     contextText,
@@ -186,6 +207,7 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
     summaryHe: summarizeSearchResult(settled, intents),
     intents,
     brief,
+    cannedReply,
   };
 };
 
@@ -195,3 +217,4 @@ export const fetchWebContext = async (query: string): Promise<string> => {
 };
 
 export { userRequestsSearch } from "./intents";
+export { warmLiveWorldCache } from "../liveWorld/fetchSnapshot";

@@ -12,7 +12,8 @@ export const CONNECTED_SEARCH_PROVIDERS: SearchProviderInfo[] = [
   { id: "world-time", icon: "🕐", labelHe: "TimeAPI — שעון עולמי", examplesHe: ["מה השעה בטוקיו?", "הפרש שעות ישראל–לונדון"] },
   { id: "usgs-earthquake", icon: "🌋", labelHe: "USGS — רעידות אדמה", examplesHe: ["רעידות ב-24 שעות"] },
   { id: "adsb-aviation", icon: "✈", labelHe: "ADS-B — מטוסים חיים", examplesHe: ["כמה מטוסים מעל ישראל?", "מטוסים באוויר בעולם"] },
-  { id: "ais-ships", icon: "⛴", labelHe: "AIS Digitraffic + עולם חי — ספינות", examplesHe: ["ספינות בתעלת סואץ", "אוניות בים התיכון"] },
+  { id: "ais-ships", icon: "⛴", labelHe: "AIS Digitraffic + עולם חי — ספינות", examplesHe: ["כמה כלי שייט במפרץ חיפה", "ספינות בתעלת סואץ"] },
+  { id: "osm-overpass-marine", icon: "⚓", labelHe: "OpenStreetMap Overpass — תשתיות ימיות", examplesHe: ["כמה מצופים במפרץ חיפה", "מגדלורים ליד חיפה"] },
   { id: "celestrak", icon: "🛰", labelHe: "CelesTrak — קטalog לוויינים", examplesHe: ["כמה לוויינים פעילים?"] },
   { id: "iss-tracker", icon: "🛰", labelHe: "WhereTheISS — תחנת החלל", examplesHe: ["איפה ה-ISS עכשיו?"] },
   { id: "spacex-launches", icon: "🚀", labelHe: "Launch Library — שיגורי SpaceX", examplesHe: ["מתי השיגור הבא של SpaceX?"] },
@@ -25,8 +26,8 @@ export const CONNECTED_SEARCH_PROVIDERS: SearchProviderInfo[] = [
   { id: "coingecko", icon: "₿", labelHe: "CoinGecko — קריפטו", examplesHe: ["מחיר ביטקוין עכשיו"] },
   { id: "yahoo-finance", icon: "📈", labelHe: "Yahoo Finance — מניות / מדדים / זהב / נפט", examplesHe: ["מצב S&P 500", "מחיר זהב", "Brent"] },
   { id: "wikidata-gov", icon: "🏛", labelHe: "Wikidata — ממשל וראשי מדינה", examplesHe: ["מי ראש הממשלה של בריטניה?"] },
-  { id: "news-rss", icon: "📰", labelHe: "BBC/CNN RSS — חדשות", examplesHe: ["כותרות BBC"] },
+  { id: "news-rss", icon: "📰", labelHe: "BBC · CNN · Reuters · Guardian — RSS", examplesHe: ["כותרות עולם"] },
 ];
 
 export const LIVE_WORLD_LAYERS_HE =
-  "עולם חי (🌐): מטוסים · ספינות · לוויינים · רעידות · מזג אוויר — לצפייה על המפה: «הצג על המפה»";
+  "עולם חי (🌐): מטוסים · ספינות · מצופים (OpenSeaMap) · לוויינים · רעידות · מזג אוויר";

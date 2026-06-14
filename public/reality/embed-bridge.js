@@ -131,6 +131,10 @@
       if (typeof setPresentationMode === 'function') setPresentationMode(!!p.on);
       return;
     }
+    if (type === 'setQuietAlerts') {
+      if (typeof setQuietAlerts === 'function') setQuietAlerts(!!p.on);
+      return;
+    }
     if (type === 'setMapMode' && p.mode) {
       if (typeof setMapMode === 'function') setMapMode(p.mode, p.fly !== false);
       resizeViewer();

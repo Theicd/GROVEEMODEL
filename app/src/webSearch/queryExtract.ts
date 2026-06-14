@@ -126,8 +126,8 @@ export const extractCountryPhrase = (query: string): string | null => {
     /(?:ב|ב־|in|of|for)\s+(?:מדינת\s+)?([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:מדינ(?:ה|ת)|country)\s+(?:של|of)?\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:ביר(?:ה|ת)|capital|population|currency|מטבע|אוכלוסי(?:ה|יה)|תושבים|דגל|flag)\s+(?:של|of)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
-    /(?:ראש\s+(?:הממשלה|ממשלה|מדינה|המדינה)|נשיא|prime\s+minister|president)\s+(?:של|of|in)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
-    /(?:מי\s+)?(?:נשיא|ראש\s+(?:הממשלה|ממשלה))\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
+    /(?:ראש\s+(?:ה)?(?:ממשלה|ממשלת|מדינה|המדינה)|נשיא|prime\s+minister|president)\s+(?:של|of|in)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
+    /(?:מי\s+)?(?:נשיא|ראש\s+(?:ה)?(?:ממשלה|ממשלת))\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:חג|חגים|holiday|holidays)\s+(?:ב|ב־|in)\s+([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:האם\s+)?(?:ה)?יום\s+חג\s+(?:ב|ב־|in)\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,35})(?:[?!.]?$)/i,
     /(?:^|\s)(?:ב|ב־)([א-ת][א-ת\s\-'".]{2,34})(?:[?!.]?$)/,
@@ -314,9 +314,15 @@ export const extractPlacePair = (query: string): [string, string] | null => {
 };
 
 /** POI + anchor from "מצא X ליד Y" / "train stations near Heathrow". */
+export const isNearMeAnchor = (text: string): boolean =>
+  /(?:באזור(?:י)?|באזור\s+שלי|בסביב(?:ה|תי)|קרוב\s+(?:אליי|אלי|לי)|ליד(?:י)?|near\s+me|around\s+me|my\s+area|locally|here)\b/i.test(
+    text,
+  );
+
 export const extractPoiNearQuery = (query: string): { poi: string; near: string } | null => {
   const q = query.trim();
   const patterns: Array<{ re: RegExp; poi: number; near: number }> = [
+    { re: /(?:מצא|find|search\s+for)\s+(.+?)\s+(?:באזור(?:י)?|בסביב(?:ה|תי)|locally|here)(?:[?!.]?$)/i, poi: 1, near: 0 },
     { re: /(?:מצא|find|search\s+for|where\s+is)\s+(.+?)\s+(?:ליד|קרוב\s+ל|near|around|by)\s+(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(.+?)\s+(?:ליד|קרוב\s+ל|near|around|by)\s+(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(?:אילו|what|which)\s+(.+?)\s+(?:יש|are\s+there|near)\s+(?:ליד|near|at|by)?\s*(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
@@ -325,25 +331,39 @@ export const extractPoiNearQuery = (query: string): { poi: string; near: string 
   for (const { re, poi, near } of patterns) {
     const m = q.match(re);
     const poiText = m?.[poi]?.trim().replace(/[?!.]+$/, "");
-    const nearText = m?.[near]?.trim().replace(/[?!.]+$/, "");
-    if (poiText && nearText && poiText.length >= 2 && nearText.length >= 2) {
-      return { poi: poiText, near: nearText };
+    let nearText = near > 0 ? m?.[near]?.trim().replace(/[?!.]+$/, "") : "";
+    if (poiText && (nearText || near === 0) && poiText.length >= 2) {
+      if (!nearText || isNearMeAnchor(nearText) || isNearMeAnchor(q)) {
+        nearText = "__NEAR_ME__";
+      }
+      if (nearText.length >= 2 || nearText === "__NEAR_ME__") {
+        return { poi: poiText, near: nearText };
+      }
     }
   }
   return null;
 };
 
-/** News site hint e.g. BBC. */
+/** World / international headline — aggregate several RSS feeds. */
+export const isWorldHeadlineQuery = (query: string): boolean =>
+  /(?:בעולם|באזור|global|world|בינלאומ|international)/i.test(query) &&
+  /(?:כותרת|headline|חדשות|news)/i.test(query);
+
+/** News site hint e.g. BBC. Returns null → multi-feed world headlines. */
 export const extractNewsSite = (query: string): string | null => {
   if (/bbc/i.test(query)) return "bbc";
   if (/cnn/i.test(query)) return "cnn";
   if (/ynet|ynetnews/i.test(query)) return "ynet";
+  if (/reuters/i.test(query)) return "reuters";
+  if (/guardian/i.test(query)) return "guardian";
+  if (isWorldHeadlineQuery(query)) return null;
   if (
     /(?:artificial\s+intelligence|\bai\b|machine\s+learning|בינה\s+מלאכותית|openai|llm)/i.test(query) &&
     /(?:חדשות|news|headline|קורה|כרגע|היום)/i.test(query)
   ) {
     return null;
   }
-  if (/חדשות|news|headline|כותרת\s+ראש/i.test(query)) return "bbc";
+  if (/ישראל|israel/i.test(query) && /(?:היום|כרגע|קור(?:ה|ה)|news|חדשות)/i.test(query)) return "ynet";
+  if (/כותרות|חדשות|news|headline|כותרת/i.test(query)) return "bbc";
   return null;
 };

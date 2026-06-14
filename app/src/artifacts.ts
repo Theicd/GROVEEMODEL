@@ -14,6 +14,7 @@ import {
 
 } from "./chatIntents";
 
+import { LANGUAGE_RULE_MARKER } from "./characterPrompts";
 import type { Artifact } from "./ArtifactPanel";
 
 import { stripHtmlFencesForChat } from "./chatMarkdown";
@@ -31,6 +32,22 @@ export type PersistedAssistantOptions = {
 
 
 type MsgPart = { type: "text" | "html" | "image" | "code"; value: string; lang?: string };
+
+const looksLikeLeakedSystemPrompt = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  if (t.includes(LANGUAGE_RULE_MARKER)) return true;
+  if (/^system\s*\n/i.test(t) && /You are GROVEE/i.test(t)) return true;
+  if (/WHO YOU ARE:/i.test(t) && /HTML\/CSS\/JS RULE:/i.test(t)) return true;
+  return false;
+};
+
+const stripLeakedSystemPrompt = (text: string): string => {
+  if (!looksLikeLeakedSystemPrompt(text)) return text;
+  return "";
+};
+
+const isBlockedArtifactContent = (content: string): boolean => looksLikeLeakedSystemPrompt(content);
 
 
 
@@ -156,7 +173,7 @@ export const extractPrimaryArtifact = (content: string): Artifact | null => {
 
   const html = parts.find((p) => p.type === "html" && p.value.length > 0);
 
-  if (html) return { kind: "html", content: html.value, title: "HTML" };
+  if (html && !isBlockedArtifactContent(html.value)) return { kind: "html", content: html.value, title: "HTML" };
 
   const code = parts.find((p) => p.type === "code" && p.value.length > 0);
 
@@ -166,7 +183,7 @@ export const extractPrimaryArtifact = (content: string): Artifact | null => {
 
   const streamingHtml = content.match(/```html\s*([\s\S]*)$/i);
 
-  if (streamingHtml && streamingHtml[1].trim().length > 8) {
+  if (streamingHtml && streamingHtml[1].trim().length > 8 && !isBlockedArtifactContent(streamingHtml[1])) {
 
     return { kind: "html", content: streamingHtml[1].trim(), title: "HTML" };
 
@@ -204,7 +221,7 @@ export const cleanModelOutputForText = (input: string, thinkingEnabled: boolean)
 
   const base = stripGemmaControlTokens(scan || input);
 
-  const trimmed = stripLeakedVisionReport(base).trim();
+  const trimmed = stripLeakedSystemPrompt(stripLeakedVisionReport(base)).trim();
 
   return trimmed.length ? trimmed : "No response generated.";
 
@@ -273,6 +290,14 @@ export const buildPersistedAssistantPayload = (
   const artifact = extractPrimaryArtifact(scanContent);
 
 
+
+  if (artifact && isBlockedArtifactContent(artifact.content)) {
+    return {
+      content: cleanModelOutputForText(raw, thinkingEnabled),
+      artifact: null,
+      thought: cleanThought || undefined,
+    };
+  }
 
   if (artifact) {
 

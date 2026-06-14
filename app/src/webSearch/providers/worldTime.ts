@@ -1,5 +1,6 @@
 import { geocodePlace, formatPlaceLabel } from "../geoResolve";
 import { fetchJson } from "../fetchJson";
+import { getStartupContextSync } from "../../startupContext";
 import type { SearchSourceResult } from "../types";
 import {
   extractCountryPhrase,
@@ -129,6 +130,31 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
 
     const location = resolveTimeLocation(query);
     if (!location) {
+      const ctx = getStartupContextSync();
+      if (ctx) {
+        const place = ctx.cityName
+          ? { name: ctx.cityName, timezone: ctx.timezone, latitude: ctx.lat, longitude: ctx.lon, country_code: ctx.countryCode }
+          : { name: ctx.countryName, timezone: ctx.timezone, latitude: ctx.lat, longitude: ctx.lon, country_code: ctx.countryCode };
+        const time = await fetchTimezone(ctx.timezone);
+        const d = time.currentLocalTime ? new Date(time.currentLocalTime) : new Date(ctx.datetime);
+        const dayIdx = d.getDay();
+        const lines = [
+          `מיקום: ${formatPlaceLabel(place)} (אזורך)`,
+          `אזור זמן: ${ctx.timezone}`,
+          `שעה מקומית: ${formatLocalTime(time.currentLocalTime ?? ctx.datetime)}`,
+          `תאריך: ${d.toLocaleDateString("he-IL")}`,
+          `UTC offset: ${ctx.utcOffset}${ctx.dst ? " (DST פעיל)" : ""}`,
+          `יום: ${DAY_HE[dayIdx] ?? dayIdx}`,
+        ];
+        return {
+          provider,
+          label,
+          ok: true,
+          text: lines.join("\n"),
+          url: "https://time.now",
+          latencyMs: Math.round(performance.now() - started),
+        };
+      }
       return {
         provider,
         label,

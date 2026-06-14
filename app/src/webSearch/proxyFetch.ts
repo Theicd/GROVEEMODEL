@@ -1,6 +1,7 @@
 /** Browser-safe fetch — dev proxy, direct CORS where allowed, parallel relays on static hosts. */
 
 const PROXY_REQUIRED = new Set([
+  "overpass-api.de",
   "nominatim.openstreetmap.org",
   "router.project-osrm.org",
   "opensky-network.org",
@@ -8,6 +9,9 @@ const PROXY_REQUIRED = new Set([
   "api.tzevaadom.co.il",
   "feeds.bbci.co.uk",
   "rss.cnn.com",
+  "feeds.reuters.com",
+  "www.theguardian.com",
+  "www.ynet.co.il",
   "stooq.com",
   "query1.finance.yahoo.com",
   "finance.yahoo.com",
@@ -37,6 +41,9 @@ const CORS_DIRECT_SUFFIXES = [
   "eonet.gsfc.nasa.gov",
   "www.gdacs.org",
   "api.open-notify.org",
+  "api.open-notify.org",
+  "time.now",
+  "ipapi.co",
 ];
 
 export function isStaticWebHost(): boolean {

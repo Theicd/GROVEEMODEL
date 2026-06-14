@@ -10,6 +10,7 @@ type LayerDef = {
 const LAYERS: LayerDef[] = [
   { id: "aviation", icon: "✈", label: "מטוסים" },
   { id: "ships", icon: "⛴", label: "ספינות" },
+  { id: "marine_infra", icon: "⚓", label: "נכסי ים" },
   { id: "satellite", icon: "🛰", label: "לוויינים" },
   { id: "earthquake", icon: "🌍", label: "רעידות" },
   { id: "weather", icon: "🌤", label: "מזג" },
@@ -57,6 +58,7 @@ export function GlobeLayerToggles({ iframeRef, layers, onLayersChange }: Props) 
 export const DEFAULT_GLOBE_LAYERS: GlobeLayersState = {
   aviation: true,
   ships: true,
+  marine_infra: true,
   satellite: true,
   earthquake: true,
   weather: true,
@@ -67,6 +69,7 @@ export const DEFAULT_GLOBE_LAYERS: GlobeLayersState = {
 export const PRESENTATION_GLOBE_LAYERS: GlobeLayersState = {
   aviation: false,
   ships: false,
+  marine_infra: false,
   satellite: false,
   earthquake: false,
   weather: false,

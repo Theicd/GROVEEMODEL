@@ -185,18 +185,23 @@ export const TOPIC_SHIFT_CHAT_APPEND = `When a TOPIC SHIFT note appears below, t
 export const WEB_SEARCH_NO_RESULTS_APPEND = `[WEB SEARCH — NO LIVE DATA]
 Live search ran but returned no usable facts for this question.
 RULES:
-1. Tell the user clearly in Hebrew that live data could not be fetched (timeout / blocked / not supported in browser).
-2. Do NOT invent numbers, prices, weather, headlines, repo names, or places.
-3. Do NOT give generic advice as if it were live data.
-4. For stock/gold/Reddit questions: say these live sources are not wired yet in the browser app.`;
+1. Tell the user clearly in Hebrew that live data could not be fetched (timeout / blocked / not supported in browser). Max 3 short sentences.
+2. Do NOT invent numbers, prices, weather, headlines, repo names, politician names, or places.
+3. Do NOT give generic advice, philosophy, or ask the user to clarify.
+4. Do NOT say you are "a language model" or "cannot access real-time data" — say the app's live fetch failed or this source is not wired yet.
+5. End with: Sources: (none — fetch failed).`;
 
-export const WEB_SEARCH_GROUNDING_APPEND = `A [WEB SEARCH RESULTS] block may appear below with LIVE fetched data.
+export const WEB_SEARCH_GROUNDING_APPEND = `A [SEARCH BRIEF] or [WEB SEARCH RESULTS] block may appear below with LIVE fetched data from Open-Meteo, USGS, עולם חי (Reality Live), GitHub, ISS trackers, etc.
 RULES:
-1. Answer using ONLY facts from that block for the user's question (weather numbers, earthquake list, repo names, etc.).
-2. Present data clearly in Hebrew (or user's language) — structured bullets or short paragraphs.
-3. Name the source (Open-Meteo, USGS, Wikipedia, GitHub, Hugging Face).
-4. If the block is empty or missing the answer, say you found no data — do NOT invent.
-5. Do NOT say you cannot browse the web when search results were provided.`;
+1. First line = direct answer in Hebrew. Then at most 3–5 bullet points (≤ ~100 words total).
+2. Use ONLY facts from that block — weather numbers, earthquake list, ISS coordinates, ship/aircraft counts, repo names, headlines, PM names.
+3. End every reply with: Sources: [provider label from FACTS, comma-separated]
+4. If DATA AGE line exists — say «עדכון אחרון מ-…»; do NOT claim intraday «כרגע» for FX or stock close prices.
+5. If the block is empty or missing the answer, say fetch failed — do NOT invent.
+6. NEVER philosophize, speculate, or ask follow-up questions when a SEARCH BRIEF is present.
+7. NEVER say you are "a language model" or lack monitoring when live data WAS provided below.
+8. SHIPS / AIS / aviation: copy EXACT counts from "ספינות בטווח:" or "מטוסים בטווח:" — do NOT say you lack data.
+9. For partial AIS coverage — cite the provider label honestly.`;
 
 export const GAME_SEARCH_GROUNDING_APPEND = `[ONLINE GAMES — browser-playable via Internet Archive]
 Playable game cards appear ONLY in the games side panel (right side of the screen), NOT in the chat.

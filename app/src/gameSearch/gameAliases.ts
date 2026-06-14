@@ -17,6 +17,9 @@ const DECADE_RULES: DecadeRule[] = [
 ];
 
 const ALIAS_RULES: AliasRule[] = [
+  { patterns: [/doom\s*ii|doom\s*2|דום\s*2|דום\s*ii/i], search: "doom 2", category: "dos", year: 1994 },
+  { patterns: [/\bdoom\b|דום(?!\s*ii|\s*2)/i], search: "doom", category: "dos", year: 1993 },
+  { patterns: [/dune\s*ii|dune\s*2|דיין\s*2|חולית\s*2/i], search: "dune 2", category: "dos", year: 1992 },
   { patterns: [/הטירה\s*הנאצ/i, /הטירה\s*הנא/i, /וולפנשט/i, /wolfenstein/i], search: "wolfenstein", category: "dos" },
   { patterns: [/אחוזת\s*המטורפ/i, /maniac\s*mansion/i], search: "maniac mansion", year: 1987, category: "dos" },
   { patterns: [/מורטל|mortal\s*kombat|mk\s*\d/i], search: "mortal kombat", category: "fighting" },

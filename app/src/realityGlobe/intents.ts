@@ -2,6 +2,7 @@ import type { GlobeCommand } from "./bridge";
 import { normalizeCountrySearchName } from "../webSearch/queryExtract";
 
 const PLACE_PATTERNS = [
+  /(?:התקר(?:ב|ב(?:י)?)|zoom\s+(?:in\s+)?(?:to\s+)?|fly\s+to)\s+(?:ל|א(?:ת|ת ה)?\s*)?(.+?)(?:\?|$)/i,
   /(?:הצג(?:ה|י)?|הראה|תציג|הציג|show)\s+(?:לי\s+|me\s+|א(?:ת|ת ה)?\s*)?(.+?)(?:\s+על\s+המפה|\s+on\s+the\s+map|\?|$)/i,
   /(?:ע(?:ל|ל\s+)?(?:ה)?מפה\s+(?:א(?:ת|ת ה)?\s*)?)(.+?)(?:\?|$)/i,
   /(?:איפה|היכן|where\s+is)\s+(?:נמצא(?:ים|ת)?\s+)?(.+?)(?:\?|$)/i,
@@ -32,6 +33,15 @@ const KNOWN_PLACES = [
   "rome",
   "טוקיו",
   "tokyo",
+  "everest",
+  "האוורסט",
+  "mount everest",
+  "panama",
+  "פנמה",
+  "bermuda",
+  "ברמודה",
+  "berlin",
+  "ברלין",
 ];
 
 const COUNTRY_IN_QUERY =

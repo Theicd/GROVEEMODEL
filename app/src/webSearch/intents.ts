@@ -1,6 +1,9 @@
 import type { SearchIntent } from "./types";
+import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
+import { isLocalContextTimeQuery } from "../startupContext/localTime";
 
 export { extractLocationPhrase, sanitizeSearchQuery } from "./queryExtract";
+export { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
 export { extractCountryPhrase, extractTimeZonePair, extractCurrencyPair, extractPlacePair, extractPoiNearQuery, extractNewsSite } from "./queryExtract";
 
 /** Remove leading search verb so Wikipedia gets a clean topic. */
@@ -15,7 +18,7 @@ export const stripSearchVerb = (query: string): string =>
 
 /** User explicitly asks to search (works even without Search toggle). */
 export const userRequestsSearch = (text: string): boolean =>
-  /(?:^|\s)(?:חפש|חיפוש|תחפש|תעשה\s+חיפוש|search\s+for|look\s+up|find\s+(?:info|information))(?:\s|$|[?!.])/i.test(
+  /(?:^|\s)(?:חפש|חיפוש|תחפש|תעשה\s+חיפוש|מצא|מצאי|search\s+for|look\s+up|find\s+(?:info|information))(?:\s|$|[?!.])/i.test(
     text.trim(),
   );
 
@@ -125,9 +128,10 @@ export const isHackerNewsQuery = (text: string): boolean =>
   /(?:hacker\s*news|hn\b|ycombinator)/i.test(text) ||
   (/פופולרי|popular|top|best|כותרת|headline|פוסט/i.test(text) &&
     /(?:hacker\s*news|hn\b|ycombinator)/i.test(text)) ||
-  (/openai|trending|פופולרי|artificial\s+intelligence|\bai\b|machine\s+learning|בינה\s+(?:ה)?מלאכותית/i.test(
+  (/openai|trending|artificial\s+intelligence|\bai\b|machine\s+learning|בינה\s+(?:ה)?מלאכותית/i.test(
     text,
   ) &&
+    !/github|גיטהב|repository|\brepo\b|פרויקט/i.test(text) &&
     /(?:חדשות|news|headline|קורה|עדכנ|latest|כרגע|היום)/i.test(text));
 
 export const isTechNewsQuery = (text: string): boolean =>
@@ -141,24 +145,60 @@ export const isFlightStatusQuery = (text: string): boolean =>
   (/(?:נמל\s+התעופה|airport|JFK|LAX|Heathrow|CDG|TLV|Ben\s+Gurion)/i.test(text) &&
     /(?:flight|טיס|departure|arrival|status|מצב|עיכוב)/i.test(text));
 
-export const isShipsQuery = (text: string): boolean =>
-  /(?:ספינ|אוני(?:יות|ה)|אוניות|vessel|ships?\b|ais\b|תעלת\s+סואץ|suez\s+canal|נמל\s+.*(?:ספינ|אוני|ship))/i.test(
-    text,
-  ) ||
-  (/(?:אילו|what|which|כמה).*(?:ספינ|אוני|ship|vessel)/i.test(text) &&
-    /(?:סואץ|suez|ים|sea|port|נמל|canal|תעלה)/i.test(text));
+/** Static marine infrastructure — buoys, lighthouses, harbours (Overpass OSM). */
+export const isMarineInfraQuery = (text: string): boolean => {
+  const q = text.trim();
+  if (!q) return false;
+  const infra =
+    /(?:מצופ|מגדלור|מגדל\s+אור|buoy|lighthouse|seamark|רציף|pier|wharf|breakwater|harbour|harbor)/i.test(q) ||
+    (/(?:כמה|אילו|what|which|how\s+many)/i.test(q) &&
+      /(?:מצופ|מגדלור|buoy|lighthouse|harbour|harbor|נמל(?:ים)?)/i.test(q) &&
+      !/(?:ספינ|אונi|ship|vessel|שייט|ais)/i.test(q));
+  return infra;
+};
+
+export const isShipsQuery = (text: string): boolean => {
+  if (isMarineInfraQuery(text) && !/(?:ספינ|אונi|ship|vessel|שייט|ais|כלי\s+שייט)/i.test(text)) {
+    return false;
+  }
+  return (
+    /(?:ספינ|אוני(?:יות|ה)|אוניות|כלי\s+שייט|כלי\s+ימי|vessel|ships?\b|ais\b|תעלת\s+סואץ|suez\s+canal|מכלית|tanker|מפרץ\s+הפרס|persian\s+gulf)/i.test(
+      text,
+    ) ||
+    (/(?:אילו|what|which|כמה).*(?:ספינ|אונi|ship|vessel|שייט|מכלית|tanker)/i.test(text) &&
+      /(?:סואץ|suez|ים|sea|port|נמל|canal|תעלה|חיפה|haifa|מפרץ|רוטרדם|rotterdam|יוון|greece|פרס|persian)/i.test(text)) ||
+    /(?:אוניות|ספינות|כלי\s+שייט|ships?|vessels?)\s+(?:ליד|ב|סביב|near|around)\s+/i.test(text)
+  );
+};
 
 export const isSpaceXQuery = (text: string): boolean =>
   /spacex|space\s*x|סpace\s*x|ספייס\s*אקס|ספייס-?אקס/i.test(text) ||
   (/(?:שיגור|launch|rocket|טיל)/i.test(text) && /spacex|space\s*x|ספייס/i.test(text));
 
 export const isIssQuery = (text: string): boolean =>
-  /\biss\b|תחנת\s+(?:ה)?חלל\s+(?:ה)?בינלאומ|space\s+station|החלל\s+הבינלאומ/i.test(text);
+  /\biss\b|תחנת\s+(?:ה)?חלל|space\s+station|החלל\s+הבינלאומ|מסלול\s+(?:ה)?-?iss/i.test(text) ||
+  /(?:תעבור|יעבור|pass(?:es)?).*(?:מעל|above)\s+(?:ישראל|israel)/i.test(text) ||
+  /(?:מעל|above)\s+(?:ישראל|israel)/i.test(text) && /(?:iss|חלל|תחנת|לוויין|space\s+station)/i.test(text);
 
 export const isSatelliteCatalogQuery = (text: string): boolean =>
   (/(?:כמה|how\s+many|מספר|number\s+of).*(?:לוויין|satellite)/i.test(text) ||
     /(?:לוויינים|satellites)\s+(?:פעיל|active|במסלול|in\s+orbit)/i.test(text)) &&
-  !isIssQuery(text);
+  !isIssQuery(text) &&
+  !isStarlinkCountQuery(text);
+
+/** Global Starlink catalog count (CelesTrak GROUP=starlink) — not regional tracking. */
+export const isStarlinkCountQuery = (text: string): boolean =>
+  /starlink/i.test(text) &&
+  (/(?:כמה|how\s+many|מספר|number\s+of)/i.test(text) ||
+    /(?:לוויינ|satellite).*(?:פעיל|active|במסלול|in\s+orbit)/i.test(text) ||
+    /starlink.*(?:פעיל|active|כמה|how\s+many|במסלול)/i.test(text));
+
+/** Starlink above a region / list by area — not supported in-browser. */
+export const isStarlinkRegionalQuery = (text: string): boolean =>
+  /starlink/i.test(text) &&
+  !isStarlinkCountQuery(text) &&
+  (/(?:מעל|above|over|באזור|ליד|near)/i.test(text) ||
+    /(?:אילו|which|list)\s/i.test(text));
 
 /**
  * Decide if this turn should hit live web providers (no manual toggle).
@@ -169,6 +209,9 @@ export const needsWebSearch = (text: string): boolean => {
   const q = text.trim();
   if (!q || isCasualConversation(q)) return false;
   if (userRequestsSearch(q)) return true;
+  if (isWorldOverviewQuery(q)) return true;
+  if (isCrossSourceQuery(q)) return true;
+  if (/\bawacs\b/i.test(q)) return true;
 
   if (isGovernmentQuery(q)) return true;
   if (isCommodityPriceQuery(q) || isMarketPriceQuery(q) || isRedditQuery(q)) return true;
@@ -177,27 +220,25 @@ export const needsWebSearch = (text: string): boolean => {
   if (isCryptoQuery(q)) return true;
   if (isIsraelAlertsQuery(q) || isDisasterQuery(q)) return true;
   if (isNewsQuery(q)) return true;
-  if (isWorldTimeQuery(q)) return true;
+  if (isWorldTimeQuery(q)) {
+    if (isLocalContextTimeQuery(q)) return false;
+    return true;
+  }
   if (isWeatherQuery(q) || isMarineQuery(q)) return true;
   if (isCurrencyQuery(q)) return true;
   if (isFlightStatusQuery(q)) return true;
-  if (isShipsQuery(q)) return true;
+  if (isShipsQuery(q) || isMarineInfraQuery(q)) return true;
   if (isSpaceXQuery(q)) return true;
   if (isPlacesQuery(q)) return true;
   if (isSatelliteQuery(q) || isSpaceWeatherQuery(q)) return true;
   if (isHackerNewsQuery(q) || isTechNewsQuery(q)) return true;
-
-  if (isEarthquakeQuery(q)) {
-    return hasLiveTemporalSignal(q) || /(?:24|אחרונ|recent|latest)/i.test(q);
-  }
-  if (isAviationQuery(q)) {
-    return hasLiveTemporalSignal(q) || /(?:מעל|above|near|over|מטוס)/i.test(q);
-  }
+  if (isEarthquakeQuery(q)) return true;
+  if (isAviationQuery(q)) return true;
   if (isHolidayQuery(q)) {
     return /(?:היום|האם\s+היום|today|now)/i.test(q);
   }
   if (isGitHubQuery(q) || isHuggingFaceQuery(q)) {
-    return /(?:פופולרי|popular|trending|השבוע|release|גרסה|חפש|search|find)/i.test(q);
+    return /(?:פופולרי|popular|trending|השבוע|release|גרסה|חפש|search|find|מצא|היום|מודל|פרויקט)/i.test(q);
   }
   if (isTechQuery(q) && /(?:חפש|find|repo|github|מודל|api|dataset)/i.test(q)) return true;
 
@@ -225,7 +266,7 @@ export const isHolidayQuery = (text: string): boolean =>
   /(?:חג|חגים|holiday|holidays|public\s+holiday|bank\s+holiday|חג\s+ציבורי|האם\s+היום\s+חג)/i.test(text);
 
 export const isGovernmentQuery = (text: string): boolean =>
-  /(?:ראש\s+(?:הממשלה|ממשלה|מדינה)|נשיא|prime\s+minister|president|head\s+of\s+(?:state|government)|מפלגה\s+בשלטון|cabinet|parliament|כנסת|ממשלה\s+נוכחית)/i.test(
+  /(?:ראש\s+(?:ה)?(?:ממשלה|ממשלת|מדינה)|נשיא|prime\s+minister|president|head\s+of\s+(?:state|government)|מפלגה\s+בשלטון|cabinet|parliament|כנסת|ממשלה\s+נוכחית)/i.test(
     text,
   );
 
@@ -254,8 +295,8 @@ export const isPlacesQuery = (text: string): boolean =>
       text,
     ) &&
       /\b(?:near|around|by|ליד|קרוב)\b/i.test(text)) ||
-    (/\b(?:nearest|closest|הכי\s+קרוב(?:ה|ים)?)\b/i.test(text) &&
-      /(?:station|רכבת|hospital|hotel|מלון|תחנ|airport|שדה\s+תעופה|tower|מגדל|louvre|לובר|eiffel|אייפ)/i.test(
+    (/\b(?:nearest|closest|הכי\s+קרוב(?:ה|ים)?|הקרוב(?:ה|ים)?\s+ביותר)\b/i.test(text) &&
+      /(?:station|רכבת|train|תחנ|airport|שדה\s+תעופה|tower|מגדל|louvre|לובר|eiffel|אייפ|ברלין|berlin)/i.test(
         text,
       )) ||
     /(?:אילו|what|which)\s+(?:תחנ(?:ות|ת)|train\s+stations?|hospitals?|בתי\s+חולים|רכבת)/i.test(text) ||
@@ -265,21 +306,42 @@ export const isPlacesQuery = (text: string): boolean =>
 export const isNewsQuery = (text: string): boolean =>
   !isRedditQuery(text) &&
   !isHackerNewsQuery(text) &&
-  (/(?:חדשות|news|headline|כותרת\s+ראשית|main\s+headline|breaking)/i.test(text) ||
+  (/(?:חדשות|news|headline|(?:ה)?כותרת\s+(?:ה)?ראשית|main\s+headline|breaking)/i.test(text) ||
+    /(?:כותרות(?:\s+ה)?\s*חשובות|headlines)/i.test(text) ||
+    /(?:מה\s+קור(?:ה|ה)|what'?s\s+happening).*(?:ישראל|israel|עולם|world)/i.test(text) ||
     /(?:bbc|cnn|ynet)/i.test(text));
 
 export const isAviationQuery = (text: string): boolean =>
   !isFlightStatusQuery(text) &&
   (/(?:מטוס|מטוסים|aircraft|airplane|plane|adsb|opensky|תעבורה\s+אווירית|טיסות\s+מעל)/i.test(text) ||
+    /\bawacs\b/i.test(text) ||
     (/(?:בעולם|worldwide|global|ברחבי\s+העולם|around\s+the\s+world|in\s+the\s+air)/i.test(text) &&
       /(?:מטוס|aircraft|plane|adsb|תעופה|air|טיס)/i.test(text)) ||
     /(?:כמה\s+)?(?:מהם|מאלה)\s*(?:הם\s+)?(?:צבאיים|military|מסחריים)(?:\s|$|[?!.])/i.test(text));
 
 export const isSatelliteQuery = (text: string): boolean =>
-  (isIssQuery(text) || isSatelliteCatalogQuery(text)) && !isAviationQuery(text);
+  (isIssQuery(text) || isSatelliteCatalogQuery(text) || isStarlinkCountQuery(text)) &&
+  !isAviationQuery(text);
 
 export const isSpaceWeatherQuery = (text: string): boolean =>
   /(?:מזג\s+אוויר\s+חללי|space\s+weather|kp\s+index|רוח\s+סולארית|סערה\s+גיאומגנטית|aurora)/i.test(text);
+
+export const isWorldOverviewQuery = (text: string): boolean =>
+  /(?:תמונת\s+מצב|סקיר(?:ה|ת)\s+(?:של\s+)?(?:מצב\s+)?(?:ה)?עולם|מצב\s+העולם|מה\s+הדברים\s+המעניינים|משהו\s+חריג|אירועים\s+חשובים|20\s+האירועים|סכם.*התראות|מקומות\s+הפעילים|מה\s+קור(?:ה|ה)\s+עכשיו\s+ב(?:חלל|אוקיינוס|ים))/i.test(
+    text,
+  ) ||
+  /(?:תן\s+לי\s+)?סקירה\s+של\s+מצב\s+העולם/i.test(text) ||
+  /(?:ה)?24\s+שעות\s+האחרונות/i.test(text) ||
+  /מה\s+קור(?:ה|ה)\s+עכשיו\s+ב(?:חלל|אוקיינוס|ים|שמי)/i.test(text) ||
+  /מה\s+קור(?:ה|ה)\s+כרגע\s+ב(?:אזור\s+)?(?:הכי\s+)?עמוס/i.test(text) ||
+  /איזה\s+אזור\s+בעולם\s+נראה\s+הכי\s+פעיל/i.test(text) ||
+  /(?:כמה\s+)?אירועים\s+משמעותיים\s+במקביל/i.test(text);
+
+export const isUnsupportedLiveQuery = (text: string): boolean =>
+  /(?:שדה\s+התעופה|airport).*(?:העמוס|busiest)/i.test(text) ||
+  /(?:נמל\s+העמוס|busiest\s+port)/i.test(text) ||
+  isStarlinkRegionalQuery(text) ||
+  /(?:קווי\s+רכבet|train\s+lines?\s+to)/i.test(text);
 
 export const isIsraelAlertsQuery = (text: string): boolean =>
   /(?:צבע\s+אדום|התרע(?:ה|ות)|פיקוד\s+העורף|oref|tzeva\s+adom|אזעק)/i.test(text);
@@ -295,7 +357,7 @@ export const isMarineQuery = (text: string): boolean =>
   /גלים|wave|סערה|הurricane|typhoon|גובה\s*גל|סופה|שיא\s*גלים|marine\s+weather|ocean\s+wave/i.test(text);
 
 export const isEarthquakeQuery = (text: string): boolean =>
-  /רעיד(?:ת|ות)?\s*אדמה|רעש\s*אדמה|earthquake|seismic|tsunami|רichter|סוללת\s*רעיד/i.test(text);
+  /רעיד(?:ת|ות)?\s*(?:ה)?אדמה|רעש\s*אדמה|earthquake|seismic|tsunami|רichter|סוללת\s*רעיד/i.test(text);
 
 export const isHuggingFaceQuery = (text: string): boolean =>
   /hugging\s*face|huggingface|hf\.co|transformers\.js/i.test(text) ||
@@ -307,7 +369,10 @@ export const isHuggingFaceQuery = (text: string): boolean =>
 export const isGitHubQuery = (text: string): boolean =>
   /github|גיטהב|repository|repositories|\brepo\b|open\s*source|קוד\s*פתוח/i.test(text) ||
   /פרויקט\s*(?:קוד|open)/i.test(text) ||
-  /(?:פופולרי|popular|trending).*(?:github|גיטהב)/i.test(text);
+  /(?:פופולרי|popular|trending).*(?:github|גיטהב|פרויקט)/i.test(text) ||
+  /(?:פרויקט(?:ים)?).*(?:פופולרי|popular|trending|היום|השבוע)/i.test(text) ||
+  (/^מצא\s+/i.test(text) &&
+    /(?:פרויקט|webgpu|three|ollama|ai\b|github|גיטהב|משחק)/i.test(text));
 
 export const isTechQuery = (text: string): boolean =>
   isGitHubQuery(text) ||
@@ -317,6 +382,22 @@ export const isTechQuery = (text: string): boolean =>
 
 export const classifySearchIntents = (query: string): SearchIntent[] => {
   const intents: SearchIntent[] = [];
+  if (isWorldOverviewQuery(query)) {
+    return [
+      ...new Set([
+        "disaster",
+        "earthquake",
+        "aviation",
+        "ships",
+        "news",
+        "hackernews",
+        "weather",
+        "marine",
+        "satellite",
+        "alerts",
+      ] as SearchIntent[]),
+    ];
+  }
   if (isRedditQuery(query)) return intents;
   if (isCommodityPriceQuery(query)) {
     intents.push("commodity");
@@ -334,6 +415,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   if (isWorldTimeQuery(query)) intents.push("worldtime");
   if (isWeatherQuery(query)) intents.push("weather");
   if (isMarineQuery(query)) intents.push("marine");
+  if (isMarineInfraQuery(query)) intents.push("marine-infra");
   if (isShipsQuery(query)) intents.push("ships");
   if (isEarthquakeQuery(query)) intents.push("earthquake");
   if (isCurrencyQuery(query)) intents.push("currency");
@@ -341,7 +423,8 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   if (isPlacesQuery(query)) intents.push("places");
   if (isNewsQuery(query) && !isTechNewsQuery(query)) intents.push("news");
   if (isAviationQuery(query)) intents.push("aviation");
-  if (isSatelliteCatalogQuery(query)) intents.push("satellite");
+  if (isStarlinkCountQuery(query)) intents.push("satellite");
+  else if (isSatelliteCatalogQuery(query)) intents.push("satellite");
   else if (isIssQuery(query)) intents.push("satellite");
   if (isSpaceXQuery(query)) intents.push("spacex");
   if (isSpaceWeatherQuery(query)) intents.push("spaceweather");
@@ -380,19 +463,59 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     intents.push("wikipedia");
   }
 
+  if (isCrossSourceQuery(query)) {
+    if (/^כמה\s+/i.test(query) && (isAviationQuery(query) || isShipsQuery(query))) {
+      return [...new Set(intents)];
+    }
+    return expandCrossSourceIntents(query, intents);
+  }
+
   return [...new Set(intents)];
+};
+
+export const isGitHubPopularQuery = (text: string): boolean =>
+  /(?:פרויקט(?:ים)?|project|repo).*(?:פופולרי|popular|trending|היום|today|השבוע|this\s+week|כרגע|now)/i.test(
+    text,
+  ) ||
+  /(?:פופולרי|popular|trending|היום|today|השבוע|this\s+week|כרגע|now).*(?:פרויקט|project|repo|github|גיטהב)/i.test(
+    text,
+  ) ||
+  /(?:מהו|what\s+is).*(?:פופולרי|popular|trending).*(?:github|גיטהב|פרויקט)/i.test(text);
+
+/** GitHub Search API query for trending / popular repo questions. */
+export const buildGitHubPopularSearchQuery = (text: string): string => {
+  const daysBack = /היום|today|כרגע|now/i.test(text) ? 7 : 30;
+  const since = new Date(Date.now() - daysBack * 86_400_000).toISOString().slice(0, 10);
+  return `stars:>500 pushed:>${since} archived:false fork:false`;
 };
 
 export const buildGitHubSearchQuery = (query: string): string => {
   const raw = query.trim();
   if (!raw) return "";
+
+  if (isGitHubPopularQuery(raw)) {
+    return buildGitHubPopularSearchQuery(raw);
+  }
+
   if (/ocr|זיהוי\s+טקסט|text\s+recognition|tesseract|paddleocr/i.test(raw)) {
     return "ocr text recognition tesseract paddleocr";
   }
   const latinTokens = raw.match(/[a-zA-Z][a-zA-Z0-9_.-]{1,}/g);
   const latin = latinTokens ? latinTokens.join(" ") : "";
-  if (latin.length >= 3) return latin.slice(0, 256);
+  const latinNoiseOnly = /^(?:github|gitlab|repo|repos|repository|repositories)$/i.test(latin.trim());
+  if (latin.length >= 3 && !latinNoiseOnly) return latin.slice(0, 256);
 
+  if (/(?:פרויקט(?:ים)?).*(?:פופולרי|popular|trending|היום)/i.test(raw)) {
+    return buildGitHubPopularSearchQuery(raw);
+  }
+  if (/ollama|חלופ/i.test(raw)) return "ollama alternative local llm";
+  if (/three\.?js|threejs/i.test(raw)) return "three.js game";
+  if (/webgpu/i.test(raw)) return "webgpu";
+  if (/(?:AI|בינה\s+מלאכותית).*(?:שבוע|week)/i.test(raw)) return "AI stars:>50 pushed:>2025-01-01";
+  if (/^מצא\s+/i.test(raw) && /פרויקט/i.test(raw)) {
+    const topic = raw.replace(/^מצא\s+(?:פרויקט(?:ים)?\s*)?(?:בנושא\s+|ש(?:ל|ה)?\s*)?/i, "").trim();
+    if (topic.length >= 2) return topic.slice(0, 80);
+  }
   const parts: string[] = [];
   if (/מצלמ[ות]?|אבטחה|surveillance/i.test(raw)) parts.push("security camera surveillance");
   if (/ממשק|דשבורד|dashboard/i.test(raw)) parts.push("dashboard ui");
@@ -400,7 +523,7 @@ export const buildGitHubSearchQuery = (query: string): string => {
   if (/קוד\s*פתוח|open\s*source/i.test(raw)) parts.push("open source");
   if (/מודל|llm|ai/i.test(raw)) parts.push("llm language model");
   if (/github|גיטהב/i.test(raw) && /(?:פופולרי|popular|trending|השבוע|this\s+week)/i.test(raw)) {
-    return "stars:>100 pushed:>2024-01-01";
+    return buildGitHubPopularSearchQuery(raw);
   }
   if (/github|גיטהב/i.test(raw) && parts.length) return parts.join(" ").slice(0, 256);
   if (parts.join(" ").length >= 6) return parts.join(" ").slice(0, 256);
@@ -411,6 +534,11 @@ export const buildHuggingFaceSearchQuery = (query: string): string => {
   if (/\bocr\b|זיהוי\s+טקסט|text\s+recognition|tesseract|paddleocr/i.test(query)) {
     return "ocr text recognition";
   }
+  if (/vlm|vision.?language|ראייה\s*\+\s*שפה/i.test(query)) return "vision-language";
+  if (/זיהוי\s+אובייקט|object\s+detection|yolo|detr/i.test(query)) return "object-detection";
+  if (/תנוח(?:ה|ות)\s+גוף|pose\s+estimation|mediapipe/i.test(query)) return "pose-estimation";
+  if (/webgpu/i.test(query)) return "webgpu";
+  if (/(?:דפדפן|browser|onnx|wasm)/i.test(query)) return "transformers.js onnx";
   if (isHuggingFaceImageQuery(query)) {
     return "stable-diffusion";
   }

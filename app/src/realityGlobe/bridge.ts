@@ -3,6 +3,7 @@ export type GlobeLayer =
   | "earthquake"
   | "weather"
   | "marine"
+  | "marine_infra"
   | "iss"
   | "satellite"
   | "ships"
@@ -18,6 +19,7 @@ export type GlobeCommand =
   | { type: "focusPlace"; name: string; alt?: number }
   | { type: "focusPlaceQuiet"; name: string; alt?: number; presentation?: boolean }
   | { type: "setPresentationMode"; on: boolean }
+  | { type: "setQuietAlerts"; on: boolean }
   | { type: "showLayer"; layer: GlobeLayer }
   | { type: "focusEarthquakes" }
   | { type: "focusIsrael" }

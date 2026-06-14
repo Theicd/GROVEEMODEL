@@ -2,6 +2,7 @@ import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
 import { extractLocationPhrase } from "../queryExtract";
 import { geocodePlace, formatPlaceLabel } from "../geoResolve";
+import { getStartupContextSync } from "../../startupContext";
 
 const stripWeatherNoise = (raw: string): string =>
   raw
@@ -63,6 +64,11 @@ export const fetchWeatherSearch = async (query: string): Promise<SearchSourceRes
     let location = extractLocationPhrase(query);
     if (!location || location.length < 2) {
       location = stripWeatherNoise(query);
+    }
+    if (!location || location.length < 2) {
+      const ctx = getStartupContextSync();
+      if (ctx?.cityName) location = ctx.cityName;
+      else if (ctx?.countryName) location = ctx.countryName;
     }
     if (!location || location.length < 2) {
       return {

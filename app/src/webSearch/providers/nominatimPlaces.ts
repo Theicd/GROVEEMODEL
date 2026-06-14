@@ -1,5 +1,6 @@
 import { fetchJson } from "../fetchJson";
 import { extractPoiNearQuery } from "../queryExtract";
+import { getStartupContextSync } from "../../startupContext";
 import type { SearchSourceResult } from "../types";
 
 type NominatimHit = {
@@ -75,11 +76,19 @@ const translateLandmark = (near: string): string => {
   return t;
 };
 
+const resolveNearAnchor = (near: string): string => {
+  if (near !== "__NEAR_ME__") return translateLandmark(near);
+  const ctx = getStartupContextSync();
+  if (ctx?.cityName) return `${ctx.cityName} ${ctx.countryName}`;
+  if (ctx?.countryName) return ctx.countryName;
+  return "Israel";
+};
+
 const buildPlaceSearchQueries = (query: string, parsed: { poi: string; near: string } | null): string[] => {
   const out: string[] = [];
   if (parsed) {
     const poiEn = translatePoi(parsed.poi);
-    const nearEn = translateLandmark(parsed.near);
+    const nearEn = resolveNearAnchor(parsed.near);
     out.push(`${poiEn} near ${nearEn}`);
     out.push(`${poiEn}, ${nearEn}`);
     if (/תחנ.*רכ|train\s+station|railway/i.test(parsed.poi) && /airport|שדה\s+תעופה|heathrow|הית/i.test(parsed.near)) {

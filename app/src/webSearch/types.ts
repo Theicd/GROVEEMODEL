@@ -31,7 +31,9 @@ export type SearchProviderId =
   | "flight-status"
   | "youtube"
   | "ais-ships"
+  | "osm-overpass-marine"
   | "celestrak"
+  | "starlink-catalog"
   | "spacex-launches";
 
 export type SearchIntent =
@@ -60,6 +62,7 @@ export type SearchIntent =
   | "hackernews"
   | "youtube"
   | "ships"
+  | "marine-infra"
   | "spacex";
 
 export type SearchBriefLink = { label: string; url: string };
@@ -94,6 +97,8 @@ export type WebSearchResult = {
   summaryHe: string;
   intents: SearchIntent[];
   brief?: SearchBrief;
+  /** Fixed Hebrew reply from live providers — bypasses LLM when set. */
+  cannedReply?: string | null;
 };
 
 export type FetchJsonOptions = {

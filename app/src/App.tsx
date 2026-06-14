@@ -142,6 +142,7 @@ import { CameraPreview } from "./CameraPreview";
 import { ChatLandingHeadline, ChatLandingSuggestions, useLandingContent } from "./ChatLandingHero";
 import { ChatUserMessage } from "./ChatUserMessage";
 import { ModelActivityPanel } from "./ModelActivityPanel";
+import { PresentationQaPanel } from "./PresentationQaPanel";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
 import { SituationSettingsPanel } from "./SituationSettingsPanel";
 import {
@@ -157,6 +158,7 @@ import {
 import { intervalsFromMode } from "./vision-lab/core/schedule";
 import type { PipelineConfig, VisionResult } from "./vision-lab/core/types";
 import { appendModelActivity, type ModelActivityEntry } from "./modelActivityLog";
+import { exposeGroveeQaWindow, qaChatBridge } from "./qaChatBridge";
 import { SearchProgressPanel } from "./SearchProgressPanel";
 import { ContextRing, type ContextUsage } from "./ContextRing";
 import { prepareChatContext } from "./chatResourceBudget";
@@ -168,7 +170,19 @@ import {
   saveChatProfileOverride,
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
-import { runWebSearch, needsWebSearch, type SearchSourceResult, type SearchBrief } from "./webSearch";
+import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, type SearchSourceResult, type SearchBrief } from "./webSearch";
+import { isStarlinkRegionalQuery } from "./webSearch/intents";
+import { registerGlobeLiveSnapshotListener } from "./liveWorld";
+import {
+  fetchStartupContext,
+  refreshLocalWeather,
+  buildLocalTimeAnswer,
+  buildStartupPromptBlock,
+  isLocalContextTimeQuery,
+  clearStartupContextCache,
+  type StartupContext,
+} from "./startupContext";
+import { LocalContextBar } from "./LocalContextBar";
 import { GamesPanel } from "./GamesPanel";
 import { GameSpotlightDock } from "./GameSpotlightDock";
 import { GlobePanel } from "./GlobePanel";
@@ -278,6 +292,20 @@ const QA_VISION_MODE =
   import.meta.env.DEV &&
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("qa") === "vision";
+
+/** Dev-only: ?qa=chat exposes window.__groveeQa for Playwright model QA. */
+void (
+  import.meta.env.DEV &&
+  typeof window !== "undefined" &&
+  (new URLSearchParams(window.location.search).get("qa") === "chat" ||
+    new URLSearchParams(window.location.search).get("qa") === "1")
+);
+
+/** QA bridge active in all dev builds (Playwright / console automation). */
+const QA_BRIDGE_ENABLED = import.meta.env.DEV && typeof window !== "undefined";
+
+/** Canned live replies are default; QA panel opt-in enables LLM path per turn only. */
+const QA_FORCE_LLM_DEFAULT = false;
 
 /** Friendly product tips while Gemma downloads — explain what GROVEE is. */
 const LOADING_DOWNLOAD_TIPS = [
@@ -968,6 +996,12 @@ function App() {
   const [halConsciousness, setHalConsciousness] = useState<import("./vision2/types").ConsciousnessLayer | null>(null);
   const [halEntity, setHalEntity] = useState<import("./vision2/entityProfile").EntityProfile | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [presentationQaOpen, setPresentationQaOpen] = useState(
+    () =>
+      import.meta.env.DEV &&
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("qa") === "panel",
+  );
   const [visionInspectorOpen, setVisionInspectorOpen] = useState(false);
   const [visionPipelineProgress, setVisionPipelineProgress] = useState("");
   const [visionResult, setVisionResult] = useState<VisionResult>(() => ({
@@ -1004,6 +1038,7 @@ function App() {
   );
   const [activityLog, setActivityLog] = useState<ModelActivityEntry[]>([]);
   const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [startupContext, setStartupContext] = useState<StartupContext | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
@@ -1019,6 +1054,30 @@ function App() {
     return () => mq.removeEventListener("change", sync);
   }, []);
 
+  useEffect(() => {
+    const off = registerGlobeLiveSnapshotListener();
+    void warmLiveWorldCache();
+    return off;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const ctx = await fetchStartupContext();
+        if (cancelled) return;
+        setStartupContext(ctx);
+        const withWx = await refreshLocalWeather(ctx);
+        if (!cancelled) setStartupContext(withWx);
+      } catch {
+        /* optional — UI works without context */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const appSettingsRef = useRef(appSettings);
   const thinkingRef = useRef(thinkingMode);
   const pendingWebSearchRef = useRef<{
@@ -1031,6 +1090,11 @@ function App() {
   const visionResultRef = useRef(visionResult);
   const isLoadingRef = useRef(isLoading);
   const isGeneratingRef = useRef(isGenerating);
+  const isLoadedRef = useRef(isLoaded);
+  const activityLogRef = useRef<ModelActivityEntry[]>([]);
+  const qaForceLlmRef = useRef(QA_FORCE_LLM_DEFAULT);
+  const qaTurnForceLlmRef = useRef(false);
+  const qaEmptyNextSendRef = useRef(false);
   const lastChatSignalRef = useRef(0);
   const messagesListRef = useRef<HTMLDivElement | null>(null);
   const continueModeRef = useRef(false);
@@ -1055,6 +1119,12 @@ function App() {
   useEffect(() => {
     isGeneratingRef.current = isGenerating;
   }, [isGenerating]);
+  useEffect(() => {
+    isLoadedRef.current = isLoaded;
+  }, [isLoaded]);
+  useEffect(() => {
+    activityLogRef.current = activityLog;
+  }, [activityLog]);
 
   useEffect(() => {
     cameraStoreRef.current = cameraStore;
@@ -1873,6 +1943,7 @@ function App() {
         continueModeRef.current = false;
         cameraLoopRef.current?.releaseAfterChat();
         focusComposerInput();
+        qaChatBridge.notifyTurnFailed(stopped ? "stopped empty" : "empty reply");
         return;
       }
 
@@ -1995,6 +2066,11 @@ function App() {
       setChatOnlyDocumentMode(false);
       cameraLoopRef.current?.releaseAfterChat();
       focusComposerInput();
+      qaChatBridge.notifyTurnComplete(
+        content,
+        searchMeta?.summary,
+        searchMeta?.sources?.filter((s) => s.ok).map((s) => s.provider),
+      );
     },
     [setMessages, setCameraMessages, appendCameraAssistantMessage, persistCameraMemory, syncVisionBusy, focusComposerInput],
   );
@@ -2546,6 +2622,7 @@ function App() {
       } catch {
         /* ignore */
       }
+      clearStartupContextCache();
 
       const freedSummary =
         before >= 0 && after >= 0
@@ -2660,17 +2737,61 @@ function App() {
     const liveCameraContext = needsLiveCameraContext(trimmed);
     let webContext = "";
     let searchHint = "";
+    let marineLiveCannedReply: string | null = null;
     pendingWebSearchRef.current = null;
     const wantsGameSearch =
       !cameraActive &&
       !hasAttachments &&
       shouldOpenGamePanel(trimmed || effectivePrompt, chatTopic);
+    const localTimeOnly =
+      !hasAttachments &&
+      !wantsGameSearch &&
+      startupContext &&
+      isLocalContextTimeQuery(trimmed || effectivePrompt);
     const shouldRunWebSearch =
       !hasAttachments &&
       !wantsGameSearch &&
+      !localTimeOnly &&
       needsWebSearch(trimmed || effectivePrompt);
     let searchIntentsForGlobe: string[] = [];
-    if (shouldRunWebSearch) {
+
+    const finishCannedLive = (reply: string, ctx: string): boolean => {
+      if (qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending()) return false;
+      if (cameraActive || hasAttachments || continueCode || documentTurn || wantsGameSearch) return false;
+      const text = reply.trim();
+      if (!text) return false;
+      qaChatBridge.setWebContext(ctx);
+      qaChatBridge.setReplySource("canned-live");
+      assistantBufferRef.current = text;
+      setAssistantBuffer(text);
+      setStatus("Ready");
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: "Live data · canned reply",
+        detail: text.slice(0, 1200),
+      });
+      finalizeAssistantReply(false);
+      return true;
+    };
+
+    if (!shouldRunWebSearch && !localTimeOnly) {
+      const preCanned = buildCapabilityLiveReply(effectivePrompt, [], []);
+      if (preCanned && isStarlinkRegionalQuery(effectivePrompt)) {
+        if (finishCannedLive(preCanned, "")) return;
+      }
+    }
+
+    if (localTimeOnly && startupContext) {
+      webContext = buildLocalTimeAnswer(startupContext, effectivePrompt);
+      searchHint = " · זמן מקומי (ללא חיפוש ברשת)";
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: "Local Context",
+        detail: webContext,
+      });
+    } else if (shouldRunWebSearch) {
       setStatus("מחפש מידע…");
       setStreamingSearchSources({
         sources: [],
@@ -2708,6 +2829,11 @@ function App() {
         });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
+        marineLiveCannedReply = searchResult.cannedReply ?? buildCapabilityLiveReply(
+          effectivePrompt,
+          searchResult.intents,
+          searchResult.sources,
+        );
         pendingWebSearchRef.current = {
           sources: searchResult.sources,
           summary: searchResult.summaryHe,
@@ -2719,6 +2845,9 @@ function App() {
           brief: searchResult.brief,
           active: false,
         });
+        if (marineLiveCannedReply && finishCannedLive(marineLiveCannedReply, webContext)) {
+          return;
+        }
         if (!webContext.trim()) {
           searchHint = " · אין תוצאות חיפוש";
         } else {
@@ -2841,9 +2970,12 @@ function App() {
       }
     }
 
+    const skipCanned = qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending();
+
     const pureGameSearchTurn =
-      wantsGameSearch && !cameraActive && !hasAttachments && !continueCode && !documentTurn;
+      !skipCanned && wantsGameSearch && !cameraActive && !hasAttachments && !continueCode && !documentTurn;
     if (pureGameSearchTurn && gameSearchCannedReply) {
+      qaChatBridge.setReplySource("canned-game");
       assistantBufferRef.current = gameSearchCannedReply;
       setAssistantBuffer(gameSearchCannedReply);
       setStatus("Ready");
@@ -2852,6 +2984,7 @@ function App() {
     }
 
     const pureGlobePlaceTurn =
+      !skipCanned &&
       !wantsGameSearch &&
       !cameraActive &&
       !hasAttachments &&
@@ -2859,6 +2992,7 @@ function App() {
       !documentTurn &&
       !!globePlaceCannedReply;
     if (pureGlobePlaceTurn && globePlaceCannedReply) {
+      qaChatBridge.setReplySource("canned-globe");
       assistantBufferRef.current = globePlaceCannedReply;
       setAssistantBuffer(globePlaceCannedReply);
       setStatus("Ready");
@@ -2870,6 +3004,18 @@ function App() {
       });
       finalizeAssistantReply(false);
       return;
+    }
+
+    const pureCapabilityLiveTurn =
+      !skipCanned &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      !!marineLiveCannedReply;
+    if (pureCapabilityLiveTurn && marineLiveCannedReply) {
+      if (finishCannedLive(marineLiveCannedReply, webContext)) return;
     }
 
     const wantsLongOutput =
@@ -2995,7 +3141,7 @@ function App() {
               ? Math.min(1536, g.maxNewTokens)
               : hasVisionInput
                 ? Math.min(1024, g.maxNewTokens)
-                : shouldRunWebSearch && webContext.trim()
+                  : (shouldRunWebSearch || localTimeOnly) && webContext.trim()
                   ? Math.min(512, g.maxNewTokens)
                   : wantsLongOutput
                     ? Math.min(CODE_TOKEN_CAP, Math.max(g.maxNewTokens, CODE_TOKEN_FLOOR))
@@ -3015,6 +3161,9 @@ function App() {
       systemPrompt = `${g.systemPrompt}\n\n${CHARACTER_MODE_CHAT_APPEND}\n\n${GREETING_CAMERA_STARTING_APPEND}`;
     } else if (greeting) {
       systemPrompt = `${g.systemPrompt} If the user sends only a greeting, reply with one short warm sentence in their language only.`;
+    }
+    if (startupContext && !cameraActive) {
+      systemPrompt = `${systemPrompt}\n\n${buildStartupPromptBlock(startupContext)}`;
     }
     if (cameraActive) {
       systemPrompt = `${systemPrompt}\n\n${CAMERA_ANTI_DEFLECT_APPEND}`;
@@ -3229,19 +3378,28 @@ function App() {
       currentImageBuffers,
       "image/jpeg",
     );
+    qaChatBridge.setWebContext(webContext);
+    qaChatBridge.setReplySource("model");
   };
 
-  const sendPrompt = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!workerRef.current || !isLoaded) return;
-    if (isGenerating) {
-      setStatus("עדיין עונה — המתן לסיום או לחץ עצור");
+  const sendPrompt = async (e?: FormEvent, overrideText?: string) => {
+    if (e) e.preventDefault();
+    if (!workerRef.current || !isLoadedRef.current) {
+      qaChatBridge.notifyTurnFailed("model not loaded");
       return;
     }
-    const trimmed = prompt.trim();
+    if (isGeneratingRef.current) {
+      setStatus("עדיין עונה — המתן לסיום או לחץ עצור");
+      qaChatBridge.notifyTurnFailed("busy");
+      return;
+    }
+    const trimmed = (overrideText ?? prompt).trim();
     const attachmentSnapshot = pendingAttachments;
     const hasAttachments = attachmentSnapshot.length > 0;
-    if (!trimmed && !hasAttachments) return;
+    if (!trimmed && !hasAttachments) {
+      qaChatBridge.notifyTurnFailed("empty prompt");
+      return;
+    }
 
     cameraLoopRef.current?.holdForChat();
     const cameraActive = cameraModeRef.current;
@@ -3253,7 +3411,7 @@ function App() {
     generationChatOnlyDocumentRef.current = documentTurn;
     setChatOnlyDocumentMode(documentTurn);
 
-    const priorMessages = messages;
+    const priorMessages = qaEmptyNextSendRef.current ? ((qaEmptyNextSendRef.current = false), []) : messages;
 
     const effectivePrompt =
       trimmed || defaultVisionPrompt(trimmed ? isRtlText(trimmed) : true);
@@ -3334,6 +3492,9 @@ function App() {
     });
   };
 
+  const sendPromptRef = useRef(sendPrompt);
+  sendPromptRef.current = sendPrompt;
+
   const cancelMessageEdit = useCallback(() => {
     setEditingMessageId(null);
     setEditDraft("");
@@ -3405,6 +3566,37 @@ function App() {
 
   const sendActive = prompt.trim().length > 0 || pendingAttachments.length > 0;
 
+  useEffect(() => {
+    if (!QA_BRIDGE_ENABLED) return;
+    exposeGroveeQaWindow();
+    qaChatBridge.register({
+      ready: () => isLoadedRef.current && !isGeneratingRef.current,
+      newChat: () => {
+        qaEmptyNextSendRef.current = true;
+        const id = newChatSessionId();
+        setChatSessionsState((s) => ({
+          activeId: id,
+          sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }, ...s.sessions],
+        }));
+        setAssistantBuffer("");
+        assistantBufferRef.current = "";
+        setStreamingSearchSources(null);
+        pendingWebSearchRef.current = null;
+        setPrompt("");
+        setEditingMessageId(null);
+        setEditDraft("");
+        setArtifactOpen(false);
+      },
+      submit: async (text, forceLlm) => {
+        qaTurnForceLlmRef.current = forceLlm;
+        qaForceLlmRef.current = forceLlm;
+        await sendPromptRef.current(undefined, text);
+      },
+      getActivity: () => activityLogRef.current,
+    });
+    return () => qaChatBridge.unregister();
+  }, []);
+
   return (
     <main className="app">
       {workerBootError ? (
@@ -3448,6 +3640,18 @@ function App() {
         entries={activityLog}
         onClear={() => setActivityLog([])}
       />
+
+      {QA_BRIDGE_ENABLED ? (
+        <PresentationQaPanel
+          open={presentationQaOpen}
+          onClose={() => setPresentationQaOpen(false)}
+          modelReady={isLoaded}
+          isGenerating={isGenerating}
+          activityLog={activityLog}
+          assistantBuffer={assistantBuffer}
+          streamingSearch={streamingSearchSources}
+        />
+      ) : null}
 
       {QA_VISION_MODE && !cameraMode ? (
         <video
@@ -3520,6 +3724,13 @@ function App() {
             <p>
               כל הנתונים נשארים במכשיר שלך. המודל <strong>GEMMA 4 E2B</strong> מורד פעם אחת (~3.9GB, כולל ראייה) ועובד
               במהירות שיא — גם בלי תלות בענן אחרי ההורדה.
+            </p>
+            <p className="info-modal-attribution">
+              מקורות מידע חיים:{" "}
+              <a href="https://time.now" target="_blank" rel="noreferrer">
+                World Time API by Time.Now
+              </a>
+              , Open-Meteo, OpenStreetMap ועוד.
             </p>
             <button type="button" className="close-modal" onClick={() => setInfoModalOpen(false)}>
               סגור
@@ -3838,6 +4049,7 @@ function App() {
                 </div>
               ) : null}
               <div className="chat-header-actions">
+                <LocalContextBar context={startupContext} />
                 {activeArtifact && !artifactOpen ? (
                   <button
                     type="button"
@@ -3883,6 +4095,16 @@ function App() {
                     <span className="activity-log-count">{activityLog.length}</span>
                   ) : null}
                 </button>
+                {QA_BRIDGE_ENABLED ? (
+                  <button
+                    type="button"
+                    className="activity-log-btn qa-panel-open-btn"
+                    onClick={() => setPresentationQaOpen(true)}
+                    title="בדיקת 39 שאלות מצגת — שליחה, סימון ודוח"
+                  >
+                    🧪 בדיקות
+                  </button>
+                ) : null}
               </div>
             </header>
 
@@ -4219,6 +4441,7 @@ function App() {
                 {showLanding ? (
                   <ChatLandingSuggestions
                     suggestions={landingContent.suggestions}
+                    rotationKey={landingContent.rotationKey}
                     onSuggestionClick={applyLandingSuggestion}
                   />
                 ) : null}

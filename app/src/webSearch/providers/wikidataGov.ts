@@ -134,11 +134,20 @@ export const fetchGovernmentSearch = async (query: string): Promise<SearchSource
       };
     }
 
+    const wantsPm = /ראש\s+(?:ה)?ממשל(?:ה|ת)|prime\s+minister/i.test(query);
+    const picked = wantsPm
+      ? leaders.filter((b) => /ראש ממשלה|prime minister/i.test(b.roleLabel?.value ?? ""))
+      : leaders;
+    const rows = picked.length ? picked : leaders;
+
     const lines = [
       `מדינה: ${lookupName} (Wikidata ${qid})`,
       "נושאי משרה (Wikidata):",
-      ...leaders.map((b) => `- ${b.personLabel?.value ?? "—"} · ${b.roleLabel?.value ?? "תפקיד"}`),
+      ...rows.map((b) => `- ${b.personLabel?.value ?? "—"} · ${b.roleLabel?.value ?? "תפקיד"}`),
     ];
+    if (wantsPm && rows[0]?.personLabel?.value) {
+      lines.push(`ANSWER: ראש הממשלה (Wikidata): ${rows[0].personLabel.value}`);
+    }
 
     return {
       provider,

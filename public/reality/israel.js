@@ -48,6 +48,12 @@ let _migunTimeoutId = null;
 let _migunCountdownId = null;
 let _lastAlertWasPre = false;
 let globalMarks = [];
+let marineInfraMarks = [];
+let _marineInfraSig = '';
+let _lastMapLod = '';
+let _lodRefreshT = null;
+const _marineInfraCache = { at: 0, items: [] };
+const MED_INFRA_BBOX = { minLat: 27, maxLat: 42, minLon: 18, maxLon: 38 };
 let _globalSig = '';
 let _preferOrefUntil = 0;
 const _milTracker = new Map();
@@ -59,6 +65,7 @@ const embedLayerVisible = {
   earthquake: true,
   weather: true,
   marine: true,
+  marine_infra: true,
   israel_alerts: true,
 };
 
@@ -223,6 +230,26 @@ function getEmbedLayers() {
   return { ...embedLayerVisible };
 }
 
+let _seamarkLayer = null;
+
+function syncSeamarkLayer() {
+  if (!viewer) return;
+  const want = !RC_EMBED || (embedLayerVisible.ships || embedLayerVisible.marine_infra);
+  try {
+    if (want && !_seamarkLayer) {
+      _seamarkLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+        url: 'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+        maximumLevel: 18,
+        credit: 'OpenSeaMap',
+        alpha: 0.88
+      }));
+    } else if (!want && _seamarkLayer) {
+      viewer.imageryLayers.remove(_seamarkLayer, false);
+      _seamarkLayer = null;
+    }
+  } catch (e) { _logWarn('OpenSeaMap', e?.message || e); }
+}
+
 function toggleEmbedLayer(layer) {
   if (!(layer in embedLayerVisible)) return getEmbedLayers();
   const wasOn = embedLayerVisible[layer];
@@ -235,6 +262,7 @@ function toggleEmbedLayer(layer) {
   } else {
     applyEmbedLayerVisibility();
   }
+  if (layer === 'ships' || layer === 'marine_infra') syncSeamarkLayer();
   postEmbedIntel();
   return getEmbedLayers();
 }
@@ -256,6 +284,7 @@ function applyEmbedLayerVisibility() {
     if (t === 'marine') e.show = embedLayerVisible.marine;
   });
   pulsePrims.forEach(p => { if (p?.show !== undefined) p.show = embedLayerVisible.israel_alerts; });
+  syncSeamarkLayer();
   worldAlertMarks.forEach(e => {
     if (!e) return;
     const t = e._rcType;
@@ -263,6 +292,7 @@ function applyEmbedLayerVisibility() {
     else if (t === 'disaster-wx' || t === 'nws-alert' || t === 'fire') e.show = embedLayerVisible.weather;
     else e.show = true;
   });
+  marineInfraMarks.forEach(e => { if (e) e.show = embedLayerVisible.marine_infra; });
 }
 
 function setEmbedUserRegion(payload) {
@@ -408,23 +438,39 @@ function insightToTicker(item, nowMs) {
 
 function postLiveAlert(a) {
   if (!RC_EMBED || !a || _presentationMode) return;
-  const geo = a.geo || getAiGeo(a);
+  const SA = window.SignificantAlerts;
+  if (!SA) return;
   try {
     window.parent.postMessage({
       source: 'reality-core',
       type: 'live_alert',
-      payload: {
-        id: String(a.id),
-        severity: Number(a.severity || 4),
-        title: String(a.category || 'ALERT'),
-        body: String(a.summary || a.recommended_action || ''),
-        category: String(a.category || ''),
-        ts: Date.now(),
-        lat: geo?.lat,
-        lon: geo?.lon,
-      },
+      payload: SA.buildLiveAlertPayload(a),
     }, '*');
   } catch (_) {}
+}
+
+function showSignificantAlertPopup(a) {
+  const el = $('info-popup');
+  const content = $('info-popup-content');
+  if (!el || !content || !a) return;
+  const SA = window.SignificantAlerts;
+  const p = SA ? SA.buildLiveAlertPayload(a) : null;
+  if (!p) return;
+  el.classList.remove('hidden');
+  el.scrollTop = 0;
+  const cat = String(p.category || '').toUpperCase();
+  const sevCol = p.severity >= 5 ? '#ff1744' : p.severity >= 4 ? '#ff9100' : '#ffd600';
+  const rows = [];
+  if (p.place) rows.push(`<div class="popup-row"><span class="pr-icon">📍</span><span class="pr-label">מיקום</span><span class="pr-val">${escapeHtml(p.place)}</span></div>`);
+  if (p.lat != null && p.lon != null) rows.push(`<div class="popup-row"><span class="pr-icon">🌐</span><span class="pr-label">קואורדינטות</span><span class="pr-val">${p.lat.toFixed(3)}° · ${p.lon.toFixed(3)}°</span></div>`);
+  if (p.magnitude != null) rows.push(`<div class="popup-row"><span class="pr-icon">📊</span><span class="pr-label">עוצמה</span><span class="pr-val">M${Number(p.magnitude).toFixed(1)}</span></div>`);
+  if (p.depth != null && Number.isFinite(p.depth)) rows.push(`<div class="popup-row"><span class="pr-icon">⬇</span><span class="pr-label">עומק</span><span class="pr-val">${Math.round(p.depth)} km</span></div>`);
+  if (p.eventTime) rows.push(`<div class="popup-row"><span class="pr-icon">🕐</span><span class="pr-label">זמן</span><span class="pr-val">${escapeHtml(new Date(p.eventTime).toLocaleString('he-IL'))}</span></div>`);
+  if (p.source) rows.push(`<div class="popup-row"><span class="pr-icon">📡</span><span class="pr-label">מקור</span><span class="pr-val">${escapeHtml(p.source)}</span></div>`);
+  content.innerHTML = `<div class="popup-header"><div class="popup-title" style="color:${sevCol}">${escapeHtml(p.title)}</div><div class="popup-sub">${escapeHtml(cat)} · S${p.severity}</div></div>`
+    + `<div style="margin-top:8px;font-size:14px;line-height:1.45">${escapeHtml(p.body)}</div>`
+    + `<div style="margin-top:10px">${rows.join('')}</div>`
+    + (p.recommendedAction ? `<div class="popup-warn" style="margin-top:12px">→ ${escapeHtml(p.recommendedAction)}</div>` : '');
 }
 
 function showAlertFlashBrief() {
@@ -666,6 +712,7 @@ window.setAllEmbedLayers = setAllEmbedLayers;
 window.focusPlaceQuiet = focusPlaceQuiet;
 window.focusPlaceByName = focusPlaceByName;
 window.resolvePlaceGeo = resolvePlaceGeo;
+window.setQuietAlerts = (on) => { window.SignificantAlerts?.setQuietAlerts(on); };
 
 const META = {
   coordsUrl: 'https://raw.githubusercontent.com/amitfin/oref_alert/main/custom_components/oref_alert/metadata/area_info.py',
@@ -775,6 +822,25 @@ function makeQuakeIcon(mag) {
   _iconCache[key] = c.toDataURL();
   return _iconCache[key];
 }
+function makeQuakeDot(mag) {
+  const key = `quake_dot_${mag.toFixed(1)}`;
+  if (_iconCache[key]) return _iconCache[key];
+  const s = 36;
+  const c = document.createElement('canvas'); c.width = s; c.height = s;
+  const ctx = c.getContext('2d');
+  const sevCol = mag >= 6 ? '#ff0033' : mag >= 4 ? '#ff6600' : mag >= 2.5 ? '#ff9900' : '#ffcc00';
+  ctx.fillStyle = sevCol + 'dd';
+  ctx.beginPath(); ctx.arc(s / 2, s / 2, s / 2 - 3, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+  if (mag >= 3.5) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${mag >= 5 ? 10 : 9}px Orbitron, monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(mag.toFixed(mag >= 5 ? 1 : 0), s / 2, s / 2);
+  }
+  _iconCache[key] = c.toDataURL();
+  return _iconCache[key];
+}
 function makeWaveBar(height, color) {
   return makeSvgIcon('wave', 24, color);
 }
@@ -786,9 +852,50 @@ function inBounds(geo, b) {
   return geo.lat >= b.minLat && geo.lat <= b.maxLat && geo.lon >= b.minLon && geo.lon <= b.maxLon;
 }
 
+function getCameraHeightM() {
+  if (!viewer) return 0;
+  try { return viewer.camera.positionCartographic.height; } catch(_) { return 0; }
+}
+
+function getMapLodLevel() {
+  const h = getCameraHeightM();
+  if (h > 8000000) return 'far';
+  if (h > 2000000) return 'mid';
+  return 'near';
+}
+
+function mapLodSigPart() {
+  return `lod:${getMapLodLevel()}`;
+}
+
+function mapLabelDistance(maxNear = 2500000, maxMid = 600000) {
+  const lod = getMapLodLevel();
+  if (lod === 'far') return new Cesium.DistanceDisplayCondition(0, 1);
+  if (lod === 'mid') return new Cesium.DistanceDisplayCondition(0, maxMid);
+  return new Cesium.DistanceDisplayCondition(0, maxNear);
+}
+
 function mapDisplayDistance(far = 6000000) {
-  if (RC_EMBED || isGlobalMode()) return new Cesium.DistanceDisplayCondition(0, 5.0e7);
-  return new Cesium.DistanceDisplayCondition(0, far);
+  const lod = getMapLodLevel();
+  if (lod === 'far') return new Cesium.DistanceDisplayCondition(0, 1);
+  const cap = lod === 'mid' ? Math.min(far, 3500000) : Math.min(far, RC_EMBED || isGlobalMode() ? 8000000 : far);
+  return new Cesium.DistanceDisplayCondition(0, cap);
+}
+
+function scheduleLodRefresh() {
+  const lodNow = getMapLodLevel();
+  if (lodNow === _lastMapLod) return;
+  _lastMapLod = lodNow;
+  if (_lodRefreshT) clearTimeout(_lodRefreshT);
+  _lodRefreshT = setTimeout(() => {
+    _lodRefreshT = null;
+    _trafficSig = '';
+    _globalSig = '';
+    _satSig = '';
+    _worldAlertSig = '';
+    _marineInfraSig = '';
+    refreshComposite();
+  }, 380);
 }
 
 function extractGeoFromGeometry(geom) {
@@ -1133,6 +1240,7 @@ function initCesium() {
     maximumLevel:18,
     credit:'CartoDB'
   }));
+  syncSeamarkLayer();
 
   const scene = viewer.scene;
   scene.backgroundColor = Cesium.Color.fromCssColorString('#030810');
@@ -1173,6 +1281,7 @@ function initCesium() {
   viewer.camera.changed.addEventListener(() => {
     try {
       updateDepthReadout();
+      scheduleLodRefresh();
 
       if (_mapMode === 'auto' && !RC_EMBED) {
         enforceAutoMode();
@@ -1228,18 +1337,28 @@ function cut(s, len = 120) {
   return t.length > len ? `${t.slice(0, len - 1)}…` : t;
 }
 
-function pushAiAlert(a) {
+function pushAiAlert(a, opts = {}) {
   if (!a || !a.id || _presentationMode) return;
   const id = String(a.id);
   const isNew = !aiAlerts.some(x => String(x.id) === id);
   aiAlerts = [a, ...aiAlerts.filter(x => String(x.id) !== id)].slice(0, 40);
   if (!isNew) return;
+  const SA = window.SignificantAlerts;
   const sev = Number(a.severity || 0);
-  const geo = a.geo || getAiGeo(a);
-  if (geo && sev >= 3) flyToAlertAndReturn({ ...a, geo, severity: sev });
-  else if (sev >= 4) window.soundSystem?.alertCritical();
-  else if (sev >= 2) window.soundSystem?.alertInfo();
-  if (RC_EMBED && sev >= 4) postLiveAlert({ ...a, geo });
+  const enriched = { ...a, geo: a.geo || getAiGeo(a) };
+  const panelOnly = opts.panelOnly || a.panelOnly;
+  const sigFly = SA && !panelOnly && SA.isSignificantFly(enriched);
+  if (sigFly && enriched.geo && SA.canFlyNow(enriched)) {
+    SA.markFlew();
+    flyToAlertAndReturn({ ...enriched, severity: sev });
+    showSignificantAlertPopup(enriched);
+    if (RC_EMBED) postLiveAlert(enriched);
+    if (sev >= 4) window.soundSystem?.alertCritical();
+    else window.soundSystem?.alertInfo();
+    return;
+  }
+  if (sev >= 4 && sigFly) window.soundSystem?.alertCritical();
+  else if (sev >= 2 && !panelOnly) window.soundSystem?.alertInfo();
 }
 
 function pushAiInsight(v) {
@@ -1264,16 +1383,21 @@ function renderTrafficLayer() {
     return;
   }
   const global = isGlobalMode();
-  const trafficCap = global ? (RC_EMBED ? 550 : 350) : 120;
+  const lod = getMapLodLevel();
+  const trafficCap = lod === 'far'
+    ? (global ? 160 : 70)
+    : lod === 'mid'
+      ? (global ? 260 : 90)
+      : (global ? (RC_EMBED ? 550 : 350) : 120);
   const planes = global ? av.filter(x => x.geo).slice(0, trafficCap) : av.filter(x => x.geo && inBounds(x.geo, REGION_BOUNDS)).slice(0, trafficCap);
   const ships = global ? sh.filter(x => x.geo).slice(0, trafficCap) : sh.filter(x => x.geo && inBounds(x.geo, REGION_BOUNDS)).slice(0, trafficCap);
-  const sig = `${_mapMode}|${planes.length}|${ships.length}|${av[0]?.timestamp || ''}|${sh[0]?.timestamp || ''}`;
+  const sig = `${_mapMode}|${mapLodSigPart()}|${planes.length}|${ships.length}|${av[0]?.timestamp || ''}|${sh[0]?.timestamp || ''}`;
   if (sig === _trafficSig && trafficMarks.length) return;
   _trafficSig = sig;
   clearTrafficMarks();
 
-  const planeIcon = makeSvgIcon('aircraft', 28, '#ffd600');
-  const milIcon = makeSvgIcon('hostile_air', 30, '#ff1744');
+  const planeIcon = makeSvgIcon('aircraft', lod === 'far' ? 12 : lod === 'mid' ? 18 : 28, '#ffd600');
+  const milIcon = makeSvgIcon('hostile_air', lod === 'far' ? 14 : lod === 'mid' ? 20 : 30, '#ff1744');
   planes.forEach(p => {
     if (RC_EMBED && !embedLayerVisible.aviation) return;
     if (!Number.isFinite(p.geo?.lat) || !Number.isFinite(p.geo?.lon)) return;
@@ -1282,12 +1406,18 @@ function renderTrafficLayer() {
     const icon = isMil ? milIcon : planeIcon;
     const col = isMil ? '#ff1744' : '#ffd600';
     const lbl = _rtl(isMil ? `\u26a0 ${p.callsign || p.icao24 || ''} ${p.milLabel || p.country || ''}` : `${p.callsign || p.icao24 || ''} ${p.country || ''}`);
-    const e = viewer?.entities?.add?.({
+    const planeSz = lod === 'far' ? (isMil ? 14 : 12) : lod === 'mid' ? (isMil ? 24 : 20) : (isMil ? 44 : 36);
+    const ent = lod === 'far' && !isMil ? {
       position: Cesium.Cartesian3.fromDegrees(p.geo.lon, p.geo.lat, alt),
-      billboard: { image: icon, width: isMil ? 52 : 44, height: isMil ? 52 : 44, rotation: p.heading ? -Cesium.Math.toRadians(p.heading) : 0 },
-      label: { text: lbl, font: `bold ${isMil ? 15 : 14}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(isMil ? 32 : 26, 0), distanceDisplayCondition: mapDisplayDistance(5000000), showBackground: isMil, backgroundColor: isMil ? Cesium.Color.BLACK.withAlpha(0.85) : undefined }
-    });
+      point: { pixelSize: 4, color: Cesium.Color.fromCssColorString(col).withAlpha(0.88), outlineColor: Cesium.Color.BLACK, outlineWidth: 1, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+    } : {
+      position: Cesium.Cartesian3.fromDegrees(p.geo.lon, p.geo.lat, alt),
+      billboard: { image: icon, width: planeSz, height: planeSz, rotation: p.heading ? -Cesium.Math.toRadians(p.heading) : 0 },
+      label: lod === 'near' || (lod === 'mid' && isMil) ? { text: lbl, font: `bold ${isMil ? 13 : 12}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(planeSz / 2 + 4, 0), distanceDisplayCondition: mapLabelDistance(5000000, 900000), showBackground: isMil, backgroundColor: isMil ? Cesium.Color.BLACK.withAlpha(0.85) : undefined } : undefined,
+    };
+    const e = viewer?.entities?.add?.(ent);
     if (e) { e._rcType = 'aviation'; e._rcData = p; trafficMarks.push(e); }
+    if (lod !== 'near') return;
     const tr = isMil ? _milTracker.get(p.icao24) : null;
     if (tr && tr.trail.length >= 2) {
       const positions = tr.trail.filter(pt => Number.isFinite(pt.lon) && Number.isFinite(pt.lat)).map(pt => Cesium.Cartesian3.fromDegrees(pt.lon, pt.lat, _safeNum(pt.alt, alt)));
@@ -1303,17 +1433,17 @@ function renderTrafficLayer() {
         polyline: { positions: [
           Cesium.Cartesian3.fromDegrees(p.geo.lon - Math.sin(hdg) * 3, p.geo.lat - Math.cos(hdg) * 3, alt),
           Cesium.Cartesian3.fromDegrees(p.geo.lon, p.geo.lat, alt)
-        ], width: 3, material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.25, color: Cesium.Color.YELLOW.withAlpha(0.45) }) }
+        ], width: 2, material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.2, color: Cesium.Color.YELLOW.withAlpha(0.35) }) }
       });
       if (t) trafficMarks.push(t);
     }
   });
 
-  const shipSmall = makeSvgIcon('ship', 18, '#00bfa5');
-  const shipMed = makeSvgIcon('ship', 24, '#00e5ff');
-  const shipLarge = makeSvgIcon('ship', 30, '#26c6da');
-  const shipTanker = makeSvgIcon('ship', 28, '#ff9100');
-  const shipMil = makeSvgIcon('ship', 26, '#ff1744');
+  const shipSmall = makeSvgIcon('ship', lod === 'far' ? 10 : lod === 'mid' ? 14 : 18, '#00bfa5');
+  const shipMed = makeSvgIcon('ship', lod === 'far' ? 12 : lod === 'mid' ? 18 : 24, '#00e5ff');
+  const shipLarge = makeSvgIcon('ship', lod === 'far' ? 12 : lod === 'mid' ? 20 : 30, '#26c6da');
+  const shipTanker = makeSvgIcon('ship', lod === 'far' ? 12 : lod === 'mid' ? 20 : 28, '#ff9100');
+  const shipMil = makeSvgIcon('ship', lod === 'far' ? 12 : lod === 'mid' ? 18 : 26, '#ff1744');
   ships.forEach(s => {
     if (RC_EMBED && !embedLayerVisible.ships) return;
     if (!Number.isFinite(s.geo?.lat) || !Number.isFinite(s.geo?.lon)) return;
@@ -1323,14 +1453,19 @@ function renderTrafficLayer() {
     const isPax = st >= 60 && st <= 69;
     const isMilShip = st === 35;
     const icon = isMilShip ? shipMil : isTanker ? shipTanker : isCargo ? shipLarge : isPax ? shipMed : shipSmall;
-    const sz = isCargo || isTanker ? 36 : isPax || isMilShip ? 28 : 22;
+    const sz = lod === 'far' ? 10 : lod === 'mid' ? (isCargo || isTanker ? 18 : 14) : (isCargo || isTanker ? 30 : isPax || isMilShip ? 24 : 18);
     const col = isMilShip ? '#ff1744' : isTanker ? '#ff9100' : isCargo ? '#26c6da' : isPax ? '#00e5ff' : '#00bfa5';
     const lbl = _rtl(s.name ? `${s.name}${s.shipTypeName ? ' · ' + s.shipTypeName : ''}` : (s.shipTypeName || ''));
-    const e = viewer?.entities?.add?.({
+    const showShipLabel = lod === 'near' || (lod === 'mid' && (isMilShip || isCargo || isTanker));
+    const ent = lod === 'far' && !isMilShip ? {
+      position: Cesium.Cartesian3.fromDegrees(s.geo.lon, s.geo.lat, 0),
+      point: { pixelSize: isTanker || isCargo ? 5 : 4, color: Cesium.Color.fromCssColorString(col).withAlpha(0.9), outlineColor: Cesium.Color.BLACK, outlineWidth: 1, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+    } : {
       position: Cesium.Cartesian3.fromDegrees(s.geo.lon, s.geo.lat, 0),
       billboard: { image: icon, width: sz, height: sz, rotation: s.heading ? -Cesium.Math.toRadians(s.heading) : 0 },
-      label: { text: lbl, font: `bold ${isCargo || isTanker ? 14 : 12}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(sz/2 + 6, 0), distanceDisplayCondition: mapDisplayDistance(isCargo || isTanker ? 5000000 : 2500000), showBackground: isMilShip, backgroundColor: isMilShip ? Cesium.Color.BLACK.withAlpha(0.85) : undefined }
-    });
+      label: showShipLabel ? { text: lbl, font: `bold ${isCargo || isTanker ? 12 : 11}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(sz / 2 + 4, 0), distanceDisplayCondition: mapLabelDistance(isCargo || isTanker ? 5000000 : 2500000, 700000), showBackground: isMilShip, backgroundColor: isMilShip ? Cesium.Color.BLACK.withAlpha(0.85) : undefined } : undefined,
+    };
+    const e = viewer?.entities?.add?.(ent);
     if (e) { e._rcType = 'ships'; e._rcData = s; trafficMarks.push(e); }
   });
 }
@@ -1418,27 +1553,33 @@ function renderSatellitesLayer() {
     });
   }
 
-  const maxShow = global ? (RC_EMBED ? 80 : 50) : 30;
-  const sig = `${_mapMode}|${Math.floor(now.getTime() / 5000)}|${over.length}`;
+  const lod = getMapLodLevel();
+  const maxShow = global ? (lod === 'far' ? 35 : lod === 'mid' ? 55 : (RC_EMBED ? 80 : 50)) : 30;
+  const sig = `${_mapMode}|${mapLodSigPart()}|${Math.floor(now.getTime() / 5000)}|${over.length}`;
   if (sig !== _satSig || satMarks.length === 0) {
     _satSig = sig;
     clearSatMarks();
-    const satSvg = makeSvgIcon('satellite', 28, '#4fc3f7');
-    const issSvg = makeSvgIcon('iss', 34, '#7c4dff');
+    const satSvg = makeSvgIcon('satellite', lod === 'far' ? 10 : lod === 'mid' ? 18 : 28, '#4fc3f7');
+    const issSvg = makeSvgIcon('iss', lod === 'far' ? 12 : lod === 'mid' ? 22 : 34, '#7c4dff');
 
     over.slice(0, maxShow).forEach(x => {
       const isISS = /ISS|ZARYA|25544/i.test(x.item.name || '') || x.item.noradId === 25544;
       const icon = isISS ? issSvg : satSvg;
-      const sz = isISS ? 52 : 40;
+      const sz = lod === 'far' ? (isISS ? 14 : 10) : lod === 'mid' ? (isISS ? 28 : 22) : (isISS ? 40 : 32);
       const col = isISS ? '#b388ff' : '#4fc3f7';
-      const e = viewer?.entities?.add?.({
+      const showIssLabel = isISS && lod !== 'far';
+      const ent = lod === 'far' && !isISS ? {
+        position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, x.geo.hKm * 1000),
+        point: { pixelSize: 3, color: Cesium.Color.fromCssColorString(col).withAlpha(0.75), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
+      } : {
         position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, x.geo.hKm * 1000),
         billboard: { image: icon, width: sz, height: sz },
-        label: { text: isISS ? `ISS ${x.geo.lat.toFixed(1)}° ${x.geo.lon.toFixed(1)}°` : (x.item.name || ''), font: `bold ${isISS ? 16 : 15}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(sz/2 + 4, 0), showBackground: isISS, backgroundColor: isISS ? Cesium.Color.fromCssColorString('#1a0033').withAlpha(0.8) : undefined, distanceDisplayCondition: mapDisplayDistance(12000000) }
-      });
+        label: showIssLabel ? { text: `ISS ${x.geo.lat.toFixed(1)}° ${x.geo.lon.toFixed(1)}°`, font: `bold ${lod === 'mid' ? 12 : 14}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(sz / 2 + 4, 0), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString('#1a0033').withAlpha(0.8), distanceDisplayCondition: mapLabelDistance(12000000, 2500000) } : (lod === 'near' ? { text: x.item.name || '', font: 'bold 12px Rajdhani', fillColor: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(sz / 2 + 4, 0), distanceDisplayCondition: mapLabelDistance(8000000, 1500000) } : undefined),
+      };
+      const e = viewer?.entities?.add?.(ent);
       if (e) { e._rcType = isISS ? 'iss' : 'satellite'; e._rcData = { ...x.item, geo: x.geo, altitude: x.geo.hKm }; satMarks.push(e); }
 
-      if (hasTLE) {
+      if (hasTLE && lod === 'near') {
         const trail = computeOrbitTrail(x.item, now, 50, 1.5);
         if (trail.length > 4) {
           const positions = trail.map(p => Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.hKm * 1000));
@@ -1453,10 +1594,13 @@ function renderSatellitesLayer() {
 
     if (live.iss?.geo && Number.isFinite(live.iss.geo.lat) && Number.isFinite(live.iss.geo.lon) && !over.some(x => /ISS|ZARYA|25544/i.test(x.item.name || ''))) {
       const ig = live.iss.geo;
+      const lod = getMapLodLevel();
+      const issSvg = makeSvgIcon('iss', lod === 'far' ? 12 : lod === 'mid' ? 22 : 34, '#7c4dff');
+      const issSz = lod === 'far' ? 14 : lod === 'mid' ? 28 : 40;
       const e = viewer?.entities?.add?.({
         position: Cesium.Cartesian3.fromDegrees(ig.lon, ig.lat, 408000),
-        billboard: { image: issSvg, width: 52, height: 52 },
-        label: { text: `ISS ${ig.lat.toFixed(1)}° ${ig.lon.toFixed(1)}°`, font: 'bold 16px Rajdhani', fillColor: Cesium.Color.fromCssColorString('#b388ff'), outlineColor: Cesium.Color.BLACK, outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(30, 0), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString('#1a0033').withAlpha(0.8), distanceDisplayCondition: mapDisplayDistance(12000000) }
+        billboard: { image: issSvg, width: issSz, height: issSz },
+        label: lod === 'far' ? undefined : { text: `ISS ${ig.lat.toFixed(1)}° ${ig.lon.toFixed(1)}°`, font: `bold ${lod === 'mid' ? 12 : 14}px Rajdhani`, fillColor: Cesium.Color.fromCssColorString('#b388ff'), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(issSz / 2 + 4, 0), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString('#1a0033').withAlpha(0.8), distanceDisplayCondition: mapLabelDistance(12000000, 2500000) }
       });
       if (e) { e._rcType = 'iss'; e._rcData = { name: 'ISS (ZARYA)', noradId: 25544, geo: ig, altitude: 408 }; satMarks.push(e); }
     }
@@ -1644,50 +1788,72 @@ function renderHazardsPanel() {
 function renderGlobalHazardMarks() {
   if (!viewer) return;
   const global = isGlobalMode();
+  const lod = getMapLodLevel();
 
   const eq = live.earthquake;
   const wx = live.weather;
   const marine = live.marine;
-  const sig = `${_mapMode}|${eq?.items?.length || 0}|${eq?.timestamp || ''}|${wx?.items?.length || 0}|${wx?.timestamp || ''}|${marine?.items?.length || 0}|${marine?.timestamp || ''}`;
+  const sig = `${_mapMode}|${mapLodSigPart()}|${eq?.items?.length || 0}|${eq?.timestamp || ''}|${wx?.items?.length || 0}|${wx?.timestamp || ''}|${marine?.items?.length || 0}|${marine?.timestamp || ''}`;
   if (sig === _globalSig && globalMarks.length) return;
   _globalSig = sig;
   clearGlobalMarks();
 
   if (eq?.items?.length && (!RC_EMBED || embedLayerVisible.earthquake)) {
+    const eqCap = lod === 'far' ? (global ? 70 : 35) : lod === 'mid' ? (global ? 90 : 45) : (global ? 120 : 60);
     const eqFiltered = global ? eq.items.filter(x => x.geo) : eq.items.filter(x => x.geo && (inBounds(x.geo, REGION_BOUNDS) || inBounds(x.geo, RIFT_BOUNDS)));
-    eqFiltered.sort((a, b) => (n(b.magnitude) || 0) - (n(a.magnitude) || 0)).slice(0, global ? 120 : 60).forEach(x => {
+    eqFiltered.sort((a, b) => (n(b.magnitude) || 0) - (n(a.magnitude) || 0)).slice(0, eqCap).forEach(x => {
       const mag = n(x.magnitude) || 0;
-      const icon = makeQuakeIcon(mag);
-      const iconSize = Math.max(48, Math.min(80, mag * 12));
       const sevCol = mag >= 6 ? '#ff0033' : mag >= 4 ? '#ff6600' : mag >= 2.5 ? '#ff9900' : '#ffcc00';
-      const ringR = Math.max(50000, mag * 80000);
-      const e = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, 0),
-        billboard: { image: icon, width: iconSize, height: iconSize },
-        label: { text: _rtl(`RICHTER ${mag.toFixed(2)}\n${cut(x.place || '', 25)}`), font: 'bold 14px Rajdhani', fillColor: Cesium.Color.fromCssColorString(sevCol), outlineColor: Cesium.Color.BLACK, outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(iconSize/2 + 8, 0), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString('#111').withAlpha(0.9) }
-      });
+      let e;
+      if (lod === 'far') {
+        const iconSize = Math.max(16, Math.min(26, 12 + mag * 2));
+        e = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, 0),
+          billboard: { image: makeQuakeDot(mag), width: iconSize, height: iconSize },
+        });
+      } else if (lod === 'mid') {
+        const iconSize = Math.max(24, Math.min(36, mag * 6));
+        e = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, 0),
+          billboard: { image: makeQuakeDot(mag), width: iconSize, height: iconSize },
+          label: mag >= 4.5 ? { text: _rtl(`M${mag.toFixed(1)}`), font: 'bold 11px Rajdhani', fillColor: Cesium.Color.fromCssColorString(sevCol), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(iconSize / 2 + 4, 0), distanceDisplayCondition: mapLabelDistance(4000000, 800000), showBackground: true, backgroundColor: Cesium.Color.BLACK.withAlpha(0.75) } : undefined,
+        });
+      } else {
+        const icon = makeQuakeIcon(mag);
+        const iconSize = Math.max(32, Math.min(52, mag * 8));
+        e = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, 0),
+          billboard: { image: icon, width: iconSize, height: iconSize },
+          label: { text: _rtl(`M ${mag.toFixed(1)}\n${cut(x.place || '', 22)}`), font: 'bold 12px Rajdhani', fillColor: Cesium.Color.fromCssColorString(sevCol), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(iconSize / 2 + 6, 0), distanceDisplayCondition: mapLabelDistance(6000000, 1200000), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString('#111').withAlpha(0.88) },
+        });
+        if (mag >= 5) {
+          const ringR = Math.max(40000, mag * 60000);
+          for (let r = 1; r <= 2; r++) {
+            const ring = viewer.entities.add({
+              position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, 0),
+              ellipse: { semiMajorAxis: ringR * r, semiMinorAxis: ringR * r, material: Cesium.Color.TRANSPARENT, outline: true, outlineColor: Cesium.Color.fromCssColorString(sevCol).withAlpha(0.45 / r), outlineWidth: 1.5 },
+            });
+            globalMarks.push(ring);
+          }
+        }
+      }
       e._rcType = 'earthquake'; e._rcData = x;
       globalMarks.push(e);
-      for (let r = 1; r <= 3; r++) {
-        const ring = viewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(x.geo.lon, x.geo.lat, 0),
-          ellipse: { semiMajorAxis: ringR * r, semiMinorAxis: ringR * r, material: Cesium.Color.TRANSPARENT, outline: true, outlineColor: Cesium.Color.fromCssColorString(sevCol).withAlpha(0.5 / r), outlineWidth: 2 }
-        });
-        globalMarks.push(ring);
-      }
     });
   }
 
   if (wx?.items?.length && (!RC_EMBED || embedLayerVisible.weather)) {
+    const wxCap = lod === 'far' ? (global ? 60 : 25) : lod === 'mid' ? (global ? 90 : 40) : (global ? 150 : 60);
     const wxFiltered = global ? wx.items.filter(w => w.geo) : wx.items.filter(w => w.geo && inBounds(w.geo, REGION_BOUNDS));
-    wxFiltered.slice(0, global ? 150 : 60).forEach(w => {
+    wxFiltered.slice(0, wxCap).forEach(w => {
       const temp = n(w.temperature);
       if (temp === null) return;
       const col = temp > 35 ? '#ff1744' : temp > 25 ? '#ff9100' : temp > 15 ? '#ffd600' : temp > 5 ? '#00e5ff' : '#2196f3';
+      const px = lod === 'far' ? 5 : lod === 'mid' ? 7 : 9;
       const e = viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(w.geo.lon, w.geo.lat, 0),
-        point: { pixelSize: 10, color: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
-        label: { text: _rtl(`${w.city || ''} ${Math.round(temp)}°C`), font: 'bold 14px Rajdhani', fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(12, 0), distanceDisplayCondition: mapDisplayDistance(6000000), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString(col).withAlpha(0.3) }
+        point: { pixelSize: px, color: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
+        label: lod === 'near' ? { text: _rtl(`${w.city || ''} ${Math.round(temp)}°C`), font: 'bold 12px Rajdhani', fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(10, 0), distanceDisplayCondition: mapLabelDistance(6000000, 900000), showBackground: true, backgroundColor: Cesium.Color.fromCssColorString(col).withAlpha(0.3) } : undefined,
       });
       e._rcType = 'weather'; e._rcData = w;
       globalMarks.push(e);
@@ -1695,16 +1861,19 @@ function renderGlobalHazardMarks() {
   }
 
   if (marine?.items?.length && (!RC_EMBED || embedLayerVisible.marine)) {
+    const mCap = lod === 'far' ? (global ? 40 : 20) : lod === 'mid' ? (global ? 55 : 28) : (global ? 80 : 40);
     const mFiltered = global ? marine.items.filter(b => b.geo) : marine.items.filter(b => b.geo && inBounds(b.geo, REGION_BOUNDS));
-    mFiltered.slice(0, global ? 80 : 40).forEach(b => {
+    mFiltered.slice(0, mCap).forEach(b => {
       const wh = n(b.waveHeight) || 0;
       if (wh <= 0) return;
       const col = wh > 4 ? '#ff1744' : wh > 2 ? '#ff9100' : '#00bcd4';
       const icon = makeWaveBar(wh, col);
+      const bw = lod === 'far' ? 14 : lod === 'mid' ? 24 : 34;
+      const bh = lod === 'far' ? 20 : lod === 'mid' ? 36 : 52;
       const e = viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(b.geo.lon, b.geo.lat, 0),
-        billboard: { image: icon, width: 40, height: 60, verticalOrigin: Cesium.VerticalOrigin.BOTTOM },
-        label: { text: `${wh.toFixed(1)}m | ${b.waterTemp || '?'}°C`, font: 'bold 13px Rajdhani', fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(24, -30), distanceDisplayCondition: mapDisplayDistance(5000000) }
+        billboard: { image: icon, width: bw, height: bh, verticalOrigin: Cesium.VerticalOrigin.BOTTOM },
+        label: lod === 'near' ? { text: `${wh.toFixed(1)}m | ${b.waterTemp || '?'}°C`, font: 'bold 12px Rajdhani', fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(18, -22), distanceDisplayCondition: mapLabelDistance(5000000, 800000) } : undefined,
       });
       e._rcType = 'marine'; e._rcData = b;
       globalMarks.push(e);
@@ -1716,91 +1885,111 @@ function renderWorldAlertMarks() {
   if (!viewer) return;
   const global = isGlobalMode();
   if (!global && !RC_EMBED) { clearWorldAlertMarks(); _worldAlertSig = ''; return; }
+  const lod = getMapLodLevel();
 
   const disN = live.disasters?.items?.length || 0;
   const nwsN = live.global_alerts?.items?.length || 0;
   const fireN = live.fires?.items?.length || 0;
   const emscN = live.emsc_earthquakes?.items?.length || 0;
-  const sig = `${_mapMode}|${disN}|${nwsN}|${fireN}|${emscN}|${Math.floor(Date.now() / 20000)}`;
+  const sig = `${_mapMode}|${mapLodSigPart()}|${disN}|${nwsN}|${fireN}|${emscN}|${Math.floor(Date.now() / 20000)}`;
   if (sig === _worldAlertSig && worldAlertMarks.length) return;
   _worldAlertSig = sig;
   clearWorldAlertMarks();
 
   const showEq = !RC_EMBED || embedLayerVisible.earthquake;
   const showWx = !RC_EMBED || embedLayerVisible.weather;
-  const alertIcon = makeSvgIcon('alert', 32, '#ff9100');
-  const hazIcon = makeSvgIcon('hazmat', 30, '#ff1744');
-  const quakeIcon = makeSvgIcon('quake', 34, '#ff6600');
+  const alertIcon = makeSvgIcon('alert', lod === 'far' ? 14 : lod === 'mid' ? 22 : 32, '#ff9100');
+  const hazIcon = makeSvgIcon('hazmat', lod === 'far' ? 14 : lod === 'mid' ? 20 : 30, '#ff1744');
+  const quakeIcon = makeSvgIcon('quake', lod === 'far' ? 14 : lod === 'mid' ? 22 : 34, '#ff6600');
+  const disCap = lod === 'far' ? 25 : lod === 'mid' ? 40 : 999;
 
-  (live.disasters?.items || []).forEach((d, i) => {
+  (live.disasters?.items || []).slice(0, disCap).forEach((d, i) => {
     if (!d.geo || !Number.isFinite(d.geo.lat)) return;
     const kind = String(d.category || d.title || '').toUpperCase();
     const isEq = /EQ|SEISM|QUAKE|TSUN/i.test(kind);
     if (isEq && !showEq) return;
     if (!isEq && !showWx) return;
-    const col = gdacsSeverityScore(d.alertLevel) >= 5 ? '#ff1744' : gdacsSeverityScore(d.alertLevel) >= 4 ? '#ff9100' : '#ffd600';
+    const sev = gdacsSeverityScore(d.alertLevel);
+    const col = sev >= 5 ? '#ff1744' : sev >= 4 ? '#ff9100' : '#ffd600';
     const icon = isEq ? quakeIcon : (/WF|FIRE/i.test(kind) ? hazIcon : alertIcon);
-    const e = viewer.entities.add({
+    const sz = lod === 'far' ? 12 : lod === 'mid' ? 22 : 36;
+    const showLbl = lod === 'near' || (lod === 'mid' && sev >= 4);
+    const ent = lod === 'far' ? {
       position: Cesium.Cartesian3.fromDegrees(d.geo.lon, d.geo.lat, 0),
-      billboard: { image: icon, width: 40, height: 40 },
-      label: {
-        text: _rtl(cut(d.title || d.category || 'ALERT', 28)),
-        font: 'bold 13px Rajdhani', fillColor: Cesium.Color.fromCssColorString(col),
+      point: { pixelSize: sev >= 4 ? 6 : 4, color: Cesium.Color.fromCssColorString(col).withAlpha(0.9), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
+    } : {
+      position: Cesium.Cartesian3.fromDegrees(d.geo.lon, d.geo.lat, 0),
+      billboard: { image: icon, width: sz, height: sz },
+      label: showLbl ? {
+        text: _rtl(cut(d.title || d.category || 'ALERT', lod === 'mid' ? 18 : 28)),
+        font: 'bold 11px Rajdhani', fillColor: Cesium.Color.fromCssColorString(col),
         outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(22, 0), distanceDisplayCondition: mapDisplayDistance(),
+        pixelOffset: new Cesium.Cartesian2(sz / 2 + 4, 0), distanceDisplayCondition: mapLabelDistance(8000000, 900000),
         showBackground: true, backgroundColor: Cesium.Color.BLACK.withAlpha(0.75),
-      },
-    });
+      } : undefined,
+    };
+    const e = viewer.entities.add(ent);
     e._rcType = isEq ? 'disaster-eq' : 'disaster-wx';
     e._rcData = d;
     worldAlertMarks.push(e);
   });
 
-  (live.global_alerts?.items || []).forEach((a, i) => {
+  (live.global_alerts?.items || []).slice(0, lod === 'far' ? 20 : 999).forEach((a, i) => {
     if (!showWx) return;
     const geo = a.geo;
     if (!geo || !Number.isFinite(geo.lat)) return;
     const col = nwsSeverityScore(a.severity) >= 5 ? '#ff1744' : '#ff9100';
-    const e = viewer.entities.add({
+    const sz = lod === 'far' ? 10 : lod === 'mid' ? 18 : 32;
+    const showLbl = lod !== 'far';
+    const ent = lod === 'far' ? {
       position: Cesium.Cartesian3.fromDegrees(geo.lon, geo.lat, 0),
-      billboard: { image: alertIcon, width: 36, height: 36 },
-      label: {
-        text: _rtl(cut(a.event || a.headline || 'Storm', 26)),
-        font: 'bold 12px Rajdhani', fillColor: Cesium.Color.fromCssColorString(col),
+      point: { pixelSize: 5, color: Cesium.Color.fromCssColorString(col).withAlpha(0.85), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
+    } : {
+      position: Cesium.Cartesian3.fromDegrees(geo.lon, geo.lat, 0),
+      billboard: { image: alertIcon, width: sz, height: sz },
+      label: showLbl ? {
+        text: _rtl(cut(a.event || a.headline || 'Storm', lod === 'mid' ? 16 : 26)),
+        font: 'bold 11px Rajdhani', fillColor: Cesium.Color.fromCssColorString(col),
         outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(20, 0), distanceDisplayCondition: mapDisplayDistance(),
+        pixelOffset: new Cesium.Cartesian2(sz / 2 + 4, 0), distanceDisplayCondition: mapLabelDistance(8000000, 800000),
         showBackground: true, backgroundColor: Cesium.Color.BLACK.withAlpha(0.7),
-      },
-    });
+      } : undefined,
+    };
+    const e = viewer.entities.add(ent);
     e._rcType = 'nws-alert';
     e._rcData = a;
     worldAlertMarks.push(e);
   });
 
-  (live.emsc_earthquakes?.items || []).filter(e => (n(e.mag) || 0) >= 3.5).slice(0, 25).forEach((eq, i) => {
+  (live.emsc_earthquakes?.items || []).filter(e => (n(e.mag) || 0) >= 3.5).slice(0, lod === 'far' ? 15 : 25).forEach((eq, i) => {
     if (!showEq || !eq.geo) return;
     const mag = n(eq.mag) || 0;
-    const e = viewer.entities.add({
+    const col = mag >= 5 ? '#ff1744' : '#ff9100';
+    const ent = lod === 'far' ? {
       position: Cesium.Cartesian3.fromDegrees(eq.geo.lon, eq.geo.lat, 0),
-      point: { pixelSize: 9, color: Cesium.Color.fromCssColorString(mag >= 5 ? '#ff1744' : '#ff9100'), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
-      label: {
+      billboard: { image: makeQuakeDot(mag), width: Math.max(14, Math.min(22, 10 + mag * 2)), height: Math.max(14, Math.min(22, 10 + mag * 2)) },
+    } : {
+      position: Cesium.Cartesian3.fromDegrees(eq.geo.lon, eq.geo.lat, 0),
+      point: { pixelSize: lod === 'mid' ? 7 : 9, color: Cesium.Color.fromCssColorString(col), outlineColor: Cesium.Color.BLACK, outlineWidth: 1 },
+      label: lod === 'near' ? {
         text: _rtl(`M${mag.toFixed(1)} EMSC`),
-        font: 'bold 12px Rajdhani', fillColor: Cesium.Color.WHITE,
+        font: 'bold 11px Rajdhani', fillColor: Cesium.Color.WHITE,
         outlineColor: Cesium.Color.BLACK, outlineWidth: 2, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(10, 0), distanceDisplayCondition: mapDisplayDistance(),
-      },
-    });
+        pixelOffset: new Cesium.Cartesian2(10, 0), distanceDisplayCondition: mapLabelDistance(6000000, 700000),
+      } : undefined,
+    };
+    const e = viewer.entities.add(ent);
     e._rcType = 'emsc-eq';
     e._rcData = eq;
     worldAlertMarks.push(e);
   });
 
   if (showWx && global) {
-    (live.fires?.items || []).sort((a, b) => (b.brightness || 0) - (a.brightness || 0)).slice(0, 35).forEach((f, i) => {
+    (live.fires?.items || []).sort((a, b) => (b.brightness || 0) - (a.brightness || 0)).slice(0, lod === 'far' ? 20 : 35).forEach((f, i) => {
       if (!f.geo) return;
       const e = viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(f.geo.lon, f.geo.lat, 0),
-        point: { pixelSize: 6, color: Cesium.Color.fromCssColorString('#ff5722').withAlpha(0.85), outlineColor: Cesium.Color.BLACK, outlineWidth: 1, distanceDisplayCondition: mapDisplayDistance() },
+        point: { pixelSize: lod === 'far' ? 4 : 6, color: Cesium.Color.fromCssColorString('#ff5722').withAlpha(0.85), outlineColor: Cesium.Color.BLACK, outlineWidth: 1, distanceDisplayCondition: mapDisplayDistance(12000000) },
       });
       e._rcType = 'fire';
       e._rcData = f;
@@ -1828,7 +2017,11 @@ function detectAnomalies() {
     const summary = tsunamiRisk
       ? `אזהרת צונמי: רעידה M${mag.toFixed(1)} ${cut(eq.place || '', 40)} עומק ${n(eq.depth) || '?'} km`
       : `רעידת אדמה חזקה M${mag.toFixed(1)} ${cut(eq.place || '', 40)}`;
-    pushAiAlert({ id: key, category: tsunamiRisk ? 'TSUNAMI' : 'SEISMIC', severity: tsunamiRisk ? 5 : 4, summary, recommended_action: tsunamiRisk ? 'בדוק אזהרות צונמי לחופי ישראל' : 'עקוב אחרי רעידות המשך', geo: eq.geo });
+    pushAiAlert({
+      id: key, category: tsunamiRisk ? 'TSUNAMI' : 'SEISMIC', severity: tsunamiRisk ? 5 : 4,
+      summary, recommended_action: tsunamiRisk ? 'בדוק אזהרות צונמי לחופי ישראל' : 'עקוב אחרי רעידות המשך',
+      geo: eq.geo, magnitude: mag, depth: n(eq.depth), place: eq.place, time: eq.time, source: 'USGS',
+    });
     if (mag >= 5.5) showToast(summary);
   });
 
@@ -1837,7 +2030,7 @@ function detectAnomalies() {
     const key = `wx-${w.city || ''}-${w.timestamp || Math.floor(now / 120000)}`;
     if (_seenAnomalies.has(key)) return;
     _seenAnomalies.add(key);
-    pushAiAlert({ id: key, category: 'WEATHER', severity: 3, summary: `מזג אוויר קיצוני: ${w.city || '?'} ${Math.round(n(w.temperature) || 0)}°C רוח ${Math.round(n(w.windspeed) || 0)} km/h`, recommended_action: 'מעקב רציף', geo: w.geo });
+    pushAiAlert({ id: key, category: 'WEATHER', severity: 3, panelOnly: true, summary: `מזג אוויר קיצוני: ${w.city || '?'} ${Math.round(n(w.temperature) || 0)}°C רוח ${Math.round(n(w.windspeed) || 0)} km/h`, recommended_action: 'מעקב רציף', geo: w.geo });
   });
 
   const marineAll = Array.isArray(live.marine?.items) ? live.marine.items : [];
@@ -1846,7 +2039,7 @@ function detectAnomalies() {
     const key = `wave-${bigWaves.length}-${Math.floor(now / 120000)}`;
     if (!_seenAnomalies.has(key)) {
       _seenAnomalies.add(key);
-      pushAiAlert({ id: key, category: 'MARITIME', severity: 3, summary: `גלים גבוהים: ${bigWaves.length} תחנות מדווחות >4m`, recommended_action: 'הימנע מפעילות ימית' });
+      pushAiAlert({ id: key, category: 'MARITIME', severity: 3, panelOnly: true, summary: `גלים גבוהים: ${bigWaves.length} תחנות מדווחות >4m`, recommended_action: 'הימנע מפעילות ימית' });
     }
   }
 
@@ -1855,7 +2048,7 @@ function detectAnomalies() {
     const key = `space-${n(sw.kpIndex)}-${Math.floor(now / 120000)}`;
     if (!_seenAnomalies.has(key)) {
       _seenAnomalies.add(key);
-      pushAiAlert({ id: key, category: 'SPACE', severity: 4, summary: `סופה גיאומגנטית KP ${n(sw.kpIndex).toFixed(1)} - עלול להשפיע על תקשורת ולוויינים`, recommended_action: 'בדוק מערכות תקשורת וGPS' });
+      pushAiAlert({ id: key, category: 'SPACE', severity: 4, panelOnly: true, summary: `סופה גיאומגנטית KP ${n(sw.kpIndex).toFixed(1)} - עלול להשפיע על תקשורת ולוויינים`, recommended_action: 'בדוק מערכות תקשורת וGPS' });
     }
   }
 
@@ -1881,7 +2074,7 @@ function detectAnomalies() {
     const key = `mil-${id}-${Math.floor(now / 300000)}`;
     if (_seenAnomalies.has(key)) return;
     _seenAnomalies.add(key);
-    pushAiAlert({ id: key, category: 'AVIATION', severity: 4, summary: `\u2708\ufe0f \u05de\u05d8\u05d5\u05e1 \u05dc\u05d0-\u05d0\u05d6\u05e8\u05d7\u05d9: ${cls} | ICAO: ${id} | ${p.callsign || '---'} | ${Math.round(p.altitude || 0)}m`, recommended_action: '\u05de\u05e2\u05e7\u05d1 \u05d0\u05d7\u05e8\u05d9 \u05de\u05e1\u05dc\u05d5\u05dc', geo: p.geo });
+    pushAiAlert({ id: key, category: 'AVIATION', severity: 4, panelOnly: true, summary: `\u2708\ufe0f \u05de\u05d8\u05d5\u05e1 \u05dc\u05d0-\u05d0\u05d6\u05e8\u05d7\u05d9: ${cls} | ICAO: ${id} | ${p.callsign || '---'} | ${Math.round(p.altitude || 0)}m`, recommended_action: '\u05de\u05e2\u05e7\u05d1 \u05d0\u05d7\u05e8\u05d9 \u05de\u05e1\u05dc\u05d5\u05dc', geo: p.geo });
   });
   for (const [id, tr] of _milTracker) { if (now - tr.lastSeen > 600000) _milTracker.delete(id); }
   if (milPlanes.length && !_seenAnomalies.has(`mil-toast-${Math.floor(now / 300000)}`)) {
@@ -1901,7 +2094,7 @@ function checkGlobalHotAlerts() {
     ...eqAll,
     ...emscAll.map(e => ({ id: e.id, magnitude: e.mag, place: e.place, depth: e.geo?.depth, geo: e.geo, time: e.time })),
   ];
-  mergedEq.filter(eq => eq.geo && (n(eq.magnitude) || 0) >= 5).forEach(eq => {
+  mergedEq.filter(eq => eq.geo && (n(eq.magnitude) || 0) >= 4.5).forEach(eq => {
     const mag = n(eq.magnitude) || 0;
     const key = `global-eq-${eq.id || `${mag}-${eq.time}`}`;
     if (_seenAnomalies.has(key)) return;
@@ -1914,6 +2107,11 @@ function checkGlobalHotAlerts() {
       summary: `${tsunamiRisk ? 'צונמי · ' : ''}רעידה גלובלית M${mag.toFixed(1)} · ${cut(eq.place || '', 45)}`,
       recommended_action: tsunamiRisk ? 'בדוק אזהרות צונמי' : 'מעקב',
       geo: eq.geo,
+      magnitude: mag,
+      depth: n(eq.depth),
+      place: eq.place,
+      time: eq.time,
+      source: eq.source || 'USGS / EMSC',
     });
   });
 
@@ -1929,8 +2127,48 @@ function checkGlobalHotAlerts() {
       summary: `GDACS · ${cut(d.title || d.category || 'אירוע', 55)}`,
       recommended_action: 'מעקב גלובלי',
       geo: d.geo,
+      place: d.title || d.category,
+      source: d.source || 'GDACS',
     });
   });
+
+  (live.disasters?.items || []).filter(d => {
+    if (!d.geo || d.alertLevel) return false;
+    return /fire|wildfire|volcano|cyclone|hurricane|flood|storm|earthquake|tsunami/i.test(String(d.title || d.category || ''));
+  }).forEach(d => {
+    const key = `eonet-${d.id || d.title}`;
+    if (_seenAnomalies.has(key)) return;
+    _seenAnomalies.add(key);
+    pushAiAlert({
+      id: key,
+      category: 'DISASTER',
+      severity: 4,
+      summary: `EONET · ${cut(d.title || d.category || 'אירוע', 55)}`,
+      recommended_action: 'מעקב גלובלי',
+      geo: d.geo,
+      place: d.title,
+      source: 'NASA-EONET',
+    });
+  });
+
+  (live.fires?.items || [])
+    .filter(f => f.geo && (f.brightness || 0) >= 340)
+    .sort((a, b) => (b.brightness || 0) - (a.brightness || 0))
+    .slice(0, 4)
+    .forEach(f => {
+      const key = `firms-${f.geo.lat.toFixed(2)}-${f.geo.lon.toFixed(2)}-${f.date || ''}`;
+      if (_seenAnomalies.has(key)) return;
+      _seenAnomalies.add(key);
+      pushAiAlert({
+        id: key,
+        category: 'FIRE',
+        severity: 4,
+        summary: `שריפה · בהירות ${Math.round(f.brightness || 0)} · ${f.date || 'FIRMS'}`,
+        recommended_action: 'מעקב לווייני — NASA FIRMS',
+        geo: f.geo,
+        source: 'NASA-FIRMS',
+      });
+    });
 
   (live.global_alerts?.items || []).filter(a => a.geo && nwsSeverityScore(a.severity) >= 4).forEach(a => {
     const key = `nws-${a.id || a.headline}`;
@@ -2278,6 +2516,23 @@ function _showInfoPopupInner(d, type) {
       + `</div>`
       + (st === 35 ? `<div class="popup-warn red">\u2694\ufe0f \u05db\u05dc\u05d9 \u05e9\u05d9\u05d9\u05d8 \u05e6\u05d1\u05d0\u05d9</div>` : '');
 
+  } else if (type === 'marine-infra') {
+    const kind = d.kind || '';
+    const kindHe = _marineInfraKindHe(kind);
+    const col = _marineInfraColor(kind);
+    const isBuoy = /buoy/i.test(kind);
+    const icon = isBuoy ? '\ud83c\udf0a' : /light|beacon/i.test(kind) ? '\ud83d\udee1\ufe0f' : '\u2693';
+    const lat = d.geo?.lat;
+    const lon = d.geo?.lon;
+    html = `<div class="popup-header"><div class="popup-title" style="color:${col}">${icon} ${escapeHtml(d.name || kindHe)}</div><div class="popup-sub">${escapeHtml(kindHe)}</div></div>`
+      + `<div class="popup-status"><span class="dot" style="background:${col}"></span> ${isBuoy ? 'מצוף ניווט / Seamark' : 'נכס תשתית ימית'} · OpenStreetMap</div>`
+      + `<div style="margin-top:8px">`
+      + `<div class="popup-row"><span class="pr-icon">\ud83c\udff7\ufe0f</span><span class="pr-label">סוג OSM</span><span class="pr-val">${escapeHtml(kind || 'seamark')}</span></div>`
+      + `<div class="popup-row"><span class="pr-icon">\ud83d\udccd</span><span class="pr-label">מיקום</span><span class="pr-val">${lat != null ? lat.toFixed(4) : '?'}° / ${lon != null ? lon.toFixed(4) : '?'}°</span></div>`
+      + `<div class="popup-row"><span class="pr-icon">\ud83d\uddfa\ufe0f</span><span class="pr-label">מקור</span><span class="pr-val">${escapeHtml(d.source || 'OpenStreetMap')}</span></div>`
+      + `</div>`
+      + `<div class="popup-note">${isBuoy ? 'מצופים מסמנים ערוצי שיט, סכנות ונקודות עיגון. לחץ על אזור ים קרוב לראות עוד נכסים.' : 'מגדלורים, רציפים וסימוני ים מ-OpenSeaMap / OSM. שכבת ⚓ נכסי ים + OpenSeaMap tiles.'}</div>`;
+
   } else if (d._isAlert) {
     const col = (d.severity || 0) >= 4 ? '#ff1744' : (d.severity || 0) >= 3 ? '#ff9100' : '#ffd600';
     html = `<div class="popup-header"><div class="popup-title" style="color:${col}">\u26a1 \u05e8\u05de\u05d4 ${d.severity || '?'}</div><div class="popup-sub">${escapeHtml(d.category || '\u05de\u05e2\u05e8\u05db\u05ea')}</div></div>`
@@ -2297,6 +2552,7 @@ function refreshComposite() {
   renderSatellitesLayer();
   renderGlobalHazardMarks();
   renderWorldAlertMarks();
+  renderMarineInfraMarks();
   if (RC_EMBED) applyEmbedLayerVisibility();
   updateDepthReadout();
   detectAnomalies();
@@ -2651,12 +2907,24 @@ async function handleIsraelAlerts(d) {
   }
 
   const firstGeo = await firstGeoPromise;
-  if (firstGeo) flyToAlertAndReturn({ geo: firstGeo, severity: isPre ? 3 : 5, category: 'ISRAEL', summary: d.summary });
-  else if (_mapMode === 'auto' || _mapMode === 'israel_flat') focusIsrael();
+  const ilAlert = {
+    id: String(d.id || Date.now()),
+    category: 'ISRAEL',
+    severity: isPre ? 3 : 5,
+    summary: d.summary || (isPre ? 'התרעה מקדימה' : 'צבע אדום'),
+    geo: firstGeo || { lat: ISRAEL_VIEW_3D.lat, lon: ISRAEL_VIEW_3D.lon },
+    place: areas[0] || 'ישראל',
+    source: 'פיקוד העורף',
+    recommended_action: isPre ? 'שפרו מיקום והיערכו למרחב מוגן' : 'היכנסו למרחב מוגן',
+  };
+  const SA = window.SignificantAlerts;
+  if (firstGeo && SA?.canFlyNow(ilAlert)) {
+    SA.markFlew();
+    flyToAlertAndReturn({ ...ilAlert, geo: firstGeo });
+    showSignificantAlertPopup(ilAlert);
+  } else if (_mapMode === 'auto' || _mapMode === 'israel_flat') focusIsrael();
 
-  if (RC_EMBED && !isPre) {
-    postLiveAlert({ id: String(d.id || Date.now()), category: 'ISRAEL', severity: 5, summary: d.summary || 'צבע אדום', geo: firstGeo || { lat: ISRAEL_VIEW_3D.lat, lon: ISRAEL_VIEW_3D.lon } });
-  }
+  if (RC_EMBED && !isPre) postLiveAlert(ilAlert);
 
   showToast(d.summary || (isPre ? '⚠️ התרעה מקדימה: שפרו מיקום והיערכו לכניסה למרחב מוגן' : 'התראת צבע אדום'));
   renderHazardsPanel();
@@ -3128,7 +3396,7 @@ async function fetchPublicShips() {
     _log('Ships', `✓ ${realItems.length} real AIS ships (${(performance.now()-t0).toFixed(0)}ms)`);
   } catch(e) { _logErr('Ships', `Digitraffic failed: ${e?.message||e}`); }
 
-  const medPorts = [
+  const medPorts = window.RC_MED_PORTS || [
     {name:'Haifa Cargo',lat:32.82,lon:35.00,h:270,t:70,dst:'ILHFA'},{name:'Ashdod Container',lat:31.83,lon:34.63,h:250,t:70,dst:'ILASH'},
     {name:'Eilat Tanker',lat:29.55,lon:34.96,h:180,t:80,dst:'ILEIL'},{name:'Suez Transit',lat:31.25,lon:32.31,h:45,t:80,dst:'EGPSD'},
     {name:'Med Bulker',lat:33.2,lon:33.8,h:210,t:70,dst:'CYLMS'},{name:'Limassol Ferry',lat:34.65,lon:33.03,h:90,t:60,dst:'CYLMS'},
@@ -3139,7 +3407,7 @@ async function fetchPublicShips() {
     {name:'Bab el-Mandeb',lat:12.6,lon:43.3,h:0,t:80,dst:'DJJIB'},{name:'Gulf Carrier',lat:26.5,lon:52.0,h:90,t:80,dst:'AEJEA'},
     {name:'Istanbul Ferry',lat:41.0,lon:29.0,h:200,t:60,dst:'TRIST'},{name:'Suez South',lat:30.0,lon:32.58,h:180,t:70,dst:'EGPSD'}
   ];
-  const worldPorts = wantsGlobalDataFeed() ? [
+  const worldPorts = wantsGlobalDataFeed() ? (window.RC_WORLD_PORTS || [
     {name:'NY Container',lat:40.68,lon:-74.05,h:270,t:70,dst:'USNYC'},{name:'Rotterdam',lat:51.92,lon:4.48,h:90,t:70,dst:'NLRTM'},
     {name:'Singapore Strait',lat:1.25,lon:103.85,h:45,t:80,dst:'SGSIN'},{name:'Shanghai',lat:31.23,lon:121.47,h:180,t:70,dst:'CNSHA'},
     {name:'Tokyo Bay',lat:35.45,lon:139.77,h:90,t:60,dst:'JPTYO'},{name:'LA Long Beach',lat:33.75,lon:-118.20,h:270,t:70,dst:'USLAX'},
@@ -3150,7 +3418,7 @@ async function fetchPublicShips() {
     {name:'Dubai Jebel Ali',lat:25.01,lon:55.06,h:45,t:80,dst:'AEJEA'},{name:'Gibraltar',lat:36.14,lon:-5.35,h:90,t:70,dst:'GIB'},
     {name:'Malacca',lat:2.50,lon:101.80,h:45,t:80,dst:'MYMKZ'},{name:'North Atlantic',lat:45.0,lon:-40.0,h:270,t:70,dst:'ATL'},
     {name:'South Pacific',lat:-20.0,lon:-140.0,h:90,t:70,dst:'PAC'},{name:'Indian Ocean',lat:-5.0,lon:75.0,h:180,t:80,dst:'IND'}
-  ] : [];
+  ]) : [];
   const portSeed = [...medPorts, ...worldPorts];
   const medItems = portSeed.map((p, i) => ({
     name: p.name, mmsi: `MED${200+i}`, imo: null, callSign: '',
@@ -3175,6 +3443,106 @@ async function fetchPublicShips() {
 // ═══════════════════════════════════════════════════════
 // NEW DATA SOURCES — free APIs
 // ═══════════════════════════════════════════════════════
+
+function clearMarineInfraMarks() {
+  marineInfraMarks = removeEntities(marineInfraMarks);
+}
+
+function _marineInfraColor(kind) {
+  const k = String(kind || '').toLowerCase();
+  if (/buoy/i.test(k)) return '#00e5ff';
+  if (/light|beacon/i.test(k)) return '#ffd600';
+  if (/harbour|harbor|port/i.test(k)) return '#26c6da';
+  if (/pier|breakwater|wharf/i.test(k)) return '#80cbc4';
+  return '#4dd0e1';
+}
+
+function _marineInfraKindHe(kind) {
+  const k = String(kind || '').toLowerCase();
+  if (/buoy/i.test(k)) return 'מצוף ימי';
+  if (/beacon/i.test(k)) return 'משואה / Beacon';
+  if (/light/i.test(k)) return 'מגדלור';
+  if (/harbour|harbor|port/i.test(k)) return 'נמל / מעגן';
+  if (/pier|wharf/i.test(k)) return 'רציף';
+  if (/breakwater/i.test(k)) return 'שובר גלים';
+  if (/seamark/i.test(k)) return 'סימון ימי';
+  return 'נכס ימי';
+}
+
+function renderMarineInfraMarks() {
+  if (!viewer) return;
+  if (RC_EMBED && !embedLayerVisible.marine_infra) {
+    if (_marineInfraSig !== 'off') { _marineInfraSig = 'off'; clearMarineInfraMarks(); }
+    return;
+  }
+  const lod = getMapLodLevel();
+  const items = live.marine_infra?.items || [];
+  const sig = `${_mapMode}|${mapLodSigPart()}|${items.length}|${live.marine_infra?.timestamp || ''}`;
+  if (sig === _marineInfraSig && marineInfraMarks.length) return;
+  _marineInfraSig = sig;
+  clearMarineInfraMarks();
+  const global = isGlobalMode();
+  const cap = lod === 'far' ? (global ? 180 : 60) : lod === 'mid' ? (global ? 280 : 90) : (global ? 450 : 120);
+  items.slice(0, cap).forEach(it => {
+    if (!it?.geo || !Number.isFinite(it.geo.lat)) return;
+    const col = _marineInfraColor(it.kind);
+    const isBuoy = /buoy/i.test(it.kind || '');
+    const px = lod === 'far' ? (isBuoy ? 5 : 4) : lod === 'mid' ? (isBuoy ? 7 : 6) : (isBuoy ? 9 : 8);
+    const showLabel = lod === 'near';
+    const e = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(it.geo.lon, it.geo.lat, 0),
+      point: {
+        pixelSize: px,
+        color: Cesium.Color.fromCssColorString(col).withAlpha(0.92),
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 1,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: showLabel ? {
+        text: _rtl(it.name || it.kind || ''),
+        font: 'bold 11px Rajdhani',
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(8, 0),
+        distanceDisplayCondition: mapLabelDistance(global ? 800000 : 400000, 350000),
+        showBackground: true,
+        backgroundColor: Cesium.Color.BLACK.withAlpha(0.65),
+      } : undefined,
+    });
+    e._rcType = 'marine-infra';
+    e._rcData = it;
+    marineInfraMarks.push(e);
+  });
+}
+
+async function fetchPublicMarineInfra() {
+  const now = Date.now();
+  if (now - _marineInfraCache.at < 600000 && _marineInfraCache.items.length) {
+    live.marine_infra = { timestamp: new Date().toISOString(), items: _marineInfraCache.items };
+    _marineInfraSig = '';
+    return;
+  }
+  const { minLat, minLon, maxLat, maxLon } = MED_INFRA_BBOX;
+  const q = `[out:json][timeout:25];(node["seamark:type"](${minLat},${minLon},${maxLat},${maxLon});node["man_made"="lighthouse"](${minLat},${minLon},${maxLat},${maxLon}););out body 250;`;
+  const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`;
+  _log('MarineInfra', '→ Overpass seamarks (Med bbox)...');
+  try {
+    const d = await _fetchRemote(url, { timeout: 28000, json: true });
+    const items = (d?.elements || []).map(el => ({
+      name: el.tags?.name || el.tags?.['seamark:name'] || el.tags?.['seamark:type'] || 'seamark',
+      kind: el.tags?.['seamark:type'] || el.tags?.man_made || 'seamark',
+      geo: { lat: el.lat, lon: el.lon },
+      source: 'OpenStreetMap',
+    })).filter(x => Number.isFinite(x.geo?.lat) && Number.isFinite(x.geo?.lon));
+    _marineInfraCache.at = now;
+    _marineInfraCache.items = items;
+    live.marine_infra = { timestamp: new Date().toISOString(), items };
+    _marineInfraSig = '';
+    _log('MarineInfra', `✓ ${items.length} OSM seamarks`);
+  } catch (e) { _logWarn('MarineInfra', e?.message || e); }
+}
 
 async function fetchPublicDisasters() {
   const t0 = performance.now();
@@ -3506,7 +3874,7 @@ async function standaloneRefresh() {
       fetchPublicEarthquakes(), fetchPublicWeather(), fetchPublicMarine(), fetchPublicISS(),
       fetchPublicRedAlert(), fetchPublicSpaceWeather(), fetchPublicAviation(), fetchPublicShips(),
       fetchPublicSatellites(), fetchPublicDisasters(), fetchPublicFires(), fetchPublicEMSC(),
-      fetchPublicGlobalAlerts()
+      fetchPublicGlobalAlerts(), fetchPublicMarineInfra()
     ]);
     refreshComposite();
     _log('Refresh', `=== Cycle DONE in ${(performance.now()-t0).toFixed(0)}ms | EQ:${live.earthquake?.items?.length||0} WX:${live.weather?.items?.length||0} Marine:${live.marine?.items?.length||0} Aviation:${live.aviation?.items?.length||0} Ships:${live.ships?.items?.length||0} Sats:${live.satellites?.items?.length||0} Disasters:${live.disasters?.items?.length||0} Fires:${live.fires?.items?.length||0} EMSC:${live.emsc_earthquakes?.items?.length||0} Alerts:${live.global_alerts?.items?.length||0} ===`);

@@ -239,8 +239,13 @@ export const ACCEPTANCE_QUERIES: AcceptanceQuery[] = [
   { id: "QA-HF1", category: "Hugging Face", query: "מהם מודלי התמונה הפופולריים ביותר השבוע?", expectIntents: ["huggingface"], expectProvidersOk: ["huggingface-models"], expectTextIncludes: [], notesHe: "" },
   { id: "QA-CR1", category: "קריפטו", query: "מה מחיר הביטקוין עכשיו?", expectIntents: ["crypto"], expectProvidersOk: ["coingecko"], expectTextIncludes: ["USD"], notesHe: "CoinGecko free" },
   { id: "QA-EQ1", category: "רעידות", query: "אילו רעידות אדמה התרחשו ב-24 השעות האחרונות?", expectIntents: ["earthquake"], expectProvidersOk: ["usgs-earthquake"], expectTextIncludes: ["M"], notesHe: "" },
+  { id: "QA-EQ2", category: "רעידות", query: "יש לך מידע על רעידות אדמה? למשל בישראל?", expectIntents: ["earthquake"], expectProvidersOk: ["usgs-earthquake"], expectTextIncludes: [], notesHe: "needsWebSearch always for earthquake" },
+  { id: "QA-EQ3", category: "רעידות", query: "איפה הייתה רעידת האדמה החזקה בעולם ב-24 השעות האחרונות?", expectIntents: ["earthquake"], expectProvidersOk: ["usgs-earthquake"], expectTextIncludes: ["M"], notesHe: "" },
   { id: "QA-AV1", category: "טיסות", query: "כמה מטוסים נמצאים כרגע מעל ישראל?", expectIntents: ["aviation"], expectProvidersOk: ["adsb-aviation"], expectTextIncludes: [], notesHe: "OpenSky/ADSB" },
   { id: "QA-ISS1", category: "חלל", query: "מתי תחנת החלל הבינלאומית תעבור מעל ישראל?", expectIntents: ["satellite"], expectProvidersOk: ["iss-tracker"], expectTextIncludes: [], notesHe: "" },
+  { id: "QA-ISS2", category: "חלל", query: "איפה תחנת החלל הבינלאומית עכשיו?", expectIntents: ["satellite"], expectProvidersOk: ["iss-tracker"], expectTextIncludes: ["קו"], notesHe: "" },
+  { id: "QA-SH2", category: "ספינות", query: "כמה כלי שייט או אוניות יש במפרץ חיפה?", expectIntents: ["ships"], expectProvidersOk: ["ais-ships"], expectTextIncludes: ["ספינות בטווח"], notesHe: "Haifa bay + medPorts route markers" },
+  { id: "QA-SH3", category: "תשתיות ימיות", query: "כמה מצופים יש במפרץ חיפה?", expectIntents: ["marine-infra"], expectProvidersOk: ["osm-overpass-marine"], expectTextIncludes: ["תשתיות"], notesHe: "Overpass OSM static infra" },
 ];
 
 /** שאלות שדורשות API key / proxy — צפוי הודעת unsupported ברורה */
@@ -256,7 +261,7 @@ export const QA_UNSUPPORTED_QUERIES: Array<{ id: string; query: string; reasonHe
 export const DATA_SOURCE_REGISTRY: Array<{ name: string; status: "live" | "partial" | "planned" | "needs-key"; notesHe: string }> = [
   { name: "Wikipedia / Wikidata", status: "live", notesHe: "wiki + SPARQL ממשל" },
   { name: "Open-Meteo", status: "live", notesHe: "מזג אוויר + marine" },
-  { name: "OpenStreetMap / Nominatim", status: "live", notesHe: "POI, מרחקים OSRM" },
+  { name: "OpenStreetMap / Nominatim", status: "live", notesHe: "POI, מרחקים OSRM, Overpass תשתיות ימיות" },
   { name: "TimeAPI.io", status: "live", notesHe: "שעון עולמי" },
   { name: "Frankfurter", status: "live", notesHe: "מטבעות FX" },
   { name: "REST Countries", status: "live", notesHe: "מדינות" },

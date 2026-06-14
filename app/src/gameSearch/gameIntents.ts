@@ -3,11 +3,12 @@ import { resolveGameSearch, extractDecadeRange, buildGamePanelTitle } from "./ga
 import { detectCategoryFromText, isCategoryOnlyText } from "./categoryKeywords";
 
 const GAME_SEARCH_RE =
-  /(?:^|\s)(?:פש\s*)?משחק(?:ים)?|נשחק|רוצה\s+לשחק|want\s+to\s+play|\bbored\b|play\s+(?:a\s+)?game|let'?s\s+play|משעמם|kill\s+time|און\s*ליין|online\s+game|game\s+search|חפש.*משחק|מצא.*משחק|search\s+(?:for\s+)?(?:the\s+)?games?|משחקים?\s*מ+?ו?לצ|מ+?ו?לצים|המלצ(?:ה|ות).*משחק|recommended\s*games?|האם\s+יש.*משחק|אילו\s+משחקים|(?:שנות|משנות).*?(?:80|90|70|שמונ|תשע)|(?:80|90)s\b|קווסט|quest|הרפתק(?:ה|ות)|תציג.*משחק|הראה.*משחק|הצג.*משחק|show\s+games|קטגור(?:יה|יית).*משחק|משחקי\s+(?:מירוצ|ארקייד|קרב|ירי|אקשן|חיד|ספורט|רטרו)/i;
+  /(?:^|\s)(?:שחק(?:י)?|play)\s+[^\s?!.]{2,}|(?:^|\s)(?:פש\s*)?משחק(?:ים)?|נשחק|רוצה\s+לשחק|want\s+to\s+play|\bbored\b|play\s+(?:a\s+)?game|let'?s\s+play|משעמם|kill\s+time|און\s*ליין|online\s+game|game\s+search|חפש.*משחק|מצא.*משחק|search\s+(?:for\s+)?(?:the\s+)?games?|משחקים?\s*מ+?ו?לצ|מ+?ו?לצים|המלצ(?:ה|ות).*משחק|recommended\s*games?|האם\s+יש.*משחק|אילו\s+משחקים|(?:שנות|משנות).*?(?:80|90|70|שמונ|תשע)|(?:80|90)s\b|קווסט|quest|הרפתק(?:ה|ות)|תציג.*משחק|הראה.*משחק|הצג.*משחק|show\s+games|קטגור(?:יה|יית).*משחק|משחקי\s+(?:מירוצ|ארקייד|קרב|ירי|אקשן|חיד|ספורט|רטרו)/i;
 
 const stripGameSearchPrefix = (text: string): string => {
   let t = text.trim();
   t = t.replace(/^(?:משעמם(?:\s+לי)?|i'?m\s+bored|bored)[,\s]+/i, "");
+  t = t.replace(/^(?:שחק(?:י)?|play)\s+/i, "");
   t = t.replace(
     /^(?:חפש|מצא|תן|תביא|הראה|הצג|show|find|search\s+for|look\s+for|search|האם\s+יש|אילו)\s+(?:לי\s+)?(?:את\s+)?(?:ה)?(?:משחק(?:ים)?|games?)\s*(?:ש(?:ל)?|ה)?/i,
     "",

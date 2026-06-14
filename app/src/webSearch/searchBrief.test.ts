@@ -59,4 +59,70 @@ describe("searchBrief", () => {
     expect(brief.facts[0]).toMatch(/42/);
     expect(brief.facts.some((f) => /M5/i.test(f))).toBe(true);
   });
+
+  it("allows more facts for cross-source intents", () => {
+    const sources: SearchSourceResult[] = Array.from({ length: 10 }, (_, i) => ({
+      provider: "open-meteo",
+      label: `מקור ${i}`,
+      ok: true,
+      text: `שורה ${i}\nטמפרatura: ${i}°C`,
+      latencyMs: 1,
+    }));
+    const brief = buildSearchBrief(sources, ["weather", "aviation", "disaster"], "הצלבה");
+    expect(brief.facts.length).toBeGreaterThan(8);
+    expect(brief.facts.length).toBeLessThanOrEqual(14);
+  });
+
+  it("adds AWACS ANSWER line when query mentions AWACS", () => {
+    const sources: SearchSourceResult[] = [
+      {
+        provider: "adsb-aviation",
+        label: "ADS-B",
+        ok: true,
+        text: "ANSWER (AWACS): 2 · NATO01 · NATO",
+        latencyMs: 1,
+      },
+    ];
+    const brief = buildSearchBrief(sources, ["aviation"], "כמה מטוסי AWACS פעילים?");
+    const ctx = formatSearchBriefContext(brief, "כמה מטוסי AWACS פעילים?");
+    expect(ctx).toContain("ANSWER (AWACS)");
+    expect(ctx).toMatch(/NATO|heuristic|AWACS/i);
+  });
+
+  it("includes DATA AGE for stale Frankfurter in brief", () => {
+    const sources: SearchSourceResult[] = [
+      {
+        provider: "frankfurter-fx",
+        label: "Frankfurter",
+        ok: true,
+        text: "תאריך: 2020-01-01\n1 USD = 3.5 ILS",
+        latencyMs: 1,
+      },
+    ];
+    const brief = buildSearchBrief(sources, ["currency"], "מה שער הדולר?");
+    const ctx = formatSearchBriefContext(brief, "מה שער הדולר?", 900, sources);
+    expect(ctx).toContain("DATA AGE");
+  });
+
+  it("prefers PM in government ANSWER when query asks for prime minister", () => {
+    const sources: SearchSourceResult[] = [
+      {
+        provider: "wikidata-gov",
+        label: "ממשל (Wikidata)",
+        ok: true,
+        text: [
+          "מדינה: United Kingdom (Wikidata Q145)",
+          "נושאי משרה (Wikidata):",
+          "- צ'ארלס השלישי · ראש מדינה / נשיא",
+          "- קיר סטארמר · ראש ממשלה",
+          "ANSWER: ראש הממשלה (Wikidata): קיר סטארמר",
+        ].join("\n"),
+        latencyMs: 1,
+      },
+    ];
+    const brief = buildSearchBrief(sources, ["government"], "מי ראש ממשלת בריטניה?");
+    const ctx = formatSearchBriefContext(brief, "מי ראש ממשלת בריטניה?", 900, sources);
+    expect(ctx).toContain("ANSWER (government):");
+    expect(ctx).toMatch(/ANSWER \(government\):[^\n]*(?:סטארמר|Starmer)/i);
+  });
 });

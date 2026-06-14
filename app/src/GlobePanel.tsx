@@ -6,6 +6,7 @@ import {
   type GlobeCommand,
   type GlobeLayersState,
 } from "./realityGlobe/bridge";
+import { sendGlobeGetLiveSnapshot } from "./liveWorld/bridge";
 import { fetchUserGeoRegion, type UserGeoRegion } from "./realityGlobe/geoLocation";
 import {
   DEFAULT_GLOBE_LAYERS,
@@ -43,6 +44,7 @@ export function GlobePanel({ onClose, command, onCommandSent, modelReady = false
   const [loadError, setLoadError] = useState(false);
   const [mapFlash, setMapFlash] = useState(false);
   const [presentationMode, setPresentationMode] = useState(false);
+  const [quietAlerts, setQuietAlerts] = useState(false);
   const [layers, setLayers] = useState<GlobeLayersState>(DEFAULT_GLOBE_LAYERS);
   const [userGeo, setUserGeo] = useState<UserGeoRegion | null>(null);
   const pendingRef = useRef<GlobeCommand | null>(null);
@@ -78,9 +80,15 @@ export function GlobePanel({ onClose, command, onCommandSent, modelReady = false
     if (!userGeo || regionSentRef.current || skipUserRegionRef.current) return;
     sendGlobeUserRegion(iframeRef.current, {
       countryCode: userGeo.countryCode,
-      name: userGeo.countryName,
+      name: userGeo.cityName ?? userGeo.countryName,
       lat: userGeo.lat,
       lon: userGeo.lon,
+    });
+    sendGlobeCommand(iframeRef.current, {
+      type: "flyTo",
+      lat: userGeo.lat,
+      lon: userGeo.lon,
+      alt: userGeo.cityName ? 85_000 : 450_000,
     });
     regionSentRef.current = true;
   }, [userGeo]);
@@ -131,6 +139,14 @@ export function GlobePanel({ onClose, command, onCommandSent, modelReady = false
     }
   }, [presentationMode]);
 
+  const toggleQuietAlerts = useCallback(() => {
+    setQuietAlerts((prev) => {
+      const next = !prev;
+      sendGlobeCommand(iframeRef.current, { type: "setQuietAlerts", on: next });
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.data?.source !== "reality-core") return;
@@ -139,6 +155,7 @@ export function GlobePanel({ onClose, command, onCommandSent, modelReady = false
         setLoadError(false);
         pingIframeResize(iframeRef.current);
         initIframeSound();
+        sendGlobeGetLiveSnapshot(iframeRef.current);
         if (!skipUserRegionRef.current) pushUserRegion();
         if (pendingRef.current) {
           flushCommand(pendingRef.current);
@@ -157,6 +174,12 @@ export function GlobePanel({ onClose, command, onCommandSent, modelReady = false
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, [flushCommand, pushUserRegion, initIframeSound, presentationMode]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const id = window.setInterval(() => sendGlobeGetLiveSnapshot(iframeRef.current), 45_000);
+    return () => window.clearInterval(id);
+  }, [ready]);
 
   const readyRef = useRef(false);
   readyRef.current = ready;
@@ -213,6 +236,17 @@ export function GlobePanel({ onClose, command, onCommandSent, modelReady = false
             setLayers(next);
           }}
         />
+        {!presentationMode ? (
+          <button
+            type="button"
+            className={`globe-quiet-btn${quietAlerts ? " globe-quiet-btn--on" : ""}`}
+            onClick={toggleQuietAlerts}
+            title={quietAlerts ? "הפעל קפיצות התרעה" : "מצב שקט — ללא קפיצות מפה"}
+            aria-pressed={quietAlerts}
+          >
+            {quietAlerts ? "🔕" : "🔔"}
+          </button>
+        ) : null}
         <button type="button" className="globe-panel-close" onClick={onClose} aria-label="סגור">
           ✕
         </button>

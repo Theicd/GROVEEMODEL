@@ -1,25 +1,45 @@
-import { useMemo } from "react";
-import { LANDING_HEADLINES, LANDING_SUGGESTION_SETS, type LandingSuggestion } from "./chatLandingContent";
+import { useEffect, useState } from "react";
+import {
+  LANDING_ROTATION_MS,
+  pickLandingHeadline,
+  pickRotatingLandingSuggestions,
+  type LandingSuggestion,
+} from "./chatLandingContent";
 
 export type LandingContent = {
   headline: string;
   suggestions: LandingSuggestion[];
+  rotationKey: number;
 };
 
 function pickLandingContent(): LandingContent {
   return {
-    headline: LANDING_HEADLINES[Math.floor(Math.random() * LANDING_HEADLINES.length)],
-    suggestions: LANDING_SUGGESTION_SETS[Math.floor(Math.random() * LANDING_SUGGESTION_SETS.length)],
+    headline: pickLandingHeadline(),
+    suggestions: pickRotatingLandingSuggestions(3),
+    rotationKey: 0,
   };
 }
 
-export function useLandingContent(): LandingContent {
-  return useMemo(() => pickLandingContent(), []);
+export function useLandingContent(rotateMs = LANDING_ROTATION_MS): LandingContent {
+  const [content, setContent] = useState(pickLandingContent);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setContent((prev) => ({
+        headline: prev.headline,
+        suggestions: pickRotatingLandingSuggestions(3),
+        rotationKey: prev.rotationKey + 1,
+      }));
+    }, rotateMs);
+    return () => window.clearInterval(id);
+  }, [rotateMs]);
+
+  return content;
 }
 
 export function ChatLandingHeadline({ text }: { text: string }) {
   return (
-    <div className="chat-landing-headline-wrap" dir="ltr">
+    <div className="chat-landing-headline-wrap" dir="auto">
       <h1 className="chat-landing-headline">{text}</h1>
     </div>
   );
@@ -27,20 +47,28 @@ export function ChatLandingHeadline({ text }: { text: string }) {
 
 export function ChatLandingSuggestions({
   suggestions,
+  rotationKey,
   onSuggestionClick,
 }: {
   suggestions: LandingSuggestion[];
+  rotationKey?: number;
   onSuggestionClick: (prompt: string) => void;
 }) {
   return (
-    <div className="chat-landing-suggestions" dir="ltr">
+    <div
+      className="chat-landing-suggestions"
+      dir="auto"
+      key={rotationKey ?? 0}
+      aria-live="polite"
+      aria-atomic="true"
+    >
       {suggestions.map((item) => (
         <button
-          key={item.label}
+          key={`${item.category}-${item.label}-${item.prompt}`}
           type="button"
           className="chat-landing-chip"
           onClick={() => onSuggestionClick(item.prompt)}
-          title={item.label}
+          title={item.prompt}
         >
           <span className="chat-landing-chip-icon" aria-hidden="true">
             {item.icon}
