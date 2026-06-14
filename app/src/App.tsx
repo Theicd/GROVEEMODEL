@@ -287,22 +287,34 @@ const isWebGpuInferenceError = (msg: string) =>
   );
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
 
+const qaSearchParam = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("qa");
+};
+
+const isGithubPagesHost = (): boolean => {
+  if (typeof window === "undefined") return false;
+  return /(?:^|\.)github\.io$/i.test(window.location.hostname);
+};
+
+/** QA panel + bridge: local dev, GitHub Pages, or ?qa=1|chat|panel */
+const QA_BRIDGE_ENABLED =
+  typeof window !== "undefined" &&
+  (import.meta.env.DEV ||
+    isGithubPagesHost() ||
+    ["1", "chat", "panel"].includes(qaSearchParam() ?? ""));
+
 /** Dev-only: ?qa=vision skips Gemma gate for automated face/emotion QA. */
 const QA_VISION_MODE =
   import.meta.env.DEV &&
   typeof window !== "undefined" &&
-  new URLSearchParams(window.location.search).get("qa") === "vision";
+  qaSearchParam() === "vision";
 
-/** Dev-only: ?qa=chat exposes window.__groveeQa for Playwright model QA. */
+/** ?qa=chat exposes window.__groveeQa for Playwright / console QA. */
 void (
-  import.meta.env.DEV &&
-  typeof window !== "undefined" &&
-  (new URLSearchParams(window.location.search).get("qa") === "chat" ||
-    new URLSearchParams(window.location.search).get("qa") === "1")
+  QA_BRIDGE_ENABLED &&
+  (qaSearchParam() === "chat" || qaSearchParam() === "1")
 );
-
-/** QA bridge active in all dev builds (Playwright / console automation). */
-const QA_BRIDGE_ENABLED = import.meta.env.DEV && typeof window !== "undefined";
 
 /** Canned live replies are default; QA panel opt-in enables LLM path per turn only. */
 const QA_FORCE_LLM_DEFAULT = false;
@@ -998,9 +1010,8 @@ function App() {
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [presentationQaOpen, setPresentationQaOpen] = useState(
     () =>
-      import.meta.env.DEV &&
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("qa") === "panel",
+      QA_BRIDGE_ENABLED &&
+      qaSearchParam() === "panel",
   );
   const [visionInspectorOpen, setVisionInspectorOpen] = useState(false);
   const [visionPipelineProgress, setVisionPipelineProgress] = useState("");
