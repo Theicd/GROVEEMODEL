@@ -1,4 +1,4 @@
-import { fetchJson } from "../fetchJson";
+import { fetchJson, fetchText } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
 
 type YahooChart = {
@@ -63,15 +63,63 @@ const fetchYahooQuote = async (spec: QuoteSpec): Promise<YahooChart> => {
   return fetchJson<YahooChart>(url, undefined, { timeoutMs: 18_000 });
 };
 
+const fetchStooqQuote = async (spec: QuoteSpec): Promise<{ price: number; when: string } | null> => {
+  const stooqSymbol =
+    spec.symbol === "^GSPC" ? "^spx" : spec.symbol.replace("^", "").toLowerCase();
+  const csv = await fetchText(
+    `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2t2ohlcv&h&e=csv`,
+    undefined,
+    { timeoutMs: 16_000 },
+  );
+  const line = csv.trim().split("\n").find((l) => l && !/^symbol,/i.test(l));
+  if (!line) return null;
+  const cols = line.split(",");
+  const close = parseFloat(cols[6] ?? cols[cols.length - 2] ?? "");
+  if (!Number.isFinite(close)) return null;
+  const date = cols[1] ?? new Date().toISOString().slice(0, 10);
+  const time = cols[2] ?? "";
+  return { price: close, when: `${date} ${time}`.trim() };
+};
+
 export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "yahoo-finance" as const;
   const label = "Yahoo Finance — שוק / סחורות";
   const picked = pickQuote(query);
   try {
-    const data = await fetchYahooQuote(picked);
-    const meta = data.chart?.result?.[0]?.meta;
-    const price = meta?.regularMarketPrice;
+    let price: number | null = null;
+    let prev: number | null = null;
+    let when = "—";
+    let symbol = picked.symbol;
+    let name = picked.label;
+    let sourceLabel = "Yahoo Finance";
+
+    try {
+      const data = await fetchYahooQuote(picked);
+      const meta = data.chart?.result?.[0]?.meta;
+      if (meta?.regularMarketPrice != null && Number.isFinite(meta.regularMarketPrice)) {
+        price = meta.regularMarketPrice;
+        prev = meta.previousClose ?? null;
+        symbol = meta.symbol ?? picked.symbol;
+        name = meta.shortName ?? meta.longName ?? picked.label;
+        when =
+          meta.regularMarketTime != null
+            ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
+            : "—";
+      }
+    } catch {
+      /* stooq fallback */
+    }
+
+    if (price == null) {
+      const stooq = await fetchStooqQuote(picked);
+      if (stooq) {
+        price = stooq.price;
+        when = stooq.when;
+        sourceLabel = "Stooq";
+      }
+    }
+
     if (price == null || !Number.isFinite(price)) {
       return {
         provider,
@@ -83,24 +131,19 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
       };
     }
 
-    const prev = meta?.previousClose;
     const change =
       prev != null && Number.isFinite(prev) ? price - prev : null;
     const changePct =
       change != null && prev != null && prev !== 0 ? (change / prev) * 100 : null;
-    const when =
-      meta?.regularMarketTime != null
-        ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
-        : "—";
 
     const lines = [
       `${picked.label}: ${price.toFixed(2)} ${picked.unit}`,
-      meta?.shortName || meta?.longName ? `שם: ${meta.shortName ?? meta.longName}` : "",
+      name !== picked.label ? `שם: ${name}` : "",
       change != null
         ? `שינוי מהסגירה הקודמת: ${change >= 0 ? "+" : ""}${change.toFixed(2)}${changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)` : ""}`
         : "",
-      `עדכון (Yahoo Finance): ${when} UTC`,
-      `סימול: ${meta?.symbol ?? picked.symbol}`,
+      `עדכון (${sourceLabel}): ${when} UTC`,
+      `סימול: ${symbol}`,
     ].filter(Boolean);
 
     return {

@@ -26,7 +26,7 @@ const ISRAEL_RE = /ישראל|israel|tel\s*aviv|תל\s*אביב|נתב"?ג|ben\s
 const LONDON_RE = /לונדון|london/i;
 const MED_RE = /(?:ה)?ים\s*תיכון|mediterranean|med\s+sea/i;
 const EUROPE_RE = /אירופה|europe/i;
-const GLOBAL_RE = /בעולם|worldwide|global|ברחבי\s+העולם|around\s+the\s+world|in\s+the\s+air|כרגע/i;
+const GLOBAL_RE = /בעולם|worldwide|global|ברחבי\s+העולם|around\s+the\s+world|in\s+the\s+air/i;
 
 type RegionPoint = { lat: number; lon: number; label: string };
 
@@ -92,7 +92,11 @@ export const fetchAviationSearch = async (
     }
   }
 
-  const wantGlobal = GLOBAL_RE.test(context) || isMilitaryAviationQuery(query);
+  const wantGlobal =
+    (GLOBAL_RE.test(context) || isMilitaryAviationQuery(query)) &&
+    !ISRAEL_RE.test(context) &&
+    !LONDON_RE.test(context) &&
+    !MED_RE.test(context);
 
   const buildRegionalResult = async (): Promise<SearchSourceResult> => {
     const region = pickRegion(context);

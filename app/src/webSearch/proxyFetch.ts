@@ -24,6 +24,8 @@ const CORS_DIRECT_SUFFIXES = [
   "geocoding-api.open-meteo.com",
   "marine-api.open-meteo.com",
   "api.airplanes.live",
+  "api.binance.com",
+  "open.er-api.com",
   "api.github.com",
   "huggingface.co",
   "api-inference.huggingface.co",
@@ -33,8 +35,6 @@ const CORS_DIRECT_SUFFIXES = [
   "timeapi.io",
   "api.wheretheiss.at",
   "earthquake.usgs.gov",
-  "api.frankfurter.app",
-  "restcountries.com",
   "date.nager.at",
   "query.wikidata.org",
   "www.wikidata.org",
@@ -109,12 +109,15 @@ async function fetchViaRelays(url: string, init?: RequestInit): Promise<Response
     return r;
   };
 
-  const results = await Promise.allSettled(PUBLIC_RELAYS.map((relay) => tryRelay(relay)));
-  const ok = results.find((r) => r.status === "fulfilled");
-  if (ok?.status === "fulfilled") return ok.value;
-
-  const err = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
-  throw err?.reason instanceof Error ? err.reason : new Error(`All CORS relays failed for ${url}`);
+  let lastErr: Error = new Error(`All CORS relays failed for ${url}`);
+  for (const relay of PUBLIC_RELAYS) {
+    try {
+      return await tryRelay(relay);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : lastErr;
+    }
+  }
+  throw lastErr;
 }
 
 export async function proxyAwareFetch(

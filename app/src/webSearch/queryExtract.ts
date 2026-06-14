@@ -289,8 +289,8 @@ export const extractCurrencyPair = (query: string): CurrencyPair | null => {
   const codes = collectCurrencyCodes(q);
   if (codes.length >= 2) return { from: codes[0], to: codes[1] };
 
-  const m3 = q.match(/(?:דולר|dollar|usd|יורו|euro|eur)\s+(?:ל|to|ב)\s+(?:שקל|shekel|ils|nis)/i);
-  if (m3 || /דולר.*שקל|usd.*ils/i.test(q)) return { from: "USD", to: "ILS" };
+  const m3 = q.match(/(?:דולר|dollar|usd|יורו|euro|eur)\s+(?:מול|ל|to|ב)\s+(?:שקל|shekel|ils|nis)/i);
+  if (m3 || /דולר.*(?:מול|ל).*שקל|usd.*(?:מול|ל).*ils/i.test(q)) return { from: "USD", to: "ILS" };
 
   return null;
 };
@@ -326,6 +326,7 @@ export const extractPoiNearQuery = (query: string): { poi: string; near: string 
     { re: /(?:מצא|find|search\s+for|where\s+is)\s+(.+?)\s+(?:ליד|קרוב\s+ל|near|around|by)\s+(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(.+?)\s+(?:ליד|קרוב\s+ל|near|around|by)\s+(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(?:אילו|what|which)\s+(.+?)\s+(?:יש|are\s+there|near)\s+(?:ליד|near|at|by)?\s*(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
+    { re: /(?:מה|what|איזו|which)\s+(?:ה)?(.+?)\s+הקרוב(?:ה|ים)?\s+ביותר\s+ל(?:יד)?\s*(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
     { re: /(?:nearest|closest|הכי\s+קרוב(?:ה|ים)?)\s+(.+?)\s+(?:to|near|by|ל(?:יד)?\s+)?(.+?)(?:[?!.]?$)/i, poi: 1, near: 2 },
   ];
   for (const { re, poi, near } of patterns) {

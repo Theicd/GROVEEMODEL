@@ -296,9 +296,12 @@ export const isPlacesQuery = (text: string): boolean =>
     ) &&
       /\b(?:near|around|by|ליד|קרוב)\b/i.test(text)) ||
     (/\b(?:nearest|closest|הכי\s+קרוב(?:ה|ים)?|הקרוב(?:ה|ים)?\s+ביותר)\b/i.test(text) &&
-      /(?:station|רכבת|train|תחנ|airport|שדה\s+תעופה|tower|מגדל|louvre|לובר|eiffel|אייפ|ברלין|berlin)/i.test(
+      /(?:station|רכבת|train|תחנ|airport|שדה\s+תעופה|tower|מגדל|louvre|לובר|eiffel|אייפ|ברלין|berlin|BER)/i.test(
         text,
       )) ||
+    /(?:מה|what|איזו|which)\s+.*(?:תחנ(?:ות|ת)\s+רכבת|train\s+station).*(?:הקרוב|nearest|closest)/i.test(
+      text,
+    ) ||
     /(?:אילו|what|which)\s+(?:תחנ(?:ות|ת)|train\s+stations?|hospitals?|בתי\s+חולים|רכבת)/i.test(text) ||
     (/(?:תחנ(?:ות|ת)\s+רכבת|train\s+stations?|בית\s+חולים|בתי\s+חולים|תחנ(?:ת|ות)\s+דלק)/i.test(text) &&
       /(?:ליד|near|by|at|ב|של|שדה\s+תעופה|airport|הית'?רו|heathrow|eiffel|אייפ|louvre|לובר)/i.test(text)));

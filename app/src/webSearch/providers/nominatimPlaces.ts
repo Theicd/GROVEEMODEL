@@ -62,6 +62,10 @@ const LANDMARK_ALIASES: Record<string, string> = {
   "שדה התעופה הית'רo": "London Heathrow Airport UK",
   "שדה התעופה בן גוריון": "Ben Gurion Airport Israel",
   "נמל התעופה בן גוריון": "Ben Gurion Airport Israel",
+  ber: "Berlin Brandenburg Airport Germany",
+  BER: "Berlin Brandenburg Airport Germany",
+  "שדה התעופה BER": "Berlin Brandenburg Airport Germany",
+  "שדה התעופה בברלין": "Berlin Brandenburg Airport Germany",
 };
 
 const translateLandmark = (near: string): string => {
@@ -102,6 +106,12 @@ const buildPlaceSearchQueries = (query: string, parsed: { poi: string; near: str
     out.push("Heathrow Central station London");
     out.push("Heathrow Terminals 2 and 3 railway station");
   }
+  if (/\bber\b|brandenburg|ברלין|berlin/i.test(query) && /רכ|train|railway|תחנ/i.test(query)) {
+    out.push("Berlin Brandenburg Airport railway station");
+    out.push("Flughafen BER Bahnhof");
+    out.push("railway station Berlin Brandenburg Airport");
+    out.push("Flughafen Berlin Brandenburg station");
+  }
   if (/אייפ|eiffel/i.test(query) && /בית\s+חולים|hospital/i.test(query)) {
     out.push("hospital near Eiffel Tower Paris");
   }
@@ -120,6 +130,7 @@ const buildPlaceSearchQueries = (query: string, parsed: { poi: string; near: str
 const rankHits = (hits: NominatimHit[], searchQ: string): NominatimHit[] => {
   const prefer = (text: string): number => {
     if (/paris|france|île-de-france/i.test(searchQ) && /paris|france|île-de-france/i.test(text)) return 3;
+    if (/berlin|brandenburg|flughafen|ber\b/i.test(searchQ) && /berlin|brandenburg|germany/i.test(text)) return 3;
     if (/heathrow|london|uk|united kingdom/i.test(searchQ) && /heathrow|london|united kingdom|england/i.test(text)) return 3;
     if (/israel|ישראל/i.test(searchQ) && /israel/i.test(text)) return 3;
     return 0;
