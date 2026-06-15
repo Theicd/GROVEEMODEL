@@ -43,6 +43,13 @@ describe("fetchStarlinkCatalogSearch", () => {
     await fetchStarlinkCatalogSearch("כמה Starlink?");
     expect(mockFetchText).toHaveBeenCalledTimes(1);
   });
+
+  it("returns seed count when CelesTrak fetch fails", async () => {
+    mockFetchText.mockRejectedValue(new Error("timeout"));
+    const result = await fetchStarlinkCatalogSearch("כמה לווייני Starlink פעילים?");
+    expect(result.ok).toBe(true);
+    expect(result.text).toMatch(/ANSWER \(Starlink active\): \d+/);
+  });
 });
 
 describe("isStarlinkCountQuery", () => {

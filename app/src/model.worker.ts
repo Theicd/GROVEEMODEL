@@ -388,7 +388,7 @@ const createDownloadProgressBridge = (startedAt: number) => {
     const label = shortFileName(activeFile);
     post({
       type: "progress",
-      text: label ? `מוריד: ${label}` : "מוריד מודל…",
+      text: label ? `טוען לדפדפן: ${label}` : "טוען מודל לדפדפן…",
       progress: overallPct,
       phase: "download",
       loaded: overallLoaded,
@@ -475,7 +475,7 @@ const loadWithDevice = async (
       phase: "init",
       loaded: 0,
       total: 0,
-      detail: "הקבצים הורדו — טוען לזיכרון",
+      detail: "הקבצים במטמון הדפדפן — טוען לזיכרון",
       file: "",
     });
 

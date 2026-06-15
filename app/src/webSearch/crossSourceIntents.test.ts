@@ -43,4 +43,13 @@ describe("crossSourceIntents", () => {
     expect(intents).toContain("ships");
     expect(intents).toContain("disaster");
   });
+
+  it("expands weather + aviation for N03-style query", () => {
+    const query =
+      "האם יש אזור בעולם שבו גם מזג האוויר וגם התנועה האווירית חריגים?";
+    const intents = classifySearchIntents(query);
+    expect(intents).toContain("weather");
+    expect(intents).toContain("aviation");
+    expect(intents.length).toBeGreaterThanOrEqual(2);
+  });
 });

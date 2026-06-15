@@ -76,29 +76,41 @@ describe("buildCapabilityLiveReply", () => {
     expect(reply!.length).toBeLessThan(900);
   });
 
-  it("returns news headline for B01", () => {
+  it("news queries defer to LLM — no canned headline dump", () => {
     const reply = buildCapabilityLiveReply(
       "מה הכותרת הראשית בעולם כרגע?",
       ["news"],
       [
         src({
           provider: "news-rss",
-          label: "חדשות (RSS — BBC · CNN · Reuters · Guardian)",
-          text: [
-            "ANSWER (headline): [BBC] Breaking news headline",
-            "מקורות RSS בינלאומיים (BBC · CNN · Reuters · Guardian):",
-            "[BBC] 1. Breaking news headline",
-            "[CNN] 1. CNN world headline",
-            "[Reuters] 1. Reuters headline",
-          ].join("\n"),
+          label: "חדשות (BBC News)",
+          text: "ANSWER (headline): [BBC] Breaking world headline\n[BBC] 1. Breaking world headline",
         }),
       ],
     );
-    expect(reply).toMatch(/Breaking|BBC/i);
-    expect(reply).toMatch(/CNN|Reuters|כותרות נוספות/i);
+    expect(reply).toBeNull();
   });
 
-  it("includes DATA AGE for stale FX", () => {
+  it("shouldDeliverStructuredLiveReply is false for news", () => {
+    expect(
+      shouldDeliverStructuredLiveReply(
+        "מה הכותרות בעולם",
+        ["news"],
+        [
+          {
+            provider: "news-rss",
+            label: "חדשות (BBC)",
+            ok: true,
+            text: "ANSWER (headline): [BBC] x",
+            latencyMs: 1,
+          },
+        ],
+        "canned",
+      ),
+    ).toBe(false);
+  });
+
+  it("shouldDeliverStructuredLiveReply is true when canned reply exists", () => {
     const reply = buildCapabilityLiveReply(
       "מה שער הדולר מול השקל כרגע?",
       ["currency"],
@@ -184,11 +196,39 @@ describe("buildCapabilityLiveReply", () => {
     expect(reply).toContain("Sources:");
   });
 
-  it("shouldDeliverStructuredLiveReply is true for weather", () => {
+  it("returns earthquake list for strong recent quakes query", () => {
+    const reply = buildCapabilityLiveReply(
+      "ספר לי על רעידות אדמה חזקות שהיו לאחרונה",
+      ["earthquake"],
+      [
+        src({
+          provider: "usgs-earthquake",
+          label: "רעידות אדמה (USGS)",
+          text: [
+            'סה"כ 12 רעידות מעל M5 ב-24 שעות (USGS). 3 הגדולות:',
+            "הרעידה האחרונה: M6.2 · 67 km ESE of Pondaguitan, Philippines · 2026-06-15 09:18:38 UTC",
+            "- M6.2 · 67 km ESE of Pondaguitan, Philippines · 2026-06-15 09:18:38 UTC",
+          ].join("\n"),
+        }),
+      ],
+    );
+    expect(reply).toMatch(/M6\.2/);
+    expect(reply).toMatch(/Philippines/);
+    expect(reply).toMatch(/Sources:.*USGS/);
+    expect(reply).not.toMatch(/\[N\/A\]/);
+  });
+
+  it("shouldDeliverStructuredLiveReply is true when canned reply exists", () => {
     expect(
       shouldDeliverStructuredLiveReply("מה הטמפרטורה בחיפה", ["weather"], [
-        src({ provider: "open-meteo", ok: true, text: "טמפרטורה: 24°C" }),
-      ]),
+        {
+          provider: "open-meteo",
+          label: "מזג אוויר",
+          ok: true,
+          text: "מיקום: חיפה\nטמפרטורה: 22°C",
+          latencyMs: 1,
+        },
+      ], "כרגע בחיפה: 22°C"),
     ).toBe(true);
   });
 

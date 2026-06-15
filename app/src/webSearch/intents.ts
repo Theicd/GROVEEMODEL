@@ -2,6 +2,11 @@ import type { SearchIntent } from "./types";
 import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
 import { isLocalContextTimeQuery } from "../startupContext/localTime";
 import { hasUrlInQuery, isGitHubRepoUrlInQuery } from "./urlExtract";
+import {
+  isGeneralNewsDigestQuery,
+  isIsraelNewsQuery,
+  isWorldHeadlineQuery,
+} from "./queryExtract";
 
 export { extractLocationPhrase, sanitizeSearchQuery } from "./queryExtract";
 export { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
@@ -388,7 +393,14 @@ export const isPlacesQuery = (text: string): boolean =>
 
 export const isNewsQuery = (text: string): boolean => {
   if (isRedditQuery(text)) return false;
-  if (/(?:חדשות|headline|(?:ה)?כותרת\s+(?:ה)?ראשית|main\s+headline|breaking)/i.test(text)) {
+  if (isIsraelNewsQuery(text) || isWorldHeadlineQuery(text) || isGeneralNewsDigestQuery(text)) {
+    return true;
+  }
+  if (
+    /(?:חדשות|headline|(?:ה)?כותר(?:ת|ות)(?:\s+(?:ה)?ראשי(?:ת|ות|יה))?|main\s+headline|breaking|כתבות?|דיווחים?|מובילות|עיקר)/i.test(
+      text,
+    )
+  ) {
     return true;
   }
   if (/\bnews\b/i.test(text) && !/hacker\s*news/i.test(text)) return true;
@@ -396,6 +408,7 @@ export const isNewsQuery = (text: string): boolean => {
   if (isGeneralWebTopicQuery(text)) return false;
   return (
     /(?:כותרות(?:\s+ה)?\s*חשובות|headlines)/i.test(text) ||
+    /(?:חפש|מצא|תביא|עוד|search|find).*(?:כתבות?|articles?|reports?)/i.test(text) ||
     /(?:מה\s+קור(?:ה|ה)|what'?s\s+happening).*(?:ישראל|israel|עולם|world)/i.test(text) ||
     /(?:מצב\s+(?:ב)?(?:עולם|ישראל)|current\s+events|אירועים\s+אחרונים)/i.test(text) ||
     /(?:bbc|cnn|ynet)/i.test(text)
@@ -404,7 +417,7 @@ export const isNewsQuery = (text: string): boolean => {
 
 export const isAviationQuery = (text: string): boolean =>
   !isFlightStatusQuery(text) &&
-  (/(?:מטוס|מטוסים|aircraft|airplane|plane|adsb|opensky|תעבורה\s+אווירית|טיסות\s+מעל)/i.test(text) ||
+  (/(?:מטוס|מטוסים|aircraft|airplane|plane|adsb|opensky|תעבורה\s+(?:ה)?אווירית|תנועה\s+(?:ה)?אווירית|טיסות\s+מעל)/i.test(text) ||
     /\bawacs\b/i.test(text) ||
     /(?:עומס\s+(?:ב)?(?:שמי|האוויר)|air\s+traffic|traffic\s+above|שמי\s+ישראל|israeli\s+airspace)/i.test(text) ||
     (/(?:בעולם|worldwide|global|ברחבי\s+העולם|around\s+the\s+world|in\s+the\s+air)/i.test(text) &&
@@ -523,9 +536,13 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   }
   if (isCryptoQuery(query)) intents.push("crypto");
   if (isCommodityPriceQuery(query)) intents.push("commodity");
-  const explicitNews = /(?:חדשות|headline|כותרת\s+(?:ה)?ראשית|breaking)/i.test(query);
-  if (isTechNewsQuery(query) && !explicitNews) intents.push("hackernews");
-  else if (isHackerNewsQuery(query)) intents.push("hackernews");
+  const explicitNews = /(?:חדשות|headline|כותרת|כותרות|breaking|כתבות?|דיווח)/i.test(query);
+  const pureNewsQuery =
+    isNewsQuery(query) && !isTopicalOverviewQuery(query) && !isGeneralWebTopicQuery(query);
+  if (!pureNewsQuery) {
+    if (isTechNewsQuery(query) && !explicitNews) intents.push("hackernews");
+    else if (isHackerNewsQuery(query)) intents.push("hackernews");
+  }
   if (isYouTubeQuery(query)) intents.push("youtube");
   if (isWorldTimeQuery(query)) intents.push("worldtime");
   if (isWeatherQuery(query)) intents.push("weather");
@@ -553,6 +570,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   const hf = isHuggingFaceQuery(query);
   const explicitSearch = userRequestsSearch(query);
   if (
+    !pureNewsQuery &&
     !isGitHubRepoUrlInQuery(query) &&
     (isGitHubQuery(query) || (isTechQuery(query) && !hf) || (explicitSearch && hf))
   ) {
@@ -576,6 +594,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     userRequestsSearch(query) &&
     !structured &&
     !techExclusive &&
+    !isNewsQuery(query) &&
     !isMarketPriceQuery(query) &&
     !isRedditQuery(query) &&
     !isStaticFactualQuery(query)

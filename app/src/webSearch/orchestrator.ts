@@ -45,11 +45,14 @@ import { fetchUrlContextSearch } from "./providers/urlContext";
 import { applySnapshotFallbacks } from "../liveWorld/snapshotFallback";
 import { pingGlobeForLiveSnapshot } from "../liveWorld/bridge";
 import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
+import { clearQueryCache } from "./queryCache";
 import { buildSearchBrief, formatSearchBriefContext } from "./searchBrief";
 import { validateLiveDataQuery } from "./entityValidation";
 import { wrapWithQueryCache } from "./queryCache";
 import { routeQuery, shouldAllowWebFallback } from "./routeQuery";
 import { resolveSharedSearchRegion } from "./sharedRegion";
+import { agentDebugLog } from "../debugAgentLog";
+import { isStaticWebHost } from "./proxyFetch";
 import type { SearchIntent, SearchProviderId, SearchSourceResult, WebSearchResult, WebSearchOptions } from "./types";
 
 /** @deprecated Use formatSearchBriefContext via runWebSearch */
@@ -109,8 +112,9 @@ const mergeIntents = (a: SearchIntent[], b: SearchIntent[]): SearchIntent[] =>
 const dedupeSources = (sources: SearchSourceResult[]): SearchSourceResult[] => {
   const byProvider = new Map<string, SearchSourceResult>();
   for (const s of sources) {
-    const prev = byProvider.get(s.provider);
-    if (!prev || (s.ok && !prev.ok)) byProvider.set(s.provider, s);
+    const key = s.provider === "news-rss" ? `${s.provider}:${s.label}` : s.provider;
+    const prev = byProvider.get(key);
+    if (!prev || (s.ok && !prev.ok)) byProvider.set(key, s);
   }
   return [...byProvider.values()];
 };
@@ -158,6 +162,9 @@ const buildTasksForQuery = (
   }
   if (intents.includes("news")) {
     const feedKeys = selectNewsFeedKeys(q);
+    // #region agent log
+    agentDebugLog("H1,H2", "orchestrator.ts:buildTasksForQuery", "news tasks planned", { queryPreview: q.slice(0, 120), intents, feedKeys });
+    // #endregion
     for (const key of feedKeys) {
       tasks.push(
         trackTask(cached("news-rss", `${q}|${key}`, () => fetchNewsFeedByKey(key, 3)), options),
@@ -282,9 +289,13 @@ const runSingleQuerySearch = async (
 
 /** Run routed parallel search — typically 1–5 s total. */
 export const runWebSearch = async (query: string, options?: WebSearchOptions): Promise<WebSearchResult> => {
+  clearQueryCache();
   const q = sanitizeSearchQuery(query);
   const route = routeQuery(q, options?.plan);
   const intents = route.intents;
+  // #region agent log
+  agentDebugLog("H1", "orchestrator.ts:runWebSearch", "route selected", { queryPreview: q.slice(0, 120), route: { intents, queries: route.queries, answerShape: route.answerShape, useWebFallback: route.useWebFallback, blendNewsWithWeb: route.blendNewsWithWeb } });
+  // #endregion
 
   options?.onProgress?.({ type: "start", intents, query: q });
 
@@ -321,10 +332,19 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
     (acc, r) => mergeIntents(acc, r.intents),
     intents,
   );
-  let settled = dedupeSources(subResults.flatMap((r) => r.sources));
+  const beforeDedupe = subResults.flatMap((r) => r.sources);
+  let settled = dedupeSources(beforeDedupe);
+  // #region agent log
+  agentDebugLog("H3", "orchestrator.ts:runWebSearch", "sources before and after dedupe", {
+    queryPreview: q.slice(0, 120),
+    before: beforeDedupe.map((s) => ({ provider: s.provider, label: s.label, ok: s.ok, error: s.error?.slice(0, 120) })),
+    after: settled.map((s) => ({ provider: s.provider, label: s.label, ok: s.ok, error: s.error?.slice(0, 120) })),
+  });
+  // #endregion
 
   const brief = buildSearchBrief(settled, mergedIntents, q, undefined, route.answerShape);
-  const briefMax = isCrossSourceQuery(q) ? 1400 : 900;
+  const briefMax =
+    isCrossSourceQuery(q) ? 1400 : mergedIntents.includes("news") ? (isStaticWebHost() ? 2200 : 1800) : 900;
   const okContext = formatSearchBriefContext(
     brief,
     q,

@@ -14,7 +14,7 @@
     "test:search": "vitest run app/src/webSearch/webSearch.live.test.ts",
     "test:games": "vitest run app/src/gameSearch/gameSearch.live.test.ts",
     "qa:pages": "node --import tsx scripts/qa-pages.mjs",
-    "qa:capabilities": "node --import tsx scripts/probe-capability-suite.ts",
+    "qa:rss-feeds": "node --import tsx scripts/probe-rss-feeds.ts",
     "qa:live-replies": "node --import tsx scripts/probe-live-replies.ts",
     "qa:browser-model": "node --import tsx scripts/probe-browser-model.ts",
     "qa:presentation": "node --import tsx scripts/probe-presentation-browser.ts",

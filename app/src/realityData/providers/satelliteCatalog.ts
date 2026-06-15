@@ -4,11 +4,11 @@ import {
   countTleSatellites,
   formatStarlinkCatalogText,
   getFreshStarlinkCatalogCache,
+  getSeedStarlinkCatalogCache,
   loadStarlinkCatalogCache,
   sampleNamesFromTle,
   saveStarlinkCatalogCache,
   STARLINK_CATALOG_MAX_AGE_MS,
-  starlinkSearchResultFromCache,
 } from "../../liveWorld/starlinkSnapshot";
 
 type CelesTrakEntry = { OBJECT_NAME?: string; NORAD_CAT_ID?: number };
@@ -54,44 +54,59 @@ export const fetchStarlinkCatalogSearch = async (_query: string): Promise<Search
     return okResultFromCache(fresh, started, true);
   }
 
-  try {
-    const tle = await fetchStarlinkTleText(40_000);
-    const total = countTleSatellites(tle);
-    if (!total) {
-      throw new Error("קטalog Starlink ריק");
-    }
-    const cache = {
-      fetchedAt: Date.now(),
-      total,
-      sample: sampleNamesFromTle(tle, 6),
-    };
-    saveStarlinkCatalogCache(cache);
-    return {
-      provider,
-      label,
-      ok: true,
-      text: formatStarlinkCatalogText(cache, false),
-      url: STARLINK_TLE_URL,
-      latencyMs: Math.round(performance.now() - started),
-    };
-  } catch (err) {
-    const stale = loadStarlinkCatalogCache();
-    if (stale?.total) {
-      return okResultFromCache(stale, started, true);
-    }
-    const cached = starlinkSearchResultFromCache(_query, STARLINK_CATALOG_MAX_AGE_MS * 24);
-    if (cached) {
-      return { ...cached, latencyMs: Math.round(performance.now() - started) };
-    }
-    return {
-      provider,
-      label,
-      ok: false,
-      text: "",
-      error: err instanceof Error ? err.message : "שגיאה",
-      latencyMs: Math.round(performance.now() - started),
-    };
+  const staleAny = loadStarlinkCatalogCache(STARLINK_CATALOG_MAX_AGE_MS * 48);
+  if (staleAny) {
+    return okResultFromCache(staleAny, started, true);
   }
+
+  try {
+    const tle = await fetchStarlinkTleText(8_000);
+    const total = countTleSatellites(tle);
+    if (total) {
+      const cache = {
+        fetchedAt: Date.now(),
+        total,
+        sample: sampleNamesFromTle(tle, 6),
+      };
+      saveStarlinkCatalogCache(cache);
+      return {
+        provider,
+        label,
+        ok: true,
+        text: formatStarlinkCatalogText(cache, false),
+        url: STARLINK_TLE_URL,
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
+  } catch {
+    /* seed below */
+  }
+
+  void fetchStarlinkTleText(25_000)
+    .then((tle) => {
+      const total = countTleSatellites(tle);
+      if (!total) return;
+      saveStarlinkCatalogCache({
+        fetchedAt: Date.now(),
+        total,
+        sample: sampleNamesFromTle(tle, 6),
+      });
+    })
+    .catch(() => null);
+
+  const seed = getSeedStarlinkCatalogCache();
+  saveStarlinkCatalogCache(seed);
+  return {
+    provider,
+    label,
+    ok: true,
+    text: [
+      formatStarlinkCatalogText(seed, true),
+      "הערה: CelesTrak איטי — ספירה משוערת ממאגר seed; רענון ברקע.",
+    ].join("\n"),
+    url: STARLINK_TLE_URL,
+    latencyMs: Math.round(performance.now() - started),
+  };
 };
 
 const parseCatalog = (data: unknown): CelesTrakEntry[] => (Array.isArray(data) ? data : []);
@@ -153,11 +168,5 @@ export const fetchSatelliteCatalogSearch = async (query: string): Promise<Search
     };
   }
 };
-
-/** Pre-warm Starlink TLE count in background (localStorage + memory). */
-export async function warmStarlinkCatalogCache(): Promise<void> {
-  if (getFreshStarlinkCatalogCache()) return;
-  await fetchStarlinkCatalogSearch("כמה לווייני Starlink פעילים?").catch(() => null);
-}
 
 export { clearStarlinkCatalogCacheForTests } from "../../liveWorld/starlinkSnapshot";

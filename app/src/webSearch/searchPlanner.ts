@@ -1,5 +1,6 @@
 import { classifySearchIntents, needsWebSearch, userRequestsSearch, isGeneralWebTopicQuery, isTopicalOverviewQuery, isBareWorldNewsQuery, isTimelyOverviewQuery } from "./intents";
-import { isGeneralNewsDigestQuery } from "./queryExtract";
+import { expandCrossSourceIntents } from "./crossSourceIntents";
+import { isGeneralNewsDigestQuery, isIsraelNewsQuery, isWorldHeadlineQuery } from "./queryExtract";
 import { isTopicalOverviewRouting, topicalEnrichmentIntents, topicalProviderQuery } from "./topicalEnrichment";
 import { hasUrlInQuery } from "./urlExtract";
 import type { AnswerShape, SearchIntent } from "./types";
@@ -104,14 +105,34 @@ export const regexPlanForQuery = (query: string): SearchPlan | null => {
     };
   }
 
+  if (isIsraelNewsQuery(q)) {
+    return {
+      intents: ["news"],
+      queries: [q],
+      answerShape: "bullet_list",
+      useWebFallback: false,
+      reason: "Israel headlines: ynet · Walla · JPost · TOI · Israel Hayom · …",
+    };
+  }
+
+  if (isWorldHeadlineQuery(q)) {
+    return {
+      intents: ["news"],
+      queries: [q],
+      answerShape: "bullet_list",
+      useWebFallback: false,
+      reason: "world headline: BBC · CNN · Guardian · Sky · NPR · DW · France24 · CBC",
+    };
+  }
+
   if (isGeneralNewsDigestQuery(q)) {
     return {
       intents: ["news"],
       queries: [q],
       answerShape: "bullet_list",
-      useWebFallback: true,
-      blendNewsWithWeb: true,
-      reason: "news digest: ynet + BBC + CNN + Reuters + Guardian",
+      useWebFallback: false,
+      blendNewsWithWeb: false,
+      reason: "news digest: international + Israeli RSS",
     };
   }
 
@@ -123,6 +144,20 @@ export const regexPlanForQuery = (query: string): SearchPlan | null => {
       useWebFallback: true,
       blendNewsWithWeb: true,
       reason: "overview: RSS + SearXNG",
+    };
+  }
+
+  if (
+    /מזג\s+האוויר/i.test(q) &&
+    /(?:תנועה\s+(?:ה)?אווירית|תעבורה\s+(?:ה)?אווירית)/i.test(q) &&
+    /(?:אזור|עולם|חריג)/i.test(q)
+  ) {
+    const intents = expandCrossSourceIntents(q, classifySearchIntents(q));
+    return {
+      intents,
+      queries: [q, "מה מזג האוויר בישראל", "כמה מטוסים נמצאים כרגע מעל ישראל?"],
+      answerShape: "short_fact",
+      reason: "weather+aviation anomaly cross-source",
     };
   }
 

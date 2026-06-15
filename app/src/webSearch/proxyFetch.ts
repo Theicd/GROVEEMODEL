@@ -12,6 +12,51 @@ const PROXY_REQUIRED = new Set([
   "feeds.reuters.com",
   "www.theguardian.com",
   "www.ynet.co.il",
+  "www.haaretz.co.il",
+  "rss.walla.co.il",
+  "www.mako.co.il",
+  "www.kan.org.il",
+  "www.globes.co.il",
+  "www.israelhayom.co.il",
+  "www.jpost.com",
+  "www.timesofisrael.com",
+  "www.themarker.com",
+  "www.geektime.co.il",
+  "www.tgspot.co.il",
+  "www.one.co.il",
+  "www.sport5.co.il",
+  "feeds.apnews.com",
+  "feeds.npr.org",
+  "rss.dw.com",
+  "www.france24.com",
+  "www.aljazeera.com",
+  "feeds.skynews.com",
+  "www.cbc.ca",
+  "www.spiegel.de",
+  "www.lemonde.fr",
+  "www.arabnews.com",
+  "feeds.bloomberg.com",
+  "www.ft.com",
+  "www.cnbc.com",
+  "techcrunch.com",
+  "www.theverge.com",
+  "feeds.arstechnica.com",
+  "www.wired.com",
+  "www.technologyreview.com",
+  "openai.com",
+  "deepmind.google",
+  "www.anthropic.com",
+  "www.nasa.gov",
+  "www.esa.int",
+  "www.space.com",
+  "www.sciencedaily.com",
+  "feeds.ign.com",
+  "www.gamespot.com",
+  "www.rollingstone.com",
+  "variety.com",
+  "www.reddit.com",
+  "www.producthunt.com",
+  "mshibanami.github.io",
   "stooq.com",
   "query1.finance.yahoo.com",
   "finance.yahoo.com",
@@ -43,10 +88,29 @@ const CORS_DIRECT_SUFFIXES = [
   "eonet.gsfc.nasa.gov",
   "www.gdacs.org",
   "api.open-notify.org",
-  "api.open-notify.org",
   "time.now",
   "ipapi.co",
+  "posix4e.github.io",
 ];
+
+type RelayFn = (target: string) => string;
+
+const buildPublicRelays = (): RelayFn[] => {
+  const relays: RelayFn[] = [];
+  const custom = (import.meta.env.VITE_CORS_PROXY_URL as string | undefined)?.trim();
+  if (custom) {
+    const base = custom.replace(/\/?$/, "/");
+    relays.push((target) => `${base}${encodeURIComponent(target)}`);
+  }
+  relays.push(
+    (target) => `https://corsproxy.io/?${encodeURIComponent(target)}`,
+    (target) => `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
+    (target) => `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`,
+    (target) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`,
+    (target) => `https://r.jina.ai/${target}`,
+  );
+  return relays;
+};
 
 export function isStaticWebHost(): boolean {
   if (typeof window === "undefined") return false;
@@ -57,6 +121,9 @@ export function isStaticWebHost(): boolean {
   if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "3000") return false;
   return hostname !== "localhost" && hostname !== "127.0.0.1";
 }
+
+/** True when the app is served as a static site (GitHub Pages, CDN) — no local dev proxy. */
+export const isWebOnlyHost = (): boolean => isStaticWebHost();
 
 const isCrossOrigin = (url: string): boolean => {
   if (typeof window === "undefined") return true;
@@ -89,37 +156,50 @@ export const needsProxy = (url: string): boolean => {
   return isStaticWebHost() && isCrossOrigin(url);
 };
 
-const PUBLIC_RELAYS = [
-  (target: string) => `https://corsproxy.io/?${encodeURIComponent(target)}`,
-  (target: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
-  (target: string) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`,
-];
-
 const buildDevProxyUrl = (target: string): string =>
   `/api/proxy?url=${encodeURIComponent(target)}`;
 
+const relayUsesAllOriginsGet = (relayUrl: string): boolean =>
+  relayUrl.includes("allorigins.win/get");
+
+const bodyFromRelayResponse = async (relayUrl: string, response: Response): Promise<string> => {
+  if (relayUsesAllOriginsGet(relayUrl)) {
+    const json = (await response.json()) as { contents?: string; status?: { http_code?: number } };
+    const code = json.status?.http_code ?? 0;
+    if (code >= 400 || !json.contents?.trim()) {
+      throw new Error(`relay empty (HTTP ${code || response.status})`);
+    }
+    return json.contents;
+  }
+  const text = await response.text();
+  if (!text.trim()) throw new Error("relay empty body");
+  return text;
+};
+
 async function fetchViaRelays(url: string, init?: RequestInit): Promise<Response> {
   const headers: Record<string, string> = {
-    Accept: "application/json, application/xml, text/plain, */*",
+    Accept: "application/json, application/xml, text/plain, application/rss+xml, application/atom+xml, */*",
     ...(init?.headers as Record<string, string> | undefined),
   };
   const signal = init?.signal;
+  const relays = buildPublicRelays();
 
-  const tryRelay = async (relay: (t: string) => string): Promise<Response> => {
-    const r = await fetch(relay(url), { method: "GET", headers, signal });
+  const tryRelay = async (relay: RelayFn): Promise<Response> => {
+    const relayUrl = relay(url);
+    const r = await fetch(relayUrl, { method: "GET", headers, signal });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r;
+    const body = await bodyFromRelayResponse(relayUrl, r);
+    return new Response(body, { status: 200, headers: { "Content-Type": "text/xml" } });
   };
 
-  let lastErr: Error = new Error(`All CORS relays failed for ${url}`);
-  for (const relay of PUBLIC_RELAYS) {
-    try {
-      return await tryRelay(relay);
-    } catch (err) {
-      lastErr = err instanceof Error ? err : lastErr;
-    }
+  const attempts = relays.map((relay) => tryRelay(relay));
+  try {
+    return await Promise.any(attempts);
+  } catch {
+    const settled = await Promise.allSettled(attempts);
+    const firstErr = settled.find((s) => s.status === "rejected") as PromiseRejectedResult | undefined;
+    throw firstErr?.reason instanceof Error ? firstErr.reason : new Error(`All CORS relays failed for ${url}`);
   }
-  throw lastErr;
 }
 
 export async function proxyAwareFetch(
@@ -128,6 +208,7 @@ export async function proxyAwareFetch(
 ): Promise<Response> {
   const inBrowser = typeof window !== "undefined";
   const method = init?.method ?? "GET";
+  const host = hostOf(url);
 
   if (!inBrowser) {
     return fetch(url, init);
@@ -144,6 +225,15 @@ export async function proxyAwareFetch(
 
   if (import.meta.env.DEV && method === "POST") {
     return fetch(buildDevProxyUrl(url), init);
+  }
+
+  // Static web (GitHub Pages): RSS/news hosts never send CORS — go straight to relays.
+  if (isStaticWebHost() && method === "GET" && PROXY_REQUIRED.has(host)) {
+    try {
+      return await fetchViaRelays(url, init);
+    } catch {
+      /* fall through to direct last-resort */
+    }
   }
 
   const preferDirect = hasDirectCors(url) || !needsProxy(url);
@@ -179,5 +269,5 @@ export async function proxyAwareFetch(
 }
 
 export function defaultFetchTimeoutMs(): number {
-  return isStaticWebHost() ? 22_000 : 9_000;
+  return isStaticWebHost() ? 26_000 : 9_000;
 }

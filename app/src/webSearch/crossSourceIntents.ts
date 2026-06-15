@@ -8,6 +8,7 @@ export const isCrossSourceQuery = (text: string): boolean => {
   /קשר\s+בין/i.test(text) ||
   /(?:מטוס|אוני|רעיד|סופה|תחנת\s+חלל|starlink).*(?:וב(?:ו|ה)|באזור|מעל|ליד)/i.test(text) ||
   /(?:יש\s+.*(?:גם|וב(?:ו|ה))).*(?:מזג|תעופ|תנועה|אירוע)/i.test(text) ||
+  /גם\s+מזג\s+האוויר\s+וגם\s+התנועה\s+האווירית/i.test(text) ||
   /(?:הכי\s+עמוס|הכי\s+פעיל|כמה\s+אירועים\s+משמעותיים|משהו\s+חריג).*(?:עולם|ישראל|מעל)/i.test(
     text,
   ) ||
@@ -22,7 +23,7 @@ export const expandCrossSourceIntents = (
   const out = new Set<SearchIntent>(base);
   const q = query;
 
-  if (/מטוס|תעופ|טיס|awacs/i.test(q)) out.add("aviation");
+  if (/מטוס|תעופ|טיס|awacs|תנועה\s+(?:ה)?אווירית|תעבורה\s+(?:ה)?אווירית|air\s+traffic/i.test(q)) out.add("aviation");
   if (/אוני|ספינ|נמל|תנועה\s+ימית|shipping\s+traffic|maritime/i.test(q)) out.add("ships");
   if (/רעיד|earthquake/i.test(q)) out.add("earthquake");
   if (/סופה|hurricane|typhoon|טропי|צונאמ/i.test(q)) out.add("disaster");
@@ -46,7 +47,11 @@ export const expandCrossSourceIntents = (
     out.add("weather");
   }
   if (/נמל/i.test(q)) out.add("ships");
-  if (/מזג.*תעופ|תעופ.*מזג/i.test(q)) {
+  if (/מזג.*(?:תעופ|תנועה\s+(?:ה)?אווירית|תעבורה\s+(?:ה)?אווירית)|(?:תעופ|תנועה\s+(?:ה)?אווירית|תעבורה\s+(?:ה)?אווירית).*מזג/i.test(q)) {
+    out.add("weather");
+    out.add("aviation");
+  }
+  if (/מזג\s+האוויר/i.test(q) && /(?:תנועה\s+(?:ה)?אווירית|תעבורה\s+(?:ה)?אווירית)/i.test(q)) {
     out.add("weather");
     out.add("aviation");
   }

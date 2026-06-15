@@ -177,8 +177,7 @@ import {
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
 import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
-import { isGeneralNewsDigestQuery } from "./webSearch/queryExtract";
-import { isTopicalOverviewRouting } from "./webSearch/topicalEnrichment";
+import { agentDebugLog } from "./debugAgentLog";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
 import { isStarlinkRegionalQuery } from "./webSearch/intents";
 import {
@@ -352,17 +351,17 @@ const QA_FORCE_LLM_DEFAULT = false;
 
 /** Friendly product tips while Gemma downloads — explain what GROVEE is. */
 const LOADING_DOWNLOAD_TIPS = [
-  "GROVEE הוא צ'אט AI חינמי — רץ על המחשב שלך, בלי מנוי ובלי שליחת שיחות לענן.",
+  "GROVEE הוא צ'אט AI חינמי — רץ בדפדפן, בלי התקנה ובלי שליחת שיחות לענן.",
   "שואלים בעברית או באנגלית, מקבלים תשובות ישירות מהדפדפן — המודל Gemma 4 E2B נטען אצלך.",
   "הפרטיות נשארת אצלך: מה שאתה כותב לא עובר לשרת AI חיצוני.",
-  "אחרי שההורדה הראשונה תסתיים, אפשר לשוחח גם בלי חיבור אינטרנט.",
-  "אפשר לבקש קוד, הסברים, סיפורים ודפי HTML — GROVEE מייצר הכול מקומית.",
-  "זו לא אפליקציית ענן: המשקולות (~3.9GB, פעם ראשונה) נשמרות במטמון הדפדפן.",
+  "אחרי שהטעינה הראשונה תסתיים, אפשר לשוחח גם בלי חיבור אינטרנט.",
+  "אפשר לבקש קוד, הסברים, סיפורים ודפי HTML — GROVEE מייצר הכול מקומית בדפדפן.",
+  "זו אפליקציית ווב: המשקולות (~3.9GB, פעם ראשונה) נשמרות במטמון הדפדפן — אין התקנה.",
   "GROVEE בנוי על Transformers.js — AI בדפדפן, כולל ראייה (תמונות) מקומית.",
   "צרף תמונה בכפתור 📎 או הדבק (Ctrl+V) — המודל יתאר ויפענח אותה אצלך במחשב.",
   "כפתור Think מפעיל <|think|> native של Gemma 4; חיפוש ברשת נדלק אוטומטית לשאלות על מזג אוויר, עובדות ומידע עדכני.",
-  "ההורדה ארוכה רק בפעם הראשונה — בפעם הבאה GROVEE יעלה הרבה יותר מהר.",
-  "עוד רגע תוכל לפתוח שיחה חדשה ולדבר עם העוזר המקומי שלך — חינם לגמרי.",
+  "הטעינה הראשונה ארוכה רק פעם אחת — בפעם הבאה GROVEE יעלה הרבה יותר מהר מהמטמון.",
+  "עוד רגע תוכל לפתוח שיחה חדשה ולדבר עם העוזר המקומי שלך — חינם לגמרי, ישירות מהווב.",
 ] as const;
 
 const LOADING_INIT_TIPS = [
@@ -2078,9 +2077,10 @@ function App() {
         setStreamingSearchSources(null);
         setStreamingGameCategoryPicker(false);
         setStatus(stopped ? "התשובה נעצרה" : "Ready");
-        continueModeRef.current = false;
-        cameraLoopRef.current?.releaseAfterChat();
-        focusComposerInput();
+      continueModeRef.current = false;
+      cameraLoopRef.current?.releaseAfterChat();
+      qaTurnForceLlmRef.current = false;
+      focusComposerInput();
         qaChatBridge.notifyTurnFailed(stopped ? "stopped empty" : "empty reply");
         return;
       }
@@ -2206,6 +2206,7 @@ function App() {
       generationChatOnlyDocumentRef.current = false;
       setChatOnlyDocumentMode(false);
       cameraLoopRef.current?.releaseAfterChat();
+      qaTurnForceLlmRef.current = false;
       focusComposerInput();
       qaChatBridge.notifyTurnComplete(
         content,
@@ -3014,6 +3015,40 @@ function App() {
           searchResult.intents,
           searchResult.sources,
         );
+        const newsQueryTurn = searchResult.intents.includes("news");
+        const qaCannedOnlyMode =
+          qaChatBridge.hasPending() &&
+          !qaTurnForceLlmRef.current &&
+          !qaChatBridge.isForceLlmPending() &&
+          !newsQueryTurn;
+        const shouldDeliverLive =
+          qaCannedOnlyMode &&
+          !!marineLiveCannedReply &&
+          !cameraActive &&
+          !hasAttachments &&
+          !continueCode &&
+          !documentTurn &&
+          !wantsGameSearch &&
+          (searchLiveOk || !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")) &&
+          shouldDeliverStructuredLiveReply(
+            effectivePrompt,
+            searchResult.intents,
+            searchResult.sources,
+            marineLiveCannedReply,
+          );
+        // #region agent log
+        agentDebugLog("H4,H5", "App.tsx:webSearchDecision", "web search result delivery decision", {
+          queryPreview: effectivePrompt.slice(0, 120),
+          intents: searchResult.intents,
+          sourceLabels: searchResult.sources.map((s) => ({ provider: s.provider, label: s.label, ok: s.ok, hasText: !!s.text.trim(), error: s.error?.slice(0, 120) })),
+          searchLiveOk,
+          cannedReplyExists: !!marineLiveCannedReply,
+          qaCannedOnlyMode,
+          shouldDeliverLive,
+          blockingFlags: { forceLlm: qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending(), cameraActive, hasAttachments, continueCode, documentTurn, wantsGameSearch },
+          pendingTimeWidget: !!pendingTimeWidgetRef.current,
+        });
+        // #endregion
         if (
           !searchLiveOk &&
           !marineLiveCannedReply &&
@@ -3038,44 +3073,9 @@ function App() {
           active: false,
         });
         if (
+          shouldDeliverLive &&
           marineLiveCannedReply &&
-          !qaTurnForceLlmRef.current &&
-          !qaChatBridge.isForceLlmPending() &&
-          !cameraActive &&
-          !hasAttachments &&
-          !continueCode &&
-          !documentTurn &&
-          !wantsGameSearch &&
-          (searchLiveOk &&
-            (isTopicalOverviewRouting(effectivePrompt) ||
-              isGeneralNewsDigestQuery(effectivePrompt) ||
-              searchPlan?.answerShape === "overview" ||
-              searchPlan?.answerShape === "bullet_list") ||
-            (!searchLiveOk &&
-              !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")))
-        ) {
-          qaChatBridge.setWebContext(webContext);
-          qaChatBridge.setReplySource("canned-live");
-          assistantBufferRef.current = marineLiveCannedReply;
-          setAssistantBuffer(marineLiveCannedReply);
-          setStatus("Ready");
-          pushActivity({
-            direction: "system",
-            kind: "web_search",
-            title: "Live data · fetch failed (canned)",
-            detail: marineLiveCannedReply.slice(0, 1200),
-          });
-          finalizeAssistantReply(false);
-          return;
-        }
-        if (marineLiveCannedReply && finishCannedLive(marineLiveCannedReply, webContext)) {
-          return;
-        }
-        if (
-          marineLiveCannedReply &&
-          searchLiveOk &&
-          shouldDeliverStructuredLiveReply(effectivePrompt, searchResult.intents, searchResult.sources) &&
-          deliverLiveCannedReply(marineLiveCannedReply, webContext, "Live data · structured reply")
+          deliverLiveCannedReply(marineLiveCannedReply, webContext, "Live data · canned reply")
         ) {
           return;
         }
@@ -3249,6 +3249,15 @@ function App() {
       !documentTurn &&
       !!pendingTimeWidgetRef.current &&
       isSinglePlaceTimeWidgetQuery(effectivePrompt);
+    // #region agent log
+    agentDebugLog("H5", "App.tsx:pureTimeWidgetTurn", "time widget direct reply decision", {
+      queryPreview: effectivePrompt.slice(0, 120),
+      pureTimeWidgetTurn,
+      pendingTimeWidget: !!pendingTimeWidgetRef.current,
+      skipCanned,
+      blockingFlags: { wantsGameSearch, cameraActive, hasAttachments, continueCode, documentTurn },
+    });
+    // #endregion
     if (pureTimeWidgetTurn && pendingTimeWidgetRef.current) {
       const reply = buildShortTimeReply(pendingTimeWidgetRef.current);
       qaChatBridge.setReplySource("local-time");
@@ -3266,7 +3275,10 @@ function App() {
     }
 
     const pureCapabilityLiveTurn =
-      !skipCanned &&
+      qaChatBridge.hasPending() &&
+      !qaTurnForceLlmRef.current &&
+      !qaChatBridge.isForceLlmPending() &&
+      !searchIntentsForGlobe.includes("news") &&
       !wantsGameSearch &&
       !cameraActive &&
       !hasAttachments &&

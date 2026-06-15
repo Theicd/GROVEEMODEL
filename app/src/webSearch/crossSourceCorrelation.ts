@@ -52,7 +52,9 @@ export const extractCrossSourceMetrics = (
   const aviation = sources.find((s) => s.provider === "adsb-aviation" && s.ok && s.text.trim());
   if (aviation) {
     const count = parseIntSafe(
-      aviation.text.match(/מטוסים (?:בטווח|באוויר)[^:\n]*:\s*(\d+)/i)?.[1],
+      aviation.text.match(/מטוסים (?:בטווח|באוויר)[^:\n]*:\s*(\d+)/i)?.[1] ??
+        aviation.text.match(/סה[״"']?כ\s+(\d+)\s+מטוסים/i)?.[1] ??
+        aviation.text.match(/כל\s+המטוסים:\s*(\d+)/i)?.[1],
     );
     if (count != null) {
       metrics.aviation = {
@@ -107,7 +109,7 @@ export const buildCrossSourceCorrelationLines = (
   if (metrics.weather && metrics.aviation) {
     const { stormLike, condition, windKmh } = metrics.weather;
     const planes = metrics.aviation.count;
-    if (yesNo || /סופה.*מטוס|מטוס.*סופה|מזג.*מטוס|תעופ.*מזג/i.test(query)) {
+    if (yesNo || /סופה.*מטוס|מטוס.*סופה|מזג.*מטוס|תעופ.*מזג|חריג.*(?:מזג|תנועה|תעופ)/i.test(query)) {
       if (stormLike && planes > 0) {
         lines.push(
           `CORRELATION: כן — ${region}: מז"א מצביע על מזג קשה (${condition ?? "סוער"}${windKmh ? `, רוח ~${windKmh} km/h` : ""}) + ${planes} מטוסים ב-ADS-B.`,

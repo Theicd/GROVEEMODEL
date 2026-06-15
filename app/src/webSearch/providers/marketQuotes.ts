@@ -1,5 +1,5 @@
 import { fetchJson, fetchText } from "../fetchJson";
-import { isStaticWebHost } from "../proxyFetch";
+import { isStaticWebHost, proxyAwareFetch } from "../proxyFetch";
 import type { SearchSourceResult } from "../types";
 
 type YahooChart = {
@@ -19,7 +19,19 @@ type YahooChart = {
   };
 };
 
+type ShillerLatest = {
+  stock_market?: { date?: string; sp500?: number };
+};
+
 type QuoteSpec = { symbol: string; label: string; unit: string };
+
+const SHILLER_LATEST_URL = "https://posix4e.github.io/shiller_wrapper_data/data/latest.json";
+
+const RELAYS = [
+  (target: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
+  (target: string) => `https://corsproxy.io/?${encodeURIComponent(target)}`,
+  (target: string) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`,
+];
 
 const TICKER_ALIASES: Record<string, QuoteSpec> = {
   brent: { symbol: "BZ=F", label: "Brent Crude (חבית)", unit: "USD/barrel" },
@@ -28,7 +40,7 @@ const TICKER_ALIASES: Record<string, QuoteSpec> = {
   gold: { symbol: "GC=F", label: "זהב (GC=F)", unit: "USD/oz" },
   xau: { symbol: "GC=F", label: "זהב (GC=F)", unit: "USD/oz" },
   silver: { symbol: "SI=F", label: "כסף (SI=F)", unit: "USD/oz" },
-  "sp500": { symbol: "^GSPC", label: "S&P 500", unit: "points" },
+  sp500: { symbol: "^GSPC", label: "S&P 500", unit: "points" },
   "s&p": { symbol: "^GSPC", label: "S&P 500", unit: "points" },
   nasdaq: { symbol: "^IXIC", label: "NASDAQ Composite", unit: "points" },
   dow: { symbol: "^DJI", label: "Dow Jones", unit: "points" },
@@ -38,9 +50,9 @@ const TICKER_ALIASES: Record<string, QuoteSpec> = {
   aapl: { symbol: "AAPL", label: "Apple (AAPL)", unit: "USD" },
   nvda: { symbol: "NVDA", label: "NVIDIA (NVDA)", unit: "USD" },
   tsla: { symbol: "TSLA", label: "Tesla (TSLA)", unit: "USD" },
-  "חבית": { symbol: "BZ=F", label: "Brent Crude (חבית)", unit: "USD/barrel" },
-  "נפט": { symbol: "BZ=F", label: "Brent Crude (חבית)", unit: "USD/barrel" },
-  "זהב": { symbol: "GC=F", label: "זהב (GC=F)", unit: "USD/oz" },
+  חבית: { symbol: "BZ=F", label: "Brent Crude (חבית)", unit: "USD/barrel" },
+  נפט: { symbol: "BZ=F", label: "Brent Crude (חבית)", unit: "USD/barrel" },
+  זהב: { symbol: "GC=F", label: "זהב (GC=F)", unit: "USD/oz" },
 };
 
 const pickQuote = (query: string): QuoteSpec => {
@@ -59,27 +71,139 @@ const pickQuote = (query: string): QuoteSpec => {
   return TICKER_ALIASES.gold;
 };
 
-const fetchYahooQuote = async (spec: QuoteSpec): Promise<YahooChart> => {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(spec.symbol)}?interval=1d&range=1d`;
-  return fetchJson<YahooChart>(url, undefined, { timeoutMs: 18_000 });
+const yahooChartUrl = (symbol: string): string =>
+  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+
+const parseYahooChart = (data: YahooChart) => {
+  const meta = data.chart?.result?.[0]?.meta;
+  if (meta?.regularMarketPrice == null || !Number.isFinite(meta.regularMarketPrice)) return null;
+  return meta;
+};
+
+const fetchYahooViaRelay = async (url: string, timeoutMs: number): Promise<YahooChart | null> => {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    for (const relay of RELAYS) {
+      try {
+        const response = await fetch(relay(url), {
+          method: "GET",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) continue;
+        return (await response.json()) as YahooChart;
+      } catch {
+        /* try next relay */
+      }
+    }
+    return null;
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+};
+
+const fetchYahooQuote = async (spec: QuoteSpec): Promise<{
+  price: number;
+  prev: number | null;
+  when: string;
+  symbol: string;
+  name: string;
+  sourceLabel: string;
+} | null> => {
+  const url = yahooChartUrl(spec.symbol);
+  const timeoutMs = isStaticWebHost() ? 14_000 : 18_000;
+
+  const tasks: Array<Promise<YahooChart | null>> = [
+    fetchJson<YahooChart>(url, undefined, { timeoutMs }).catch(() => null),
+  ];
+  if (isStaticWebHost()) {
+    tasks.push(fetchYahooViaRelay(url, timeoutMs));
+  }
+
+  const results = await Promise.all(tasks);
+  for (const data of results) {
+    if (!data) continue;
+    const meta = parseYahooChart(data);
+    if (!meta) continue;
+    return {
+      price: meta.regularMarketPrice!,
+      prev: meta.previousClose ?? null,
+      when:
+        meta.regularMarketTime != null
+          ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
+          : "—",
+      symbol: meta.symbol ?? spec.symbol,
+      name: meta.shortName ?? meta.longName ?? spec.label,
+      sourceLabel: "Yahoo Finance",
+    };
+  }
+
+  if (!isStaticWebHost()) return null;
+
+  try {
+    const response = await proxyAwareFetch(url, { headers: { Accept: "application/json" } });
+    if (response.ok) {
+      const data = (await response.json()) as YahooChart;
+      const meta = parseYahooChart(data);
+      if (meta) {
+        return {
+          price: meta.regularMarketPrice!,
+          prev: meta.previousClose ?? null,
+          when:
+            meta.regularMarketTime != null
+              ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
+              : "—",
+          symbol: meta.symbol ?? spec.symbol,
+          name: meta.shortName ?? meta.longName ?? spec.label,
+          sourceLabel: "Yahoo Finance",
+        };
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+
+  return null;
+};
+
+/** Monthly Shiller S&P — CORS-friendly fallback when Yahoo/Stooq fail on static hosts. */
+const fetchShillerSp500 = async (): Promise<{ price: number; when: string } | null> => {
+  try {
+    const data = await fetchJson<ShillerLatest>(SHILLER_LATEST_URL, undefined, { timeoutMs: 12_000 });
+    const price = data.stock_market?.sp500;
+    if (price == null || !Number.isFinite(price)) return null;
+    return { price, when: data.stock_market?.date ?? "—" };
+  } catch {
+    return null;
+  }
 };
 
 const fetchStooqQuote = async (spec: QuoteSpec): Promise<{ price: number; when: string } | null> => {
-  const stooqSymbol =
-    spec.symbol === "^GSPC" ? "^spx" : spec.symbol.replace("^", "").toLowerCase();
-  const csv = await fetchText(
-    `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2t2ohlcv&h&e=csv`,
-    undefined,
-    { timeoutMs: 16_000 },
-  );
-  const line = csv.trim().split("\n").find((l) => l && !/^symbol,/i.test(l));
-  if (!line) return null;
-  const cols = line.split(",");
-  const close = parseFloat(cols[6] ?? cols[cols.length - 2] ?? "");
-  if (!Number.isFinite(close)) return null;
-  const date = cols[1] ?? new Date().toISOString().slice(0, 10);
-  const time = cols[2] ?? "";
-  return { price: close, when: `${date} ${time}`.trim() };
+  const stooqSymbols =
+    spec.symbol === "^GSPC"
+      ? ["^spx", "spx.us", "^spx.us"]
+      : [spec.symbol.replace("^", "").toLowerCase()];
+  for (const stooqSymbol of stooqSymbols) {
+    try {
+      const csv = await fetchText(
+        `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2t2ohlcv&h&e=csv`,
+        undefined,
+        { timeoutMs: 10_000 },
+      );
+      const line = csv.trim().split("\n").find((l) => l && !/^symbol,/i.test(l));
+      if (!line) continue;
+      const cols = line.split(",");
+      const close = parseFloat(cols[6] ?? cols[cols.length - 2] ?? "");
+      if (!Number.isFinite(close)) continue;
+      const date = cols[1] ?? new Date().toISOString().slice(0, 10);
+      const time = cols[2] ?? "";
+      return { price: close, when: `${date} ${time}`.trim() };
+    } catch {
+      /* next symbol */
+    }
+  }
+  return null;
 };
 
 export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourceResult> => {
@@ -95,41 +219,37 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
     let name = picked.label;
     let sourceLabel = "Yahoo Finance";
 
-    if (isStaticWebHost()) {
-      const stooq = await fetchStooqQuote(picked);
-      if (stooq) {
-        price = stooq.price;
-        when = stooq.when;
-        sourceLabel = "Stooq";
+    if (picked.symbol === "^GSPC" && isStaticWebHost()) {
+      const shillerFirst = await fetchShillerSp500();
+      if (shillerFirst) {
+        price = shillerFirst.price;
+        when = shillerFirst.when;
+        sourceLabel = "Shiller (monthly)";
       }
     }
 
     if (price == null) {
-      try {
-        const data = await fetchYahooQuote(picked);
-        const meta = data.chart?.result?.[0]?.meta;
-        if (meta?.regularMarketPrice != null && Number.isFinite(meta.regularMarketPrice)) {
-          price = meta.regularMarketPrice;
-          prev = meta.previousClose ?? null;
-          symbol = meta.symbol ?? picked.symbol;
-          name = meta.shortName ?? meta.longName ?? picked.label;
-          when =
-            meta.regularMarketTime != null
-              ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
-              : "—";
-          sourceLabel = "Yahoo Finance";
-        }
-      } catch {
-        /* stooq fallback below */
-      }
-    }
+      const [yahoo, stooq, shiller] = await Promise.all([
+        fetchYahooQuote(picked),
+        fetchStooqQuote(picked),
+        picked.symbol === "^GSPC" ? fetchShillerSp500() : Promise.resolve(null),
+      ]);
 
-    if (price == null) {
-      const stooq = await fetchStooqQuote(picked);
-      if (stooq) {
+      if (yahoo) {
+        price = yahoo.price;
+        prev = yahoo.prev;
+        when = yahoo.when;
+        symbol = yahoo.symbol;
+        name = yahoo.name;
+        sourceLabel = yahoo.sourceLabel;
+      } else if (stooq) {
         price = stooq.price;
         when = stooq.when;
         sourceLabel = "Stooq";
+      } else if (shiller) {
+        price = shiller.price;
+        when = shiller.when;
+        sourceLabel = "Shiller (monthly)";
       }
     }
 
@@ -139,18 +259,20 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
         label,
         ok: false,
         text: "",
-        error: "לא נמצא מחיר ב-Yahoo Finance",
+        error: "לא נמצא מחיר ב-Yahoo Finance / Stooq / Shiller",
         latencyMs: Math.round(performance.now() - started),
       };
     }
 
-    const change =
-      prev != null && Number.isFinite(prev) ? price - prev : null;
+    const change = prev != null && Number.isFinite(prev) ? price - prev : null;
     const changePct =
       change != null && prev != null && prev !== 0 ? (change / prev) * 100 : null;
 
+    const staleNote =
+      sourceLabel === "Shiller (monthly)" ? ` (עדכון חודשי — ${when})` : "";
+
     const lines = [
-      `${picked.label}: ${price.toFixed(2)} ${picked.unit}`,
+      `${picked.label}: ${price.toFixed(2)} ${picked.unit}${staleNote}`,
       name !== picked.label ? `שם: ${name}` : "",
       change != null
         ? `שינוי מהסגירה הקודמת: ${change >= 0 ? "+" : ""}${change.toFixed(2)}${changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)` : ""}`
