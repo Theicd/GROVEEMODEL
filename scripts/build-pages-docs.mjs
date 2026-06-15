@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-process.env.VITE_BASE = "/GROVEEMODEL/docs/";
+// Relative base — assets load as ./assets/... from docs/index.html (see README).
+process.env.VITE_BASE = "./";
 execSync("npm run build", { stdio: "inherit", env: process.env, cwd: root });
 
 const dist = path.join(root, "dist");
