@@ -50,6 +50,10 @@ import {
   type PendingAttachment,
 } from "./documentIngest";
 import { IntroCanvas } from "./IntroCanvas";
+import { GroveeLogoMark } from "./GroveeLogoMark";
+import { ChatMessageAvatar } from "./ChatMessageAvatar";
+import { SidebarSettingsIcon } from "./SidebarSettingsIcon";
+import { GlobeVisual } from "./GlobeVisual";
 import { ChatMarkdown } from "./chatMarkdown";
 import { ArtifactPanel, type Artifact } from "./ArtifactPanel";
 import {
@@ -140,6 +144,8 @@ import {
 import { mountGroveeVisionProbe } from "./visionQaProbe";
 import { CameraPreview } from "./CameraPreview";
 import { ChatLandingHeadline, ChatLandingSuggestions, useLandingContent } from "./ChatLandingHero";
+import { ComposerPlusMenu } from "./ComposerPlusMenu";
+import { ComposerVoiceMic } from "./ComposerVoiceMic";
 import { ChatUserMessage } from "./ChatUserMessage";
 import { ModelActivityPanel } from "./ModelActivityPanel";
 import { PresentationQaPanel } from "./PresentationQaPanel";
@@ -193,10 +199,16 @@ import {
   type StartupContext,
 } from "./startupContext";
 import { LocalContextBar } from "./LocalContextBar";
+import { TimeClockWidget } from "./TimeClockWidget";
+import {
+  buildShortTimeReply,
+  buildTimeWidgetFromStartupContext,
+  buildTimeWidgetFromWorldTimeSource,
+  isSinglePlaceTimeWidgetQuery,
+} from "./timeWidget/resolveTimeWidget";
+import type { TimeWidgetData } from "./timeWidget/types";
 import { GamesPanel } from "./GamesPanel";
-import { GameSpotlightDock } from "./GameSpotlightDock";
 import { GlobePanel } from "./GlobePanel";
-import { GlobeSpotlightDock } from "./GlobeSpotlightDock";
 import { buildGlobeCommand, shouldOpenGlobePanel } from "./realityGlobe/intents";
 import type { GlobeCommand } from "./realityGlobe/bridge";
 import {
@@ -241,6 +253,8 @@ type ChatMessage = {
   /** Live web search sources fetched for this turn (Search mode). */
   searchSources?: SearchSourceResult[];
   searchSummary?: string;
+  /** Animated clock card for "what time" queries. */
+  timeWidget?: TimeWidgetData;
   /** @deprecated games render in side panel only — kept for old saved sessions */
   gameResults?: OnlineGame[];
   /** Show category picker when a specific game search had no match. */
@@ -1119,6 +1133,7 @@ function App() {
     answerShape?: AnswerShape;
     crossSource?: boolean;
   } | null>(null);
+  const pendingTimeWidgetRef = useRef<TimeWidgetData | null>(null);
   const pendingGameCategoryPickerRef = useRef(false);
   const pendingGameBrowseCategoryRef = useRef<GameCategoryId | null>(null);
   const cameraModeRef = useRef(cameraMode);
@@ -1287,6 +1302,34 @@ function App() {
     [isGenerating],
   );
 
+  const handleNewChat = useCallback(() => {
+    if (cameraMode) {
+      if (isGenerating) return;
+      const fresh = clearCameraSessionStore();
+      setCameraStore(fresh);
+      characterBrainRef.current.reset();
+      setSidebarOpen(false);
+      return;
+    }
+    const id = newChatSessionId();
+    setPendingAttachments((prev) => {
+      for (const p of prev) revokePendingAttachment(p);
+      return [];
+    });
+    setAttachError(null);
+    setChatSessionsState((s) => ({
+      activeId: id,
+      sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }, ...s.sessions],
+    }));
+    setAssistantBuffer("");
+    assistantBufferRef.current = "";
+    setPrompt("");
+    setEditingMessageId(null);
+    setEditDraft("");
+    setSidebarOpen(false);
+    setArtifactOpen(false);
+  }, [cameraMode, isGenerating]);
+
   const setMessages = useCallback((updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
     setChatSessionsState((st) => {
       const sessions = st.sessions.map((s) => {
@@ -1343,9 +1386,10 @@ function App() {
   useEffect(() => {
     const el = textareaRef.current;
     if (!el || phase !== "ready") return;
+    const minH = showLanding ? 32 : 36;
     el.style.height = "auto";
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 36), 120)}px`;
-  }, [prompt, pendingAttachments.length, phase]);
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, minH), 120)}px`;
+  }, [prompt, pendingAttachments.length, phase, showLanding]);
 
   const buildHistoryForWorker = useCallback((priorMessages: ChatMessage[]): ChatTurn[] => {
     return priorMessages.map((m) => {
@@ -1997,6 +2041,13 @@ function App() {
     focusComposerInput();
   }, [focusComposerInput]);
 
+  const appendVoiceTranscript = useCallback((text: string) => {
+    const chunk = text.trim();
+    if (!chunk) return;
+    setPrompt((prev) => (prev.trim() ? `${prev.trimEnd()} ${chunk}` : chunk));
+    focusComposerInput();
+  }, [focusComposerInput]);
+
   const finalizeAssistantReply = useCallback(
     (stopped: boolean) => {
       isGeneratingRef.current = false;
@@ -2007,6 +2058,7 @@ function App() {
         ? pendingVisionContextRef.current || undefined
         : undefined;
       const searchMeta = pendingWebSearchRef.current ?? undefined;
+      const timeWidget = pendingTimeWidgetRef.current ?? undefined;
       const showGameCategories = pendingGameCategoryPickerRef.current;
       const gameBrowseCategory = pendingGameBrowseCategoryRef.current ?? undefined;
       const { content, artifact, thought } = raw.trim()
@@ -2015,11 +2067,12 @@ function App() {
           })
         : { content: "", artifact: null, thought: undefined };
 
-      if (!content.trim() && !artifact && !showGameCategories) {
+      if (!content.trim() && !artifact && !showGameCategories && !timeWidget) {
         setAssistantBuffer("");
         assistantBufferRef.current = "";
         pendingVisionContextRef.current = "";
         pendingWebSearchRef.current = null;
+        pendingTimeWidgetRef.current = null;
         pendingGameCategoryPickerRef.current = false;
         pendingGameBrowseCategoryRef.current = null;
         setStreamingSearchSources(null);
@@ -2088,6 +2141,7 @@ function App() {
                 visionContext,
                 searchSources: searchMeta?.sources,
                 searchSummary: searchMeta?.summary,
+                timeWidget,
                 showGameCategories,
                 gameBrowseCategory,
                 modelLabel: "HAL",
@@ -2125,6 +2179,7 @@ function App() {
             visionContext,
             searchSources: searchMeta?.sources,
             searchSummary: searchMeta?.summary,
+            timeWidget,
             showGameCategories,
             gameBrowseCategory,
             modelLabel: "HAL",
@@ -2140,6 +2195,7 @@ function App() {
       assistantBufferRef.current = "";
       pendingVisionContextRef.current = "";
       pendingWebSearchRef.current = null;
+      pendingTimeWidgetRef.current = null;
       pendingGameCategoryPickerRef.current = false;
       pendingGameBrowseCategoryRef.current = null;
       setStreamingSearchSources(null);
@@ -2841,6 +2897,7 @@ function App() {
     let searchHint = "";
     let marineLiveCannedReply: string | null = null;
     pendingWebSearchRef.current = null;
+    pendingTimeWidgetRef.current = null;
     const wantsGameSearch =
       !cameraActive &&
       !hasAttachments &&
@@ -2886,6 +2943,7 @@ function App() {
     }
 
     if (localTimeOnly && startupContext) {
+      pendingTimeWidgetRef.current = buildTimeWidgetFromStartupContext(startupContext);
       webContext = buildLocalTimeAnswer(startupContext, effectivePrompt);
       searchHint = " · זמן מקומי (ללא חיפוש ברשת)";
       pushActivity({
@@ -2941,6 +2999,11 @@ function App() {
         });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
+        if (isSinglePlaceTimeWidgetQuery(effectivePrompt)) {
+          const wt = searchResult.sources.find((s) => s.provider === "world-time" && s.ok);
+          const widget = wt ? buildTimeWidgetFromWorldTimeSource(wt) : null;
+          if (widget) pendingTimeWidgetRef.current = widget;
+        }
         const searchLiveOk = searchResult.sources.some((s) => s.ok && s.text.trim());
         marineLiveCannedReply = searchResult.cannedReply ?? buildCapabilityLiveReply(
           effectivePrompt,
@@ -3160,6 +3223,31 @@ function App() {
         kind: "globe_focus",
         title: "Globe · place focus",
         detail: globePlaceLabel || globePlaceCannedReply,
+      });
+      finalizeAssistantReply(false);
+      return;
+    }
+
+    const pureTimeWidgetTurn =
+      !skipCanned &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      !!pendingTimeWidgetRef.current &&
+      isSinglePlaceTimeWidgetQuery(effectivePrompt);
+    if (pureTimeWidgetTurn && pendingTimeWidgetRef.current) {
+      const reply = buildShortTimeReply(pendingTimeWidgetRef.current);
+      qaChatBridge.setReplySource("local-time");
+      assistantBufferRef.current = reply;
+      setAssistantBuffer(reply);
+      setStatus("Ready");
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: "Time widget",
+        detail: reply,
       });
       finalizeAssistantReply(false);
       return;
@@ -3910,11 +3998,7 @@ function App() {
         >
           <IntroCanvas />
 
-          <div className="core-visual" aria-hidden="true">
-            <div className="ring r1" />
-            <div className="ring r2" />
-            <div className="ring r3" />
-          </div>
+          <GroveeLogoMark size="lg" className="intro-core-visual" />
 
           <div className="intro-text">
             <div className="brand-title">GROVEE</div>
@@ -3993,123 +4077,337 @@ function App() {
           />
 
           <aside className={`sidebar ${sidebarOpen ? "active" : ""}`}>
-            <div className="sb-header">
-              <div className="sb-header-start">
-                <div className="sb-logo">G</div>
-                GROVEE
-              </div>
-              <button
-                type="button"
-                className="sb-close-btn"
-                onClick={() => setSidebarOpen(false)}
-                aria-label="סגור היסטוריה"
-              >
-                ×
-              </button>
-            </div>
-            <button
-              type="button"
-              className="new-chat"
-              onClick={() => {
-                if (cameraMode) {
-                  if (isGenerating) return;
-                  const fresh = clearCameraSessionStore();
-                  setCameraStore(fresh);
-                  characterBrainRef.current.reset();
-                  setSidebarOpen(false);
-                  return;
-                }
-                const id = newChatSessionId();
-                setPendingAttachments((prev) => {
-                  for (const p of prev) revokePendingAttachment(p);
-                  return [];
-                });
-                setAttachError(null);
-                setChatSessionsState((s) => ({
-                  activeId: id,
-                  sessions: [{ id, title: "שיחה חדשה", updatedAt: Date.now(), messages: [] }, ...s.sessions],
-                }));
-                setAssistantBuffer("");
-                assistantBufferRef.current = "";
-                setPrompt("");
-                setEditingMessageId(null);
-                setEditDraft("");
-                setSidebarOpen(false);
-                setArtifactOpen(false);
-              }}
-              disabled={isGenerating}
-            >
-              {cameraMode ? "נקה שיחת HAL" : "צ'אט חדש"}
-            </button>
-            <div className="history chat-list">
-              {cameraMode ? (
-                <CameraUserProfilePanel
-                  profile={cameraStore.profile}
-                  rollingSummary={cameraStore.rollingSummary}
-                  messageCount={cameraMessages.length}
-                  searchHits={cameraSearchHits}
-                  searchQuery={cameraHistorySearch}
-                  onSearchChange={setCameraHistorySearch}
-                  onSaveProfile={handleSaveCameraProfile}
-                  disabled={isGenerating}
-                />
-              ) : (
-                visibleTextSessions.map((s) => (
-                <div
-                  key={s.id}
-                  className={`hist-row ${s.id === chatSessionsState.activeId ? "active" : ""}`}
+            {!sidebarOpen ? (
+              <nav className="sidebar__rail" aria-label="תפריט צד">
+                <button
+                  type="button"
+                  className="sb-rail-logo-btn"
+                  aria-label="פתח תפריט GroVee"
+                  title="פתח תפריט"
+                  onClick={() => setSidebarOpen(true)}
                 >
+                  <GroveeLogoMark size="sm" />
+                </button>
+                <div className="sidebar__rail-actions">
+                <button
+                  type="button"
+                  className="sb-rail-btn"
+                  aria-label={cameraMode ? "נקה שיחת HAL" : "צ'אט חדש"}
+                  title={cameraMode ? "נקה שיחת HAL" : "צ'אט חדש"}
+                  onClick={handleNewChat}
+                  disabled={isGenerating}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-btn--placeholder"
+                  aria-label="חיפוש שיחות"
+                  title="חיפוש שיחות (בקרוב)"
+                  disabled
+                  tabIndex={-1}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-btn--games"
+                  aria-label="משחקים מומלצים"
+                  title="פתח משחקים מומלצים"
+                  onClick={() => void openGamesPanelFull()}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <line x1="6" y1="12" x2="10" y2="12" />
+                    <line x1="8" y1="10" x2="8" y2="14" />
+                    <line x1="15" y1="13" x2="15.01" y2="13" />
+                    <line x1="18" y1="11" x2="18.01" y2="11" />
+                    <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-btn--globe"
+                  aria-label="עולם חי"
+                  title="פתח מוניטור עולם חי"
+                  onClick={openGlobePanelFull}
+                >
+                  <span className="sb-globe-icon-wrap" aria-hidden="true">
+                    <GlobeVisual size="xs" pulse tone="icon" />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-btn--vision"
+                  aria-label="Vision Inspector"
+                  title="Vision Inspector — זיהוי חי, מודלים וזמני דגימה"
+                  onClick={() => setVisionInspectorOpen(true)}
+                  disabled={!cameraMode}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M6 18h8" />
+                    <path d="M10 22h4" />
+                    <path d="M12 16V4" />
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="m19 3-2 2" />
+                    <path d="m21 5-2-2" />
+                  </svg>
+                </button>
+                {QA_BRIDGE_ENABLED ? (
                   <button
                     type="button"
-                    className="hist-item chat-item"
-                    title={s.title}
-                    onClick={() => {
-                      if (s.id === chatSessionsState.activeId || isGenerating) return;
-                      setChatSessionsState((st) => ({ ...st, activeId: s.id }));
-                      setAssistantBuffer("");
-                      assistantBufferRef.current = "";
-                      setEditingMessageId(null);
-                      setEditDraft("");
-                      setArtifactOpen(false);
-                      setSidebarOpen(false);
-                    }}
-                    disabled={isGenerating}
+                    className="sb-rail-btn sb-rail-btn--qa"
+                    aria-label="בדיקות מצגת"
+                    title="בדיקת 39 שאלות מצגת — שליחה, סימון ודוח"
+                    onClick={() => setPresentationQaOpen(true)}
                   >
-                    {s.title}
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="m9 2 1 2 2 1-2 1-1 2-1-2-2-1 2-1z" />
+                      <path d="M5 21 19 7" />
+                    </svg>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-btn--activity"
+                  aria-label="פעילות המודל"
+                  title="פעילות המודל"
+                  onClick={() => setActivityLogOpen(true)}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <rect x="8" y="2" width="8" height="4" rx="1" />
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                  </svg>
+                  {activityLog.length ? (
+                    <span className="sb-rail-count" aria-hidden="true">
+                      {activityLog.length > 99 ? "99+" : activityLog.length}
+                    </span>
+                  ) : null}
+                </button>
+                </div>
+                <div className="sidebar__rail-spacer" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-settings-foot"
+                  aria-label="פתח הגדרות"
+                  title="הגדרות Gemma"
+                  onClick={() => {
+                    setSettingsModalKey((k) => k + 1);
+                    setSettingsOpen(true);
+                  }}
+                >
+                  <SidebarSettingsIcon size={20} />
+                </button>
+              </nav>
+            ) : (
+              <div className="sidebar__body">
+                <div className="sb-header">
+                  <button
+                    type="button"
+                    className="sb-header-logo-btn"
+                    aria-label="כווץ תפריט"
+                    title="כווץ תפריט"
+                    onClick={() => setSidebarOpen(false)}
+                  >
+                    <GroveeLogoMark size="sm" />
                   </button>
                   <button
                     type="button"
-                    className="hist-delete-btn"
-                    aria-label={`מחק שיחה: ${s.title}`}
-                    title="מחק שיחה"
-                    disabled={isGenerating}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteChatSession(s.id);
-                    }}
+                    className="sb-collapse-btn"
+                    onClick={() => setSidebarOpen(false)}
+                    aria-label="כווץ תפריט"
+                    title="כווץ תפריט"
                   >
-                    ×
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <path d="M9 3v18" />
+                    </svg>
                   </button>
                 </div>
-              ))
-              )}
-            </div>
-            <div className="user-foot">
-              <div className="avatar" aria-hidden="true" />
-              <span>אורח</span>
-              <button
-                type="button"
-                className="sb-settings-btn"
-                title="הגדרות Gemma"
-                aria-label="פתח הגדרות"
-                onClick={() => {
-                  setSettingsModalKey((k) => k + 1);
-                  setSettingsOpen(true);
-                }}
-              >
-                ⚙
-              </button>
-            </div>
+                <div className="sidebar__scroll">
+                <div className="sb-nav">
+                  <button
+                    type="button"
+                    className="sb-nav-item sb-nav-item--primary"
+                    onClick={handleNewChat}
+                    disabled={isGenerating}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                    <span>{cameraMode ? "נקה שיחת HAL" : "צ'אט חדש"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-nav-item sb-nav-item--placeholder"
+                    disabled
+                    tabIndex={-1}
+                    aria-label="חיפוש שיחות"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="m20 20-3.5-3.5" />
+                    </svg>
+                    <span>חיפוש שיחות</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-nav-item sb-nav-item--games"
+                    onClick={() => void openGamesPanelFull()}
+                    title="פתח משחקים מומלצים"
+                    aria-label="משחקים מומלצים"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <line x1="6" y1="12" x2="10" y2="12" />
+                      <line x1="8" y1="10" x2="8" y2="14" />
+                      <line x1="15" y1="13" x2="15.01" y2="13" />
+                      <line x1="18" y1="11" x2="18.01" y2="11" />
+                      <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" />
+                    </svg>
+                    <span>משחקים מומלצים</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-nav-item sb-nav-item--globe"
+                    onClick={openGlobePanelFull}
+                    title="פתח מוניטור עולם חי"
+                    aria-label="עולם חי"
+                  >
+                    <span className="sb-globe-icon-wrap sb-globe-icon-wrap--nav" aria-hidden="true">
+                      <GlobeVisual size="xs" pulse tone="icon" />
+                    </span>
+                    <span>עולם חי</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-nav-item sb-nav-item--vision"
+                    onClick={() => setVisionInspectorOpen(true)}
+                    title="Vision Inspector — זיהוי חי, מודלים וזמני דגימה"
+                    aria-label="Vision Inspector"
+                    disabled={!cameraMode}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M6 18h8" />
+                      <path d="M10 22h4" />
+                      <path d="M12 16V4" />
+                      <circle cx="12" cy="12" r="4" />
+                      <path d="m19 3-2 2" />
+                      <path d="m21 5-2-2" />
+                    </svg>
+                    <span>Vision</span>
+                  </button>
+                  {QA_BRIDGE_ENABLED ? (
+                    <button
+                      type="button"
+                      className="sb-nav-item sb-nav-item--qa"
+                      onClick={() => setPresentationQaOpen(true)}
+                      title="בדיקת 39 שאלות מצגת — שליחה, סימון ודוח"
+                      aria-label="בדיקות מצגת"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <path d="m9 2 1 2 2 1-2 1-1 2-1-2-2-1 2-1z" />
+                        <path d="M5 21 19 7" />
+                      </svg>
+                      <span>בדיקות</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="sb-nav-item"
+                    onClick={() => setActivityLogOpen(true)}
+                    title="הצג את כל פעילות המודל — הנחיות, בקשות ותשובות"
+                    aria-label="פעילות המודל"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <rect x="8" y="2" width="8" height="4" rx="1" />
+                      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                    </svg>
+                    <span>פעילות</span>
+                    {activityLog.length ? (
+                      <span className="sb-nav-count">{activityLog.length}</span>
+                    ) : null}
+                  </button>
+                </div>
+                {!cameraMode && visibleTextSessions.length > 0 ? (
+                  <div className="sb-recents-label">אחרונות</div>
+                ) : null}
+                <div className="history chat-list">
+                  {cameraMode ? (
+                    <CameraUserProfilePanel
+                      profile={cameraStore.profile}
+                      rollingSummary={cameraStore.rollingSummary}
+                      messageCount={cameraMessages.length}
+                      searchHits={cameraSearchHits}
+                      searchQuery={cameraHistorySearch}
+                      onSearchChange={setCameraHistorySearch}
+                      onSaveProfile={handleSaveCameraProfile}
+                      disabled={isGenerating}
+                    />
+                  ) : (
+                    visibleTextSessions.map((s) => (
+                    <div
+                      key={s.id}
+                      className={`hist-row ${s.id === chatSessionsState.activeId ? "active" : ""}`}
+                    >
+                      <button
+                        type="button"
+                        className="hist-item chat-item"
+                        title={s.title}
+                        onClick={() => {
+                          if (s.id === chatSessionsState.activeId || isGenerating) return;
+                          setChatSessionsState((st) => ({ ...st, activeId: s.id }));
+                          setAssistantBuffer("");
+                          assistantBufferRef.current = "";
+                          setEditingMessageId(null);
+                          setEditDraft("");
+                          setArtifactOpen(false);
+                        }}
+                        disabled={isGenerating}
+                      >
+                        {s.title}
+                      </button>
+                      <button
+                        type="button"
+                        className="hist-delete-btn"
+                        aria-label={`מחק שיחה: ${s.title}`}
+                        title="מחק שיחה"
+                        disabled={isGenerating}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteChatSession(s.id);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))
+                  )}
+                </div>
+                </div>
+                <div className="user-foot">
+                  <ChatMessageAvatar role="user" className="avatar" />
+                  <span>אורח</span>
+                  <button
+                    type="button"
+                    className="sb-settings-btn"
+                    title="הגדרות Gemma"
+                    aria-label="פתח הגדרות"
+                    onClick={() => {
+                      setSettingsModalKey((k) => k + 1);
+                      setSettingsOpen(true);
+                    }}
+                  >
+                    <SidebarSettingsIcon size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </aside>
 
           {rightPanelOpen ? (
@@ -4180,36 +4478,29 @@ function App() {
           ) : null}
 
           <section className={`chat-area ${showLanding ? "chat-area--landing" : ""}`}>
-            {!cameraMode && !sidebarOpen && !rightPanelOpen ? (
-              <>
-                <GameSpotlightDock visible onOpenPanel={() => void openGamesPanelFull()} />
-                <GlobeSpotlightDock visible onOpenPanel={openGlobePanelFull} />
-              </>
-            ) : null}
             <header className="chat-header">
-              {!sidebarOpen ? (
-                <button
-                  type="button"
-                  className="sidebar-toggle"
-                  aria-label="פתח היסטוריה"
-                  aria-expanded={false}
-                  onClick={() => setSidebarOpen(true)}
-                >
-                  <svg width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <line x1="3" y1="12" x2="21" y2="12" />
-                    <line x1="3" y1="6" x2="21" y2="6" />
-                    <line x1="3" y1="18" x2="21" y2="18" />
+              {!cameraMode ? (
+                <div className="chat-header-brand" dir="ltr">
+                  <span className="chat-header-brand-name">GroVee</span>
+                  <svg
+                    className="chat-header-brand-chevron"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden="true"
+                  >
+                    <path d="m6 9 6 6 6-6" />
                   </svg>
-                </button>
-              ) : null}
-              {cameraMode ? (
+                </div>
+              ) : (
                 <div className="camera-mode-header" dir="rtl">
                   <span className="camera-mode-title">🎥 שיחת מצלמה</span>
                   <span className="camera-mode-sub">
                     זיכרון נפרד · {cameraMessages.length} הודעות
                   </span>
                 </div>
-              ) : null}
+              )}
               <div className="chat-header-actions">
                 <LocalContextBar context={startupContext} />
                 {activeArtifact && !artifactOpen ? (
@@ -4221,15 +4512,6 @@ function App() {
                     פתח {activeArtifact.kind === "html" ? "HTML" : "קוד"}
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className="activity-log-btn vision-inspector-btn"
-                  onClick={() => setVisionInspectorOpen(true)}
-                  title="Vision Inspector — זיהוי חי, מודלים וזמני דגימה"
-                  disabled={!cameraMode}
-                >
-                  🔬 Vision
-                </button>
                 {cameraMode ? (
                   <button
                     type="button"
@@ -4244,27 +4526,6 @@ function App() {
                     }}
                   >
                     🗑 זיכרון מצלמה
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="activity-log-btn"
-                  onClick={() => setActivityLogOpen(true)}
-                  title="הצג את כל פעילות המודל — הנחיות, בקשות ותשובות"
-                >
-                  📋 פעילות
-                  {activityLog.length ? (
-                    <span className="activity-log-count">{activityLog.length}</span>
-                  ) : null}
-                </button>
-                {QA_BRIDGE_ENABLED ? (
-                  <button
-                    type="button"
-                    className="activity-log-btn qa-panel-open-btn"
-                    onClick={() => setPresentationQaOpen(true)}
-                    title="בדיקת 39 שאלות מצגת — שליחה, סימון ודוח"
-                  >
-                    🧪 בדיקות
                   </button>
                 ) : null}
               </div>
@@ -4282,9 +4543,10 @@ function App() {
                           className={`msg${msg.kind === "proactive" ? " msg--proactive" : ""}`}
                           dir={isRtlText(msg.content) ? "rtl" : "ltr"}
                         >
-                          <div className={`msg-icon ${msg.role === "user" ? "user" : "ai"}`}>
-                            {msg.role === "user" ? "א" : "HAL"}
-                          </div>
+                          <ChatMessageAvatar
+                            role={msg.role === "user" ? "user" : "assistant"}
+                            variant="hal"
+                          />
                           <div className="msg-txt">
                             {msg.kind === "proactive" ? (
                               <span className="msg-proactive-tag">יוזמה</span>
@@ -4304,9 +4566,7 @@ function App() {
                           className={`msg${msg.role === "user" ? " msg--user" : ""}`}
                           dir={isRtlText(msg.content) ? "rtl" : "ltr"}
                         >
-                          <div className={`msg-icon ${msg.role === "user" ? "user" : "ai"}`}>
-                            {msg.role === "user" ? "א" : "AI"}
-                          </div>
+                          <ChatMessageAvatar role={msg.role === "user" ? "user" : "assistant"} />
                           <div className="msg-txt">
                             {msg.role === "user" ? (
                               <>
@@ -4345,6 +4605,7 @@ function App() {
                                     summary={msg.searchSummary}
                                   />
                                 ) : null}
+                                {msg.timeWidget ? <TimeClockWidget data={msg.timeWidget} /> : null}
                                 {msg.showGameCategories ? (
                                   <GameCategoryPicker
                                     activeCategory={msg.gameBrowseCategory}
@@ -4364,7 +4625,7 @@ function App() {
                       ))}
                   {assistantBuffer && (
                     <article className="msg">
-                      <div className="msg-icon ai">{cameraMode ? "HAL" : "AI"}</div>
+                      <ChatMessageAvatar role="assistant" variant={cameraMode ? "hal" : "default"} />
                       <div className="msg-txt">
                         {streamingSearchSources ? (
                           <SearchProgressPanel
@@ -4404,27 +4665,6 @@ function App() {
               {isLoaded && messages.length > 0 && contextUsage ? (
                 <ContextRing usage={contextUsage} />
               ) : null}
-              <label className="composer-mode-pill" title="מפעיל חשיבה native של Gemma 4 (<|think|>) — תהליך החשיבה יוצג לפני התשובה.">
-                <input
-                  type="checkbox"
-                  checked={thinkingMode}
-                  onChange={(e) => setThinkingMode(e.target.checked)}
-                  disabled={isGenerating}
-                />
-                <span>Think</span>
-              </label>
-              <label
-                className={`composer-mode-pill ${cameraMode ? "composer-mode-pill--active" : ""}`}
-                title="מצב מצלמה חי — תצפית קלה (COCO+תנועה) עם Gemma מוגבל על מחשבים חלשים. מומלץ WASM בהגדרות על נייד."
-              >
-                <input
-                  type="checkbox"
-                  checked={cameraMode}
-                  onChange={() => void toggleCameraMode()}
-                  disabled={isGenerating || (!isLoaded && !QA_VISION_MODE)}
-                />
-                <span>🎥 Camera</span>
-              </label>
               {showCameraInline ? (
                 <CameraPreview
                   ref={cameraVideoRef}
@@ -4514,25 +4754,24 @@ function App() {
                 }}
               />
               <div className="in-box">
-                <button
-                  type="button"
-                  className="in-act in-attach"
-                  disabled={
+                <ComposerPlusMenu
+                  attachDisabled={
                     !isLoaded ||
                     isGenerating ||
                     attachProcessing ||
                     pendingAttachments.length >= MAX_ATTACHMENTS
                   }
-                  aria-label="צרף קובץ"
-                  title="PDF, תמונה, TXT, Word, Excel, HEIC (או הדבק Ctrl+V)"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <path d="M21 15l-5-5L5 21" />
-                  </svg>
-                </button>
+                  onAttachClick={() => fileInputRef.current?.click()}
+                  thinkingMode={thinkingMode}
+                  onThinkingToggle={() => {
+                    if (isGenerating) return;
+                    setThinkingMode((v) => !v);
+                  }}
+                  thinkingDisabled={isGenerating}
+                  cameraMode={cameraMode}
+                  onCameraToggle={() => void toggleCameraMode()}
+                  cameraDisabled={isGenerating || (!isLoaded && !QA_VISION_MODE)}
+                />
                 <textarea
                   ref={textareaRef}
                   id="user-in"
@@ -4564,7 +4803,7 @@ function App() {
                       ? "דבר עם GROVEE…"
                       : pendingAttachments.length
                         ? "שאל על התמונה…"
-                        : "הקלד הודעה או צרף תמונה…"
+                        : "הקלד הודעה…"
                   }
                   rows={1}
                   disabled={!isLoaded}
@@ -4583,22 +4822,38 @@ function App() {
                     </svg>
                   </button>
                 ) : (
-                  <button
-                    type="submit"
-                    className={`in-act in-send ${sendActive ? "in-send--active" : ""}`}
-                    onMouseDown={(e) => e.preventDefault()}
-                    disabled={!isLoaded || !sendActive || isGenerating}
-                    aria-label="שלח"
-                    title="שלח"
-                  >
-                    <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
-                  </button>
+                  <>
+                    <ComposerVoiceMic
+                      disabled={!isLoaded || isGenerating}
+                      onTranscript={appendVoiceTranscript}
+                    />
+                    <button
+                      type="submit"
+                      className={`in-act in-send ${sendActive ? "in-send--active" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      disabled={!isLoaded || !sendActive || isGenerating}
+                      aria-label="שלח"
+                      title="שלח"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path
+                          d="M12 19V5"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="m7 10 5-5 5 5"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </>
                 )}
               </div>
-            </form>
 
                 {showLanding ? (
                   <ChatLandingSuggestions
@@ -4607,6 +4862,7 @@ function App() {
                     onSuggestionClick={applyLandingSuggestion}
                   />
                 ) : null}
+            </form>
               </div>
             </div>
           </section>

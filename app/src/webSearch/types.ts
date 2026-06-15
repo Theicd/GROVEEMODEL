@@ -1,5 +1,7 @@
 /** Web search result types — shared by providers, orchestrator, and UI. */
 
+import type { TimeWidgetData } from "../timeWidget/types";
+
 export type SearchProviderId =
   | "open-meteo"
   | "open-meteo-marine"
@@ -93,6 +95,7 @@ export type SearchSourceResult = {
   url?: string;
   error?: string;
   latencyMs: number;
+  timeWidget?: TimeWidgetData;
 };
 
 export type SearchProgressEvent =

@@ -1,6 +1,7 @@
 import { geocodePlace, formatPlaceLabel } from "../geoResolve";
 import { fetchJson } from "../fetchJson";
 import { getStartupContextSync } from "../../startupContext";
+import type { TimeWidgetData } from "../../timeWidget/types";
 import type { SearchSourceResult } from "../types";
 import {
   extractCountryPhrase,
@@ -62,6 +63,17 @@ const formatLocalTime = (iso: string | undefined): string => {
     return iso;
   }
 };
+
+const toTimeWidget = (
+  place: { name: string; country_code?: string; timezone: string },
+  time: TimeApiZone,
+): TimeWidgetData => ({
+  placeLabel: formatPlaceLabel(place),
+  timezone: time.timeZone ?? place.timezone,
+  anchorIso: time.currentLocalTime ?? new Date().toISOString(),
+  utcOffsetLabel: formatOffset(time.currentUtcOffset?.seconds),
+  dstActive: time.isDayLightSavingActive,
+});
 
 const resolveTimeLocation = (query: string): string | null => {
   const cleaned = sanitizeSearchQuery(query);
@@ -177,6 +189,7 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
           text: lines.join("\n"),
           url: "https://time.now",
           latencyMs: Math.round(performance.now() - started),
+          timeWidget: toTimeWidget(place, time),
         };
       }
       return {
@@ -231,6 +244,7 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
       text: lines.join("\n"),
       url: `https://timeapi.io/timezone/${encodeURIComponent(place.timezone)}`,
       latencyMs: Math.round(performance.now() - started),
+      timeWidget: toTimeWidget(place, time),
     };
   } catch (err) {
     return {

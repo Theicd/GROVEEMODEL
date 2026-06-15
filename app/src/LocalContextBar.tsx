@@ -59,13 +59,20 @@ export function LocalContextBar({ context }: Props) {
 
   return (
     <div className="local-context-bar" dir="ltr" title={`${context.timezone} · ${context.countryName}`}>
-      <span className="local-context-place">{place}</span>
       <span className="local-context-time">{timeLabel}</span>
+      <span className="local-context-sep" aria-hidden="true" />
       <span className="local-context-date">{dateLabel}</span>
+      <span className="local-context-sep" aria-hidden="true" />
+      <span className="local-context-place">{place}</span>
       {wx ? (
-        <span className={`local-context-weather${context.localTempC != null ? " local-context-weather--live" : ""}`}>
-          {wx}
-        </span>
+        <>
+          <span className="local-context-sep" aria-hidden="true" />
+          <span
+            className={`local-context-weather${context.localTempC != null ? " local-context-weather--live" : ""}`}
+          >
+            {wx}
+          </span>
+        </>
       ) : null}
     </div>
   );
