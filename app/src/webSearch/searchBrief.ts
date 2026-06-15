@@ -1,12 +1,60 @@
-import type { SearchIntent, SearchProviderId, SearchSourceResult, SearchBrief, SearchBriefLink } from "./types";
+import type {
+  AnswerShape,
+  SearchIntent,
+  SearchProviderId,
+  SearchSourceResult,
+  SearchBrief,
+  SearchBriefLink,
+} from "./types";
 import { buildDataAgeLines } from "./dataAge";
 import { LIVE_WORLD_LAYERS_HE } from "./searchProviders";
+import {
+  buildCrossSourceCorrelationLines,
+  extractCrossSourceMetrics,
+  shouldBuildCrossSourceCorrelation,
+} from "./crossSourceCorrelation";
 
 export type { SearchBrief, SearchBriefLink };
 
 const MAX_FACTS = 8;
 const MAX_LINKS = 6;
 const MAX_FACT_LEN = 120;
+
+/** Per-provider fact caps before rerank — keeps brief focused. */
+const PROVIDER_FACT_CAPS: Partial<Record<SearchProviderId, number>> = {
+  github: 3,
+  "open-meteo": 6,
+  "open-meteo-marine": 4,
+  "open-meteo-air-quality": 4,
+  "usgs-earthquake": 6,
+  "adsb-aviation": 5,
+  "ais-ships": 6,
+  "osm-overpass-marine": 5,
+  "wikipedia-en": 3,
+  "wikipedia-he": 3,
+  "news-rss": 4,
+  arxiv: 4,
+  "url-context": 6,
+  searxng: 4,
+  "world-time": 4,
+};
+
+const INTENT_PROVIDER_PRIORITY: Partial<Record<SearchIntent, SearchProviderId[]>> = {
+  weather: ["open-meteo"],
+  airquality: ["open-meteo-air-quality", "open-meteo"],
+  aviation: ["adsb-aviation"],
+  ships: ["ais-ships"],
+  "marine-infra": ["osm-overpass-marine", "ais-ships"],
+  marine: ["open-meteo-marine"],
+  earthquake: ["usgs-earthquake"],
+  news: ["news-rss"],
+  government: ["wikidata-gov"],
+  wikipedia: ["wikipedia-he", "wikipedia-en"],
+  github: ["github"],
+  link: ["url-context"],
+  arxiv: ["arxiv"],
+  satellite: ["iss-tracker", "celestrak"],
+};
 
 const truncate = (s: string, max = MAX_FACT_LEN) =>
   s.length <= max ? s : `${s.slice(0, max - 1).trim()}…`;
@@ -25,6 +73,14 @@ const formatWeather = (text: string): string[] => {
   );
   const picked = (priority.length ? priority : lines).slice(0, 7);
   return picked.map((l) => truncate(l));
+};
+
+const formatAirQuality = (text: string): string[] => {
+  const lines = text.split("\n").filter(Boolean);
+  const priority = lines.filter((l) =>
+    /^(מיקום|זמן|US AQI|PM2|PM10|NO₂|O₃|ANSWER \(air quality\))/i.test(l.trim()),
+  );
+  return (priority.length ? priority : lines).slice(0, 6).map((l) => truncate(l));
 };
 
 const formatEarthquake = (text: string): string[] => {
@@ -78,6 +134,7 @@ const formatGeneric = (text: string): string[] =>
 const providerFormatters: Partial<Record<SearchProviderId, (text: string) => string[]>> = {
   github: formatGithub,
   "open-meteo": formatWeather,
+  "open-meteo-air-quality": formatAirQuality,
   "open-meteo-marine": formatGeneric,
   "world-time": formatWorldTime,
   "wikipedia-en": formatWikipedia,
@@ -96,25 +153,91 @@ const providerFormatters: Partial<Record<SearchProviderId, (text: string) => str
   "hacker-news": formatGeneric,
   "adsb-aviation": formatGeneric,
   "iss-tracker": formatGeneric,
+  arxiv: formatGeneric,
+};
+
+const factProvider = (fact: string): SearchProviderId | null => {
+  const labelMatch = fact.match(/^\[([^\]]+)\]/);
+  if (!labelMatch) return null;
+  const label = labelMatch[1].toLowerCase();
+  if (/מזג|weather|open-meteo/i.test(label) && !/air|אוויר/i.test(label)) return "open-meteo";
+  if (/אוויר|air quality/i.test(label)) return "open-meteo-air-quality";
+  if (/ads-b|תעופה|aviation/i.test(label)) return "adsb-aviation";
+  if (/ספינ|ais|ship/i.test(label)) return "ais-ships";
+  if (/github/i.test(label)) return "github";
+  if (/usgs|רעיד/i.test(label)) return "usgs-earthquake";
+  if (/wikipedia/i.test(label)) return label.includes("he") ? "wikipedia-he" : "wikipedia-en";
+  if (/wikidata|ממשל/i.test(label)) return "wikidata-gov";
+  if (/חדשות|news/i.test(label)) return "news-rss";
+  return null;
+};
+
+const scoreFact = (
+  fact: string,
+  intents: SearchIntent[],
+  query: string,
+  answerShape?: AnswerShape,
+): number => {
+  let score = 0;
+  const provider = factProvider(fact);
+  for (let i = 0; i < intents.length; i++) {
+    const intent = intents[i];
+    const prefs = INTENT_PROVIDER_PRIORITY[intent] ?? [];
+    const idx = provider ? prefs.indexOf(provider) : -1;
+    if (idx >= 0) score += 100 - idx * 10 - i * 5;
+  }
+  if (/ANSWER/i.test(fact)) score += 50;
+  if (answerShape === "count" && /\d+/.test(fact)) score += 30;
+  if (answerShape === "short_fact" && /ANSWER|מיקום|US AQI|מטוסים בטווח|ספינות בטווח/i.test(fact)) {
+    score += 20;
+  }
+  if (answerShape === "overview" && provider?.startsWith("wikipedia")) score += 25;
+  if (answerShape === "bullet_list") score += 5;
+  if (/רוח|wind/i.test(query) && /רוח|wind/i.test(fact)) score += 40;
+  if (/pm2|aqi|איכות/i.test(query) && /AQI|PM2/i.test(fact)) score += 40;
+  return score;
+};
+
+export const rerankBriefFacts = (
+  facts: string[],
+  intents: SearchIntent[],
+  query: string,
+  answerShape?: AnswerShape,
+): string[] => {
+  if (facts.length <= 1) return facts;
+  return [...facts].sort(
+    (a, b) => scoreFact(b, intents, query, answerShape) - scoreFact(a, intents, query, answerShape),
+  );
 };
 
 export const buildSearchBrief = (
   sources: SearchSourceResult[],
   intents: SearchIntent[],
-  _query: string,
+  query: string,
   _maxChars = 800,
+  answerShape?: AnswerShape,
 ): SearchBrief => {
   const facts: string[] = [];
-  const maxFacts = intents.length >= 2 ? 14 : MAX_FACTS;
+  const maxFacts =
+    answerShape === "short_fact"
+      ? 5
+      : answerShape === "bullet_list"
+        ? 16
+        : intents.length >= 2
+          ? 14
+          : MAX_FACTS;
   const links: SearchBriefLink[] = [];
   const gaps: string[] = [];
 
   for (const s of sources) {
     if (s.ok && s.text.trim()) {
       const fmt = providerFormatters[s.provider] ?? formatGeneric;
+      const cap = PROVIDER_FACT_CAPS[s.provider] ?? 4;
+      let added = 0;
       for (const f of fmt(s.text)) {
-        if (facts.length >= maxFacts) break;
+        if (facts.length >= maxFacts || added >= cap) break;
         facts.push(`[${s.label}] ${f}`);
+        added++;
       }
       if (s.url && links.length < MAX_LINKS) {
         links.push({ label: s.label, url: s.url });
@@ -129,7 +252,20 @@ export const buildSearchBrief = (
     gaps.unshift("לא נמצאו נתונים חיים לשאלה זו");
   }
 
-  return { facts, links, gaps, intents };
+  const rankedFacts = rerankBriefFacts(facts, intents, query, answerShape).slice(0, maxFacts);
+
+  return { facts: rankedFacts, links, gaps, intents };
+};
+
+const answerShapeInstructions = (shape?: AnswerShape): string[] => {
+  if (!shape) return [];
+  const map: Record<AnswerShape, string> = {
+    short_fact: "ANSWER SHAPE: short_fact — one crisp Hebrew sentence; lead with ANSWER line if present.",
+    count: "ANSWER SHAPE: count — lead with a number (מטוסים/ספינות/AQI/מagnitude).",
+    bullet_list: "ANSWER SHAPE: bullet_list — 2–4 short bullets in Hebrew.",
+    overview: "ANSWER SHAPE: overview — 3–4 sentences summarizing key sources.",
+  };
+  return [map[shape]];
 };
 
 export const formatSearchBriefContext = (
@@ -137,6 +273,8 @@ export const formatSearchBriefContext = (
   query: string,
   maxChars = 900,
   sources: SearchSourceResult[] = [],
+  answerShape?: AnswerShape,
+  regionLabel?: string,
 ): string => {
   const lines = [
     `[SEARCH BRIEF — live data for: ${truncate(query, 80)}]`,
@@ -145,6 +283,17 @@ export const formatSearchBriefContext = (
     "If DATA AGE exists — say «עדכון אחרון מ-…», NOT «כרגע» as intraday.",
     "Max 4 sentences. No philosophy. No follow-up questions.",
   ];
+  if (regionLabel) {
+    lines.splice(2, 0, `SHARED REGION: ${regionLabel} — compare sources for this area.`);
+  }
+  lines.splice(2, 0, ...answerShapeInstructions(answerShape));
+  if (shouldBuildCrossSourceCorrelation(query, brief.intents)) {
+    const metrics = extractCrossSourceMetrics(sources, regionLabel);
+    const correlation = buildCrossSourceCorrelationLines(query, metrics, brief.intents);
+    if (correlation.length) {
+      lines.splice(2, 0, ...correlation);
+    }
+  }
   const dataAgeLines = buildDataAgeLines(sources);
   if (dataAgeLines.length) {
     lines.push(...dataAgeLines);
@@ -170,6 +319,12 @@ export const formatSearchBriefContext = (
   if (brief.intents.includes("aviation") && brief.facts.some((f) => /מטוסים בטווח:/.test(f))) {
     const countFact = brief.facts.find((f) => /מטוסים בטווח:/.test(f));
     if (countFact) lines.splice(4, 0, `ANSWER (aircraft count): ${countFact.replace(/^\[[^\]]+\]\s*/, "")}`);
+  }
+  if (brief.intents.includes("airquality") && brief.facts.some((f) => /ANSWER \(air quality\)|US AQI/i.test(f))) {
+    const aqFact =
+      brief.facts.find((f) => /ANSWER \(air quality\)/i.test(f)) ??
+      brief.facts.find((f) => /US AQI/i.test(f));
+    if (aqFact) lines.splice(4, 0, `ANSWER (air quality): ${aqFact.replace(/^\[[^\]]+\]\s*/, "")}`);
   }
   if (brief.intents.includes("marine-infra") && brief.facts.some((f) => /תשתיות ימיות/.test(f))) {
     const infraFact = brief.facts.find((f) => /תשתיות ימיות/.test(f));
@@ -214,6 +369,9 @@ export const formatSearchBriefContext = (
   }
   if (brief.intents.length >= 2) {
     lines.push("CROSS-SOURCE: Compare FACTS from each source; say yes/no/partly + cite labels.");
+    if (regionLabel) {
+      lines.push(`CROSS-SOURCE GEO: All sources scoped to «${regionLabel}» when possible.`);
+    }
   }
   if (brief.intents.some((i) => ["ships", "marine-infra", "aviation", "satellite", "earthquake"].includes(i))) {
     lines.push(`LIVE WORLD: ${LIVE_WORLD_LAYERS_HE}`);

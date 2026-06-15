@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fetchNewsSearch, parseRssTitles } from "./newsRss";
-import { extractNewsSite, isWorldHeadlineQuery } from "../queryExtract";
+import { fetchNewsSearch, parseRssTitles, selectNewsFeedKeys } from "./newsRss";
+import { extractNewsSite, isWorldHeadlineQuery, isGeneralNewsDigestQuery } from "../queryExtract";
 
 vi.mock("../fetchJson", () => ({
   fetchText: vi.fn(),
@@ -16,6 +16,12 @@ const rss = (titles: string[]) =>
 describe("news RSS", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+  });
+
+  it("detects general news digest as multi-feed", () => {
+    expect(isGeneralNewsDigestQuery("ספר לי מה חדש היום בחדשות")).toBe(true);
+    expect(extractNewsSite("ספר לי מה חדש היום בחדשות")).toBeNull();
+    expect(selectNewsFeedKeys("ספר לי מה חדש היום בחדשות").length).toBeGreaterThanOrEqual(3);
   });
 
   it("detects B01 as world headline query", () => {
@@ -46,7 +52,7 @@ describe("news RSS", () => {
     expect(result.text).toMatch(/\[CNN\]/);
     expect(result.text).toMatch(/\[Reuters\]/);
     expect(result.text).toMatch(/\[Guardian\]/);
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
 
   it("uses single feed for BBC-specific query", async () => {

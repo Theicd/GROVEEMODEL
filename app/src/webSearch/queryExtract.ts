@@ -345,18 +345,33 @@ export const extractPoiNearQuery = (query: string): { poi: string; near: string 
   return null;
 };
 
+/** «מה חדש בחדשות», «ספר לי חדשות היום» — multi-RSS, not BBC-only. */
+export const isGeneralNewsDigestQuery = (query: string): boolean => {
+  const q = query.trim();
+  if (!q) return false;
+  if (/(?:bbc|cnn|reuters|guardian|ynet)\b/i.test(q)) return false;
+  return (
+    (/(?:מה\s+חדש|what'?s\s+new|עדכונ(?:ים|י)|כותרות|headlines?|ספר\s+לי|תן\s+לי)/i.test(q) &&
+      /(?:חדשות|\bnews\b)/i.test(q)) ||
+    /(?:חדשות\s+(?:ה)?יום|חדשות\s+עכשיו|news\s+today|today'?s\s+news)/i.test(q) ||
+    (/חדשות/i.test(q) && /(?:היום|עכשיו|כרגע|today|now|latest|אחרונ)/i.test(q))
+  );
+};
+
 /** World / international headline — aggregate several RSS feeds. */
 export const isWorldHeadlineQuery = (query: string): boolean =>
-  /(?:בעולם|באזור|global|world|בינלאומ|international)/i.test(query) &&
-  /(?:כותרת|headline|חדשות|news)/i.test(query);
+  (/(?:בעולם|באזור|global|world|בינלאומ|international)/i.test(query) &&
+    /(?:כותרת|headline|חדשות|news)/i.test(query)) ||
+  isGeneralNewsDigestQuery(query);
 
-/** News site hint e.g. BBC. Returns null → multi-feed world headlines. */
+/** News site hint e.g. BBC. Returns null → multi-feed headlines. */
 export const extractNewsSite = (query: string): string | null => {
   if (/bbc/i.test(query)) return "bbc";
   if (/cnn/i.test(query)) return "cnn";
   if (/ynet|ynetnews/i.test(query)) return "ynet";
   if (/reuters/i.test(query)) return "reuters";
   if (/guardian/i.test(query)) return "guardian";
+  if (isGeneralNewsDigestQuery(query)) return null;
   if (isWorldHeadlineQuery(query)) return null;
   if (
     /(?:artificial\s+intelligence|\bai\b|machine\s+learning|בינה\s+מלאכותית|openai|llm)/i.test(query) &&
@@ -364,7 +379,7 @@ export const extractNewsSite = (query: string): string | null => {
   ) {
     return null;
   }
-  if (/ישראל|israel/i.test(query) && /(?:היום|כרגע|קור(?:ה|ה)|news|חדשות)/i.test(query)) return "ynet";
-  if (/כותרות|חדשות|news|headline|כותרת/i.test(query)) return "bbc";
+  if (/ישראל|israel/i.test(query) && /(?:היום|כרגע|קור(?:ה|ה)|news|חדשות)/i.test(query)) return null;
+  if (/כותרות|חדשות|news|headline|כותרת/i.test(query)) return null;
   return null;
 };

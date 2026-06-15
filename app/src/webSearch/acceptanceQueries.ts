@@ -90,11 +90,11 @@ export const ACCEPTANCE_QUERIES: AcceptanceQuery[] = [
   {
     id: "K01",
     category: "Wikipedia",
-    query: "who was Albert Einstein",
+    query: "חפש מידע על Albert Einstein",
     expectIntents: ["wikipedia"],
-    expectProvidersOk: ["wikipedia-en"],
+    expectProvidersOk: ["wikipedia-en", "wikipedia-he"],
     expectTextIncludes: ["Einstein"],
-    notesHe: "extract מלא מאנגלית",
+    notesHe: "Wikipedia רק עם חיפוש מפורש",
   },
   {
     id: "K02",
@@ -165,7 +165,7 @@ export const ACCEPTANCE_QUERIES: AcceptanceQuery[] = [
     query: "מה הבירה של גרמניה",
     expectIntents: ["country"],
     expectProvidersOk: ["rest-countries"],
-    expectTextIncludes: ["Berlin"],
+    expectTextIncludes: ["Berlin", "ברלין"],
     notesHe: "REST Countries",
   },
   {
@@ -208,10 +208,10 @@ export const ACCEPTANCE_QUERIES: AcceptanceQuery[] = [
     id: "X01",
     category: "Router",
     query: "מה קורה עם React hooks",
-    expectIntents: ["github", "wikipedia"],
-    expectProvidersOk: ["wikipedia-en", "github"],
+    expectIntents: ["github"],
+    expectProvidersOk: ["github"],
     expectTextIncludes: [],
-    notesHe: "שאלה טכנית — wiki + github fallback",
+    notesHe: "שאלה טכנית — GitHub (Wikipedia רק בחיפוש מפורש)",
   },
   // --- QA מלא (2026-06-13) ---
   { id: "QA-B01", category: "בסיסיות", query: "מה המטבע של ברזיל?", expectIntents: ["country"], expectProvidersOk: ["rest-countries"], expectTextIncludes: ["BRL"], notesHe: "REST Countries" },
@@ -246,6 +246,20 @@ export const ACCEPTANCE_QUERIES: AcceptanceQuery[] = [
   { id: "QA-ISS2", category: "חלל", query: "איפה תחנת החלל הבינלאומית עכשיו?", expectIntents: ["satellite"], expectProvidersOk: ["iss-tracker"], expectTextIncludes: ["קו"], notesHe: "" },
   { id: "QA-SH2", category: "ספינות", query: "כמה כלי שייט או אוניות יש במפרץ חיפה?", expectIntents: ["ships"], expectProvidersOk: ["ais-ships"], expectTextIncludes: ["ספינות בטווח"], notesHe: "Haifa bay + medPorts route markers" },
   { id: "QA-SH3", category: "תשתיות ימיות", query: "כמה מצופים יש במפרץ חיפה?", expectIntents: ["marine-infra"], expectProvidersOk: ["osm-overpass-marine"], expectTextIncludes: ["תשתיות"], notesHe: "Overpass OSM static infra" },
+  { id: "QA-AV2", category: "טיסות", query: "מה העומס בשמי ישראל?", expectIntents: ["aviation"], expectProvidersOk: ["adsb-aviation"], expectTextIncludes: [], notesHe: "synonym routing Phase 1" },
+  { id: "QA-AQ1", category: "איכות אוויר", query: "מה איכות האוויר בתל אביב?", expectIntents: ["airquality"], expectProvidersOk: ["open-meteo-air-quality"], expectTextIncludes: ["AQI", "PM2.5"], notesHe: "Open-Meteo Air Quality Phase 3B" },
+  { id: "QA-AR1", category: "arXiv", query: "חפש מאמרים על transformer ב-arxiv", expectIntents: ["arxiv"], expectProvidersOk: ["arxiv"], expectTextIncludes: ["arxiv"], notesHe: "arXiv Atom API Phase 3B" },
+  { id: "QA-AV3", category: "טיסות", query: "כמה מטוסים מעל ישראל?", expectIntents: ["aviation"], expectProvidersOk: ["adsb-aviation"], expectTextIncludes: [], notesHe: "audit — ADS-B only" },
+  { id: "QA-D01", category: "סופות", query: "האם יש סופה פעילה באירופה?", expectIntents: ["disaster", "weather"], expectProvidersOk: ["gdacs-disasters", "open-meteo"], expectTextIncludes: [], notesHe: "multi-source storm" },
+  { id: "QA-SH4", category: "ספינות", query: "האם יש אוניות באזור סואץ?", expectIntents: ["ships"], expectProvidersOk: ["ais-ships"], expectTextIncludes: [], notesHe: "Suez canal AIS" },
+  { id: "QA-X01", category: "cross-source", query: "מה קורה באזור רעידת אדמה?", expectIntents: ["earthquake"], expectProvidersOk: ["usgs-earthquake"], expectTextIncludes: [], notesHe: "cross-source expands earthquake+marine" },
+  { id: "QA-X02", category: "cross-source", query: "האם יש קשר בין סופה לתנועה ימית?", expectIntents: ["disaster", "weather", "ships"], expectProvidersOk: ["gdacs-disasters", "open-meteo", "ais-ships"], expectTextIncludes: [], notesHe: "storm + ships planner" },
+  { id: "QA-X03", category: "cross-source", query: "מה מזג האוויר וכמה מטוסים מעל ישראל?", expectIntents: ["weather", "aviation"], expectProvidersOk: ["open-meteo", "adsb-aviation"], expectTextIncludes: [], notesHe: "weather + aviation" },
+  { id: "QA-WF1", category: "web-fallback", query: "מה קורה בעולם הרובוטיקה?", expectIntents: ["hackernews", "github", "arxiv"], expectProvidersOk: ["hacker-news", "github"], expectTextIncludes: [], notesHe: "Topical → HN + GitHub + arXiv (+ optional SearXNG)" },
+  { id: "QA-WF2", category: "web-fallback", query: "מה קורה בעולם?", expectIntents: ["news"], expectProvidersOk: ["news-rss", "searxng"], expectTextIncludes: [], notesHe: "Bare world → RSS + SearXNG blend" },
+  { id: "QA-WF3", category: "web-fallback", query: "מה חדש בתחום הבינה המלאכותית?", expectIntents: ["hackernews", "github", "huggingface"], expectProvidersOk: ["hacker-news", "github"], expectTextIncludes: [], notesHe: "Timely overview — multi-source" },
+  { id: "QA-WF4", category: "web-fallback", query: "מה חדש בעולם הגיימינג?", expectIntents: ["hackernews", "github"], expectProvidersOk: ["hacker-news", "github"], expectTextIncludes: [], notesHe: "Gaming topical — ≥2 live APIs + Gemma" },
+  { id: "QA-LK1", category: "קישור", query: "https://github.com/Theicd/GROVEEMODEL", expectIntents: ["link"], expectProvidersOk: ["url-context"], expectTextIncludes: ["GitHub"], notesHe: "URL context — GitHub API" },
 ];
 
 /** שאלות שדורשות API key / proxy — צפוי הודעת unsupported ברורה */
@@ -260,7 +274,7 @@ export const QA_UNSUPPORTED_QUERIES: Array<{ id: string; query: string; reasonHe
 /** מקורות מידע — יעד ארכיטקטורה */
 export const DATA_SOURCE_REGISTRY: Array<{ name: string; status: "live" | "partial" | "planned" | "needs-key"; notesHe: string }> = [
   { name: "Wikipedia / Wikidata", status: "live", notesHe: "wiki + SPARQL ממשל" },
-  { name: "Open-Meteo", status: "live", notesHe: "מזג אוויר + marine" },
+  { name: "Open-Meteo", status: "live", notesHe: "מזג אוויר + marine + איכות אוויר" },
   { name: "OpenStreetMap / Nominatim", status: "live", notesHe: "POI, מרחקים OSRM, Overpass תשתיות ימיות" },
   { name: "TimeAPI.io", status: "live", notesHe: "שעון עולמי" },
   { name: "Frankfurter", status: "live", notesHe: "מטבעות FX" },
@@ -273,9 +287,10 @@ export const DATA_SOURCE_REGISTRY: Array<{ name: string; status: "live" | "parti
   { name: "News RSS", status: "partial", notesHe: "CORS על חלק מהפידים" },
   { name: "Reddit", status: "needs-key", notesHe: "OAuth" },
   { name: "Finnhub / Alpha Vantage", status: "needs-key", notesHe: "מניות/סחורות" },
-  { name: "SearXNG / Brave Search", status: "planned", notesHe: "דורש self-host או API key" },
-  { name: "Overpass API", status: "planned", notesHe: "POI מתקדם" },
-  { name: "arXiv", status: "planned", notesHe: "מאמרים" },
+  { name: "SearXNG", status: "partial", notesHe: "fallback — VITE_SEARXNG_URL" },
+  { name: "Overpass API", status: "live", notesHe: "POI + תשתיות ימיות" },
+  { name: "arXiv", status: "live", notesHe: "מאמרים מדעיים (Atom API)" },
+  { name: "REST Countries v5", status: "partial", notesHe: "Wikidata fallback; v5 דורש VITE_RESTCOUNTRIES_API_KEY" },
 ];
 
 /** Quick manual checklist for UI testing (Search toggle ON unless noted). */

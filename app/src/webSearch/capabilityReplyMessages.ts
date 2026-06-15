@@ -16,7 +16,15 @@ import { issSearchResultFromLiveWorld } from "../liveWorld/issSnapshot";
 import { getCachedLiveWorldSnapshot } from "../liveWorld/snapshotStore";
 import { buildMilitaryAviationText } from "../liveWorld/militaryAviation";
 import { buildMarineLiveReply } from "./marineReplyMessages";
-import type { SearchIntent, SearchSourceResult } from "./types";
+import { detectImpossiblePlace } from "./entityValidation";
+import { isCrossSourceQuery } from "./crossSourceIntents";
+import { isTopicalOverviewRouting } from "./topicalEnrichment";
+import { isGeneralNewsDigestQuery } from "./queryExtract";
+import {
+  buildCrossSourceCorrelationLines,
+  extractCrossSourceMetrics,
+} from "./crossSourceCorrelation";
+import type { AnswerShape, SearchIntent, SearchSourceResult } from "./types";
 
 const PROVIDER_INTROS: Partial<Record<SearchSourceResult["provider"], string>> = {
   "news-rss": "לפי עדכוני RSS:",
@@ -24,6 +32,7 @@ const PROVIDER_INTROS: Partial<Record<SearchSourceResult["provider"], string>> =
   "frankfurter-fx": "לפי Frankfurter (ECB):",
   "yahoo-finance": "לפי Yahoo Finance:",
   coingecko: "לפי CoinGecko:",
+  searxng: "לפי SearXNG:",
   "usgs-earthquake": "לפי USGS (רעידות אדמה):",
   "open-meteo": "לפי Open-Meteo (מזג אוויר):",
   "open-meteo-marine": "לפי Open-Meteo Marine (גלים):",
@@ -372,6 +381,78 @@ const buildOverviewReply = (sources: SearchSourceResult[]): string | null => {
   ].join("\n");
 };
 
+const formatCrossSourceCanned = (
+  correlationLines: string[],
+  metrics: ReturnType<typeof extractCrossSourceMetrics>,
+  sources: SearchSourceResult[],
+  answerShape?: AnswerShape,
+): string => {
+  const labels = sources.map((s) => s.label).join(", ");
+  const synthesis = correlationLines[0]?.replace(/^CORRELATION(?:: GEO)?:\s*/, "") ?? "";
+
+  if (answerShape === "count") {
+    const nums: string[] = [];
+    if (metrics.aviation) nums.push(`${metrics.aviation.count} מטוסים`);
+    if (metrics.ships) nums.push(`${metrics.ships.count} ספינות`);
+    if (metrics.airQuality?.aqi != null) nums.push(`AQI ${metrics.airQuality.aqi}`);
+    if (metrics.weather?.windKmh != null) nums.push(`רוח ${metrics.weather.windKmh} km/h`);
+    return [nums.length ? nums.join(" · ") : synthesis, synthesis, `Sources: ${labels}`]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (answerShape === "bullet_list") {
+    const bullets: string[] = [];
+    if (metrics.weather) {
+      bullets.push(
+        `• מז"א: ${metrics.weather.condition ?? "—"}${metrics.weather.windKmh ? `, רוח ${metrics.weather.windKmh} km/h` : ""}`,
+      );
+    }
+    if (metrics.aviation) bullets.push(`• ADS-B: ${metrics.aviation.count} מטוסים`);
+    if (metrics.ships) bullets.push(`• AIS: ${metrics.ships.count} ספינות`);
+    if (metrics.airQuality?.aqi != null) bullets.push(`• איכות אוויר: US AQI ${metrics.airQuality.aqi}`);
+    return [synthesis, ...bullets, `Sources: ${labels}`].filter(Boolean).join("\n");
+  }
+
+  if (answerShape === "overview") {
+    const sections = sources.slice(0, 4).map((s) => {
+      const preview = s.text.trim().split("\n").slice(0, 3).join(" · ");
+      return `${s.label}: ${preview}`;
+    });
+    return [synthesis, ...sections, `Sources: ${labels}`].join("\n");
+  }
+
+  return [synthesis, `Sources: ${labels}`].join("\n");
+};
+
+/** Canned cross-source reply when correlation + 2+ live sources (Phase 5). */
+export const buildCrossSourceLiveReply = (
+  query: string,
+  intents: SearchIntent[],
+  sources: SearchSourceResult[],
+  answerShape?: AnswerShape,
+  regionLabel?: string,
+): string | null => {
+  if (!isCrossSourceQuery(query) && intents.length < 2) return null;
+
+  const ok = sources.filter((s) => s.ok && s.text.trim());
+  if (ok.length < 2) return null;
+
+  const metrics = extractCrossSourceMetrics(sources, regionLabel);
+  const correlation = buildCrossSourceCorrelationLines(query, metrics, intents);
+  if (!correlation.length) return null;
+
+  if (
+    answerShape === "overview" ||
+    /^האם\s+/i.test(query) ||
+    /קשר\s+בין|הצלב|compare|yes\s+or\s+no/i.test(query)
+  ) {
+    return formatCrossSourceCanned(correlation, metrics, ok, answerShape ?? "short_fact");
+  }
+
+  return null;
+};
+
 const buildUnsupportedReply = (query: string): string | null => {
   for (const { re, text } of UNSUPPORTED_REPLIES) {
     if (re.test(query)) return text;
@@ -425,14 +506,99 @@ const pickPrimarySource = (
   return ok[0];
 };
 
+export type CapabilityLiveReplyOptions = {
+  answerShape?: AnswerShape;
+  regionLabel?: string;
+};
+
+const stripScore = (line: string): string =>
+  line.replace(/^\d+\.\s*/, "").replace(/\s*\(★[\d,]+\).*$/i, "").trim();
+
+/** Bullet reply from ALL ok sources — no Gemma fluff for overview/news digest. */
+export function buildOverviewMultiSourceReply(
+  query: string,
+  sources: SearchSourceResult[],
+): string | null {
+  const ok = sources.filter((s) => s.ok && s.text.trim());
+  if (!ok.length) return null;
+
+  const bullets: string[] = [];
+  const labels: string[] = [];
+
+  for (const ns of ok.filter((s) => s.provider === "news-rss")) {
+    const headline =
+      ns.text.match(/ANSWER \(headline\):\s*\[([^\]]+)\]\s*(.+)/) ??
+      ns.text.match(/^\[([^\]]+)\]\s*1\.\s*(.+)/m);
+    if (headline) {
+      bullets.push(`• [${headline[1]}] ${headline[2].trim()}`);
+    } else {
+      const row = ns.text.split("\n").find((l) => /^\[(BBC|CNN|Reuters|Guardian|ynet)\]/i.test(l.trim()));
+      if (row) bullets.push(`• ${row.trim()}`);
+    }
+    labels.push(ns.label.replace(/^חדשות \(/, "").replace(/\)$/, ""));
+  }
+
+  const hn = ok.find((s) => s.provider === "hacker-news");
+  if (hn) {
+    for (const line of hn.text.split("\n").filter((l) => /^\d+\./.test(l.trim())).slice(0, 3)) {
+      bullets.push(`• [Hacker News] ${stripScore(line)}`);
+    }
+    labels.push("Hacker News");
+  }
+
+  const gh = ok.find((s) => s.provider === "github");
+  if (gh) {
+    for (const line of gh.text.split("\n").filter((l) => /^\d+\.|★/.test(l)).slice(0, 2)) {
+      bullets.push(`• [GitHub] ${stripScore(line)}`);
+    }
+    labels.push("GitHub Repositories");
+  }
+
+  for (const s of ok.filter((x) => x.provider === "huggingface-models")) {
+    const row = s.text.split("\n").find((l) => /^\d+\.|ANSWER/i.test(l));
+    if (row) bullets.push(`• [Hugging Face] ${stripScore(row)}`);
+    labels.push("Hugging Face");
+  }
+
+  for (const s of ok.filter((x) => x.provider === "arxiv")) {
+    const row = s.text.split("\n").find((l) => /^\d+\./.test(l.trim()));
+    if (row) bullets.push(`• [arXiv] ${stripScore(row)}`);
+    labels.push("arXiv");
+  }
+
+  if (!bullets.length) return null;
+
+  const intro = isGeneralNewsDigestQuery(query)
+    ? "כותרות חדשות עדכניות ממקורות מרובים:"
+    : isTopicalOverviewRouting(query)
+      ? "עדכונים מהמקורות שנמצאו:"
+      : "סיכום מהמקורות:";
+
+  return [
+    intro,
+    ...bullets.slice(0, 8),
+    `Sources: [${[...new Set(labels)].join(", ")}]`,
+  ].join("\n");
+}
+
 /** Fixed Hebrew when live providers returned data — avoids LLM ignoring SEARCH BRIEF. */
 export function buildCapabilityLiveReply(
   query: string,
   intents: SearchIntent[],
   sources: SearchSourceResult[],
+  options?: CapabilityLiveReplyOptions,
 ): string | null {
   const q = query.trim();
   if (!q) return null;
+
+  const impossible = detectImpossiblePlace(q);
+  if (impossible && /(?:מטוס|aircraft|weather|מזג|ספינ|ship)/i.test(q)) {
+    return [
+      `אין נתונים חיים ב-${impossible} — מקורות ADS-B, מזג אוויר ו-AIS זמינים רק לכדור הארץ.`,
+      "נסה שאלה על אזור גיאוגרפי מוגדר (ישראל, ים תיכון, לונדון).",
+      `Sources: (none — ${impossible})`,
+    ].join("\n");
+  }
 
   const unsupportedEarly = buildUnsupportedReply(q);
   const unsupported = unsupportedEarly;
@@ -463,6 +629,25 @@ export function buildCapabilityLiveReply(
     if (overview) return overview;
   }
 
+  const crossSource = buildCrossSourceLiveReply(
+    q,
+    intents,
+    sources,
+    options?.answerShape,
+    options?.regionLabel,
+  );
+  if (crossSource) return crossSource;
+
+  if (
+    isTopicalOverviewRouting(q) ||
+    isGeneralNewsDigestQuery(q) ||
+    options?.answerShape === "overview" ||
+    options?.answerShape === "bullet_list"
+  ) {
+    const multi = buildOverviewMultiSourceReply(q, sources);
+    if (multi) return multi;
+  }
+
   const primary = pickPrimarySource(q, intents, sources);
   if (primary) return formatGenericSource(primary);
 
@@ -472,6 +657,30 @@ export function buildCapabilityLiveReply(
 
   if (unsupported) return unsupported;
   return null;
+}
+
+/** Web fallback (SearXNG) failed or not configured — bypass LLM hallucination. */
+export function buildWebFallbackNoDataReply(
+  query: string,
+  sources: SearchSourceResult[],
+): string | null {
+  const q = query.trim();
+  if (!q) return null;
+  if (sources.some((s) => s.ok && s.text.trim())) return null;
+
+  const searx = sources.find((s) => s.provider === "searxng");
+  if (!searx && sources.length > 0) return null;
+
+  const err = searx?.error ?? "";
+  const reason = err.includes("לא מוגדר")
+    ? "חיפוש web (SearXNG) לא מוגדר — הוסף VITE_SEARXNG_URL בקובץ .env והפעל מחדש."
+    : err.trim() || "חיפוש web נכשל (timeout / CORS / שרת לא זמין).";
+
+  return [
+    `לא הצלחתי להביא מידע עדכני מהרשת לשאלה הזו.`,
+    reason,
+    "Sources: (none — fetch failed)",
+  ].join("\n");
 }
 
 export { buildMarineLiveReply, formatGenericSource, pickPrimarySource };

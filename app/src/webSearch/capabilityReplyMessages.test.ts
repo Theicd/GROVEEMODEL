@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clearLiveWorldSnapshotCache, setLiveWorldSnapshot } from "../liveWorld/snapshotStore";
-import { buildCapabilityLiveReply } from "./capabilityReplyMessages";
+import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
 import type { SearchSourceResult } from "./types";
 
 const src = (over: Partial<SearchSourceResult>): SearchSourceResult => ({
@@ -136,5 +136,66 @@ describe("buildCapabilityLiveReply", () => {
     );
     expect(reply).toMatch(/AWACS|NATO|עולם חי/i);
     expect(reply).not.toMatch(/לא ניתן לספור AWACS/);
+  });
+
+  it("returns cross-source canned reply for storm + aircraft question", () => {
+    const reply = buildCapabilityLiveReply(
+      "האם יש סופה באזור ישראל וגם מטוסים",
+      ["weather", "aviation"],
+      [
+        src({
+          provider: "open-meteo",
+          label: "מזג אוויר",
+          text: "מיקום: Israel\nמצב: סופת רעמים\nרוח: 50 km/h",
+        }),
+        src({
+          provider: "adsb-aviation",
+          label: "ADS-B",
+          text: "אזור: ישראל\nמטוסים בטווח: 22",
+        }),
+      ],
+      { answerShape: "short_fact", regionLabel: "ישראל" },
+    );
+    expect(reply).toMatch(/22|סופה|מז"א/i);
+    expect(reply).toContain("Sources:");
+  });
+
+  it("web fallback failure returns honest canned reply", () => {
+    const reply = buildWebFallbackNoDataReply("מה קורה בעולם הרובוטיקה?", [
+      src({
+        provider: "searxng",
+        label: "SearXNG",
+        ok: false,
+        text: "",
+        error: "SearXNG לא מוגדר — הגדר VITE_SEARXNG_URL",
+      }),
+    ]);
+    expect(reply).toMatch(/לא הצלחתי|fetch failed/i);
+    expect(reply).toMatch(/VITE_SEARXNG_URL/);
+    expect(reply).not.toMatch(/פיתוחים משמעותיים/);
+  });
+
+  it("topical gaming uses multi-source bullets not fluff", () => {
+    const reply = buildCapabilityLiveReply(
+      "מה חדש בעולם הגיימינג?",
+      ["hackernews", "github"],
+      [
+        src({
+          provider: "hacker-news",
+          label: "Hacker News",
+          text: "1. Steam Deck update (★420) https://example.com",
+        }),
+        src({
+          provider: "github",
+          label: "GitHub Repositories",
+          text: "1. user/game-engine ★12000",
+        }),
+      ],
+      { answerShape: "overview" },
+    );
+    expect(reply).toMatch(/Steam Deck|Hacker News/i);
+    expect(reply).toMatch(/GitHub|game-engine/i);
+    expect(reply).toMatch(/Sources:.*Hacker News.*GitHub/i);
+    expect(reply).not.toMatch(/פלטפורמות מרכזיות/);
   });
 });

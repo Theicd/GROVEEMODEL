@@ -14,7 +14,9 @@ import {
   isCommodityPriceQuery,
   isRedditQuery,
   isAviationQuery,
+  isNewsQuery,
 } from "./intents";
+import { regexPlanForQuery } from "./searchPlanner";
 import { extractCurrencyPair, sanitizeSearchQuery } from "./queryExtract";
 import { formatWebContext, summarizeSearchResult } from "./orchestrator";
 import type { SearchSourceResult } from "./types";
@@ -82,6 +84,48 @@ describe("webSearch intents", () => {
     expect(needsWebSearch("כמה כלי שייט או אוניות יש במפרץ חיפה?")).toBe(true);
     expect(classifySearchIntents("כמה כלי שייט או אוניות יש במפרץ חיפה?")).toContain("ships");
     expect(classifySearchIntents("כמה מצופים במפרץ חיפה?")).toContain("marine-infra");
+  });
+
+  it("robotics world topic uses web fallback — not BBC news RSS", () => {
+    const q = "מה קורה בעולם הרובוטיקה?";
+    expect(isNewsQuery(q)).toBe(false);
+    expect(classifySearchIntents(q)).toEqual([]);
+    expect(regexPlanForQuery(q)?.useWebFallback).toBe(true);
+    expect(needsWebSearch(q)).toBe(true);
+  });
+
+  it("generic world news still routes to news RSS", () => {
+    expect(isNewsQuery("מה קורה בעולם?")).toBe(true);
+    expect(classifySearchIntents("מה קורה בעולם?")).toContain("news");
+  });
+
+  it("topical world queries use multi-source enrichment — not SearXNG-only", () => {
+    for (const q of [
+      "מה קורה בעולם האקלים?",
+      "מה קורה בעולם הגיימינג?",
+      "מה חדש בעולם הגיימינג?",
+      "מה קורה בעולם הקריפטו?",
+    ]) {
+      expect(isNewsQuery(q)).toBe(false);
+      const plan = regexPlanForQuery(q);
+      expect(plan?.intents).toContain("hackernews");
+      expect(plan?.intents).toContain("github");
+      expect((plan?.intents?.length ?? 0)).toBeGreaterThanOrEqual(2);
+      expect(plan?.blendNewsWithWeb).toBe(true);
+    }
+  });
+
+  it("timely overview without magic phrase triggers search", () => {
+    expect(needsWebSearch("מה חדש בתחום הרובוטיקה?")).toBe(true);
+    expect(needsWebSearch("מה המצב בתחום הגיימינג?")).toBe(true);
+    expect(regexPlanForQuery("מה חדש בתחום הבינה המלאכותית?")?.useWebFallback).toBe(true);
+  });
+
+  it("bare world news uses RSS + web blend", () => {
+    const plan = regexPlanForQuery("מה קורה בעולם?");
+    expect(plan?.intents).toContain("news");
+    expect(plan?.blendNewsWithWeb).toBe(true);
+    expect(plan?.useWebFallback).toBe(true);
   });
 
   it("does not add wikipedia for pure weather intent", () => {
@@ -236,6 +280,26 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("מי ראש הממשלה של בריטניה?")).toContain("government");
     expect(classifySearchIntents("מה מצב מדד S&P 500?")).toEqual(["market"]);
     expect(needsWebSearch("מה מצב מדד S&P 500?")).toBe(true);
+  });
+
+  it("routes aviation synonyms (air traffic over Israel)", () => {
+    expect(isAviationQuery("מה העומס בשמי ישראל?")).toBe(true);
+    expect(needsWebSearch("מה העומס בשמי ישראל?")).toBe(true);
+    expect(classifySearchIntents("מה העומס בשמי ישראל?")).toContain("aviation");
+  });
+
+  it("routes air quality and arxiv intents", () => {
+    expect(classifySearchIntents("מה איכות האוויר בתל אביב?")).toContain("airquality");
+    expect(classifySearchIntents("חפש מאמרים על transformer ב-arxiv")).toContain("arxiv");
+    expect(needsWebSearch("מה רמת PM2.5 בירושלים?")).toBe(true);
+  });
+
+  it("routes world events paraphrase to news", () => {
+    expect(isNewsQuery("מה המצב בעולם?")).toBe(true);
+    expect(classifySearchIntents("מה המצב בעולם?")).toContain("news");
+    const plan = regexPlanForQuery("מה המצב בעולם?");
+    expect(plan?.intents).toContain("news");
+    expect(plan?.blendNewsWithWeb).toBe(true);
   });
 
   it("builds huggingface image model query", () => {

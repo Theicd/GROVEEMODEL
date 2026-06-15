@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSearchBrief, formatSearchBriefContext } from "./searchBrief";
+import { buildSearchBrief, formatSearchBriefContext, rerankBriefFacts } from "./searchBrief";
 import type { SearchSourceResult } from "./types";
 
 describe("searchBrief", () => {
@@ -124,5 +124,66 @@ describe("searchBrief", () => {
     const ctx = formatSearchBriefContext(brief, "מי ראש ממשלת בריטניה?", 900, sources);
     expect(ctx).toContain("ANSWER (government):");
     expect(ctx).toMatch(/ANSWER \(government\):[^\n]*(?:סטארמר|Starmer)/i);
+  });
+
+  it("caps github facts per provider", () => {
+    const sources: SearchSourceResult[] = [
+      {
+        provider: "github",
+        label: "GitHub",
+        ok: true,
+        text: Array.from({ length: 8 }, (_, i) => `- repo${i}/proj ★${i}`).join("\n"),
+        latencyMs: 1,
+      },
+    ];
+    const brief = buildSearchBrief(sources, ["github"], "github repos");
+    expect(brief.facts.length).toBeLessThanOrEqual(3);
+  });
+
+  it("reranks weather facts ahead for weather intent", () => {
+    const facts = [
+      "[GitHub] repo/foo",
+      "[מזג אוויר] רוח: 20 km/h",
+      "[GitHub] repo/bar",
+    ];
+    const ranked = rerankBriefFacts(facts, ["weather"], "מה הרוח בפריז");
+    expect(ranked[0]).toMatch(/רוח/);
+  });
+
+  it("includes ANSWER SHAPE and SHARED REGION in context", () => {
+    const brief = buildSearchBrief([], ["weather", "aviation"], "cross query", 800, "count");
+    const ctx = formatSearchBriefContext(brief, "cross query", 1400, [], "count", "ישראל");
+    expect(ctx).toContain("ANSWER SHAPE: count");
+    expect(ctx).toContain("SHARED REGION: ישראל");
+  });
+
+  it("adds CORRELATION lines for cross-source weather + aviation", () => {
+    const sources: SearchSourceResult[] = [
+      {
+        provider: "open-meteo",
+        label: "מזג אוויר",
+        ok: true,
+        text: "מיקום: Israel\nמצב: סופת רעמים\nרוח: 50 km/h",
+        latencyMs: 1,
+      },
+      {
+        provider: "adsb-aviation",
+        label: "ADS-B",
+        ok: true,
+        text: "אזור: ישראל\nמטוסים בטווח: 18",
+        latencyMs: 1,
+      },
+    ];
+    const brief = buildSearchBrief(sources, ["weather", "aviation"], "האם יש סופה בישראל וגם מטוסים");
+    const ctx = formatSearchBriefContext(
+      brief,
+      "האם יש סופה בישראל וגם מטוסים",
+      1400,
+      sources,
+      "short_fact",
+      "ישראל",
+    );
+    expect(ctx).toContain("CORRELATION");
+    expect(ctx).toContain("SHARED REGION: ישראל");
   });
 });

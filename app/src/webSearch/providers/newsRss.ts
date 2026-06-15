@@ -1,5 +1,5 @@
 import { fetchText } from "../fetchJson";
-import { extractNewsSite, isWorldHeadlineQuery } from "../queryExtract";
+import { extractNewsSite, isGeneralNewsDigestQuery, isWorldHeadlineQuery } from "../queryExtract";
 import type { SearchSourceResult } from "../types";
 
 type NewsFeed = { url: string; label: string; tag: string };
@@ -33,6 +33,7 @@ const FEEDS: Record<string, NewsFeed> = {
 };
 
 const WORLD_FEED_KEYS = ["bbc", "cnn", "reuters", "guardian"] as const;
+const DIGEST_FEED_KEYS = ["ynet", "bbc", "cnn", "reuters", "guardian"] as const;
 
 export const parseRssTitles = (xml: string, limit = 5): string[] => {
   const titles: string[] = [];
@@ -54,6 +55,71 @@ const fetchFeedTitles = async (feed: NewsFeed, limit: number): Promise<string[]>
   return parseRssTitles(xml, limit);
 };
 
+/** Which RSS feeds to hit — one chip per feed in UI. */
+export const selectNewsFeedKeys = (query: string): string[] => {
+  const site = extractNewsSite(query);
+  if (site && FEEDS[site]) return [site];
+  if (isGeneralNewsDigestQuery(query) || isWorldHeadlineQuery(query)) {
+    return [...DIGEST_FEED_KEYS];
+  }
+  return ["bbc"];
+};
+
+/** Single feed — one SearchSourceResult (shown separately in UI). */
+export const fetchNewsFeedByKey = async (key: string, limit = 3): Promise<SearchSourceResult> => {
+  const started = performance.now();
+  const provider = "news-rss" as const;
+  const feed = FEEDS[key];
+  if (!feed) {
+    return {
+      provider,
+      label: "חדשות (RSS)",
+      ok: false,
+      text: "",
+      error: `feed ${key} unknown`,
+      latencyMs: Math.round(performance.now() - started),
+    };
+  }
+
+  try {
+    const titles = await fetchFeedTitles(feed, limit);
+    if (!titles.length) {
+      return {
+        provider,
+        label: `חדשות (${feed.label})`,
+        ok: false,
+        text: "",
+        error: "לא נמצאו כותרות",
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
+
+    const lines = [
+      `ANSWER (headline): [${feed.tag}] ${titles[0]}`,
+      `מקור: ${feed.label}`,
+      ...titles.map((t, i) => `[${feed.tag}] ${i + 1}. ${t}`),
+    ];
+
+    return {
+      provider,
+      label: `חדשות (${feed.label})`,
+      ok: true,
+      text: lines.join("\n"),
+      url: feed.url,
+      latencyMs: Math.round(performance.now() - started),
+    };
+  } catch (err) {
+    return {
+      provider,
+      label: `חדשות (${feed.label})`,
+      ok: false,
+      text: "",
+      error: err instanceof Error ? err.message : "שגיאה",
+      latencyMs: Math.round(performance.now() - started),
+    };
+  }
+};
+
 const fetchWorldHeadlines = async (): Promise<Array<{ feed: NewsFeed; titles: string[] }>> => {
   const results = await Promise.allSettled(
     WORLD_FEED_KEYS.map(async (key) => {
@@ -69,15 +135,18 @@ const fetchWorldHeadlines = async (): Promise<Array<{ feed: NewsFeed; titles: st
     .filter((row) => row.titles.length > 0);
 };
 
+/** Legacy aggregate — prefer per-feed tasks in orchestrator. */
 export const fetchNewsSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "news-rss" as const;
   const label = "חדשות (RSS)";
 
   try {
-    if (isWorldHeadlineQuery(query)) {
-      const rows = await fetchWorldHeadlines();
-      if (!rows.length) {
+    const keys = selectNewsFeedKeys(query);
+    if (keys.length > 1) {
+      const settled = await Promise.all(keys.map((k) => fetchNewsFeedByKey(k, 2)));
+      const ok = settled.filter((s) => s.ok && s.text.trim());
+      if (!ok.length) {
         return {
           provider,
           label,
@@ -87,22 +156,17 @@ export const fetchNewsSearch = async (query: string): Promise<SearchSourceResult
           latencyMs: Math.round(performance.now() - started),
         };
       }
-
-      const top = rows[0];
-      const topTitle = top.titles[0];
-      const sourceTags = rows.map((r) => r.feed.tag).join(" · ");
+      const top = ok[0];
+      const topTitle = top.text.match(/ANSWER \(headline\):\s*\[[^\]]+\]\s*(.+)/)?.[1]?.trim() ?? "";
+      const sourceTags = ok.map((s) => s.label.replace("חדשות (", "").replace(")", "")).join(" · ");
       const lines = [
-        `ANSWER (headline): [${top.feed.tag}] ${topTitle}`,
-        `מקורות RSS בינלאומיים (${sourceTags}):`,
-        `עודכן: ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`,
-        ...rows.flatMap(({ feed, titles }) =>
-          titles.map((t, i) => `[${feed.tag}] ${i + 1}. ${t}`),
-        ),
+        top.text.match(/ANSWER \(headline\):.+/m)?.[0] ?? `ANSWER (headline): ${topTitle}`,
+        `מקורות RSS (${sourceTags}):`,
+        ...ok.flatMap((s) => s.text.split("\n").filter((l) => /^\[(BBC|CNN|Reuters|Guardian|ynet)\]/i.test(l))),
       ];
-
       return {
         provider,
-        label: "חדשות (RSS — BBC · CNN · Reuters · Guardian)",
+        label: "חדשות (RSS — ynet · BBC · CNN · Reuters · Guardian)",
         ok: true,
         text: lines.join("\n"),
         url: FEEDS.bbc.url,
@@ -110,46 +174,7 @@ export const fetchNewsSearch = async (query: string): Promise<SearchSourceResult
       };
     }
 
-    const site = extractNewsSite(query) ?? "bbc";
-    if (!FEEDS[site]) {
-      return {
-        provider,
-        label,
-        ok: false,
-        text: "",
-        error: "לא זוהה מקור חדשות",
-        latencyMs: Math.round(performance.now() - started),
-      };
-    }
-
-    const feed = FEEDS[site];
-    const titles = await fetchFeedTitles(feed, 5);
-    if (!titles.length) {
-      return {
-        provider,
-        label,
-        ok: false,
-        text: "",
-        error: "לא נמצאו כותרות",
-        latencyMs: Math.round(performance.now() - started),
-      };
-    }
-
-    const lines = [
-      `ANSWER (headline): [${feed.tag}] ${titles[0]}`,
-      `מקור: ${feed.label}`,
-      `כותרות עדכניות (${new Date().toISOString().slice(0, 16)} UTC):`,
-      ...titles.map((t, i) => `[${feed.tag}] ${i + 1}. ${t}`),
-    ];
-
-    return {
-      provider,
-      label: `חדשות (${feed.label})`,
-      ok: true,
-      text: lines.join("\n"),
-      url: feed.url,
-      latencyMs: Math.round(performance.now() - started),
-    };
+    return fetchNewsFeedByKey(keys[0]!, 5);
   } catch (err) {
     return {
       provider,

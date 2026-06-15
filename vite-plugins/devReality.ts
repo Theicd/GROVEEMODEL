@@ -23,6 +23,7 @@ function sendFile(res: ServerResponse, filePath: string) {
 }
 
 const REALITY_SERVER = process.env.REALITY_SERVER ?? "http://127.0.0.1:3000";
+const SEARXNG_UPSTREAM = (process.env.SEARXNG_UPSTREAM ?? process.env.VITE_SEARXNG_UPSTREAM ?? "").replace(/\/$/, "");
 
 /** Dev-only: CORS proxy + serve reality-core UI at /reality/ */
 export function devRealityPlugin(): Plugin {
@@ -47,6 +48,37 @@ export function devRealityPlugin(): Plugin {
         } catch {
           res.statusCode = 502;
           res.end("Reality Core server unavailable (run npm start in reality-core)");
+        }
+      });
+
+      server.middlewares.use("/api/searxng", async (req, res) => {
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.end("Method not allowed");
+          return;
+        }
+        if (!SEARXNG_UPSTREAM) {
+          res.statusCode = 503;
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          res.end("SEARXNG_UPSTREAM not set — add to app/.env (see .env.example)");
+          return;
+        }
+        const raw = req.url ?? "/search";
+        const target = `${SEARXNG_UPSTREAM}${raw.startsWith("/") ? raw : `/${raw}`}`;
+        try {
+          const upstream = await fetch(target, {
+            headers: {
+              Accept: "application/json",
+              "User-Agent": "GROVEEMODEL/1.0 (searxng dev proxy)",
+            },
+          });
+          res.statusCode = upstream.status;
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/json");
+          res.end(await upstream.text());
+        } catch (e) {
+          res.statusCode = 502;
+          res.end(e instanceof Error ? e.message : "searxng proxy error");
         }
       });
 

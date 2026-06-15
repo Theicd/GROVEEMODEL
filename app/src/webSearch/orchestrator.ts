@@ -18,7 +18,7 @@ import { fetchGitHubSearch } from "./providers/github";
 import { fetchHuggingFaceDatasetsSearch, fetchHuggingFaceModelsSearch } from "./providers/huggingface";
 import { fetchHolidaySearch } from "./providers/nagerHolidays";
 import { fetchPlacesSearch } from "./providers/nominatimPlaces";
-import { fetchNewsSearch } from "./providers/newsRss";
+import { fetchNewsSearch, fetchNewsFeedByKey, selectNewsFeedKeys } from "./providers/newsRss";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
 import { fetchShipsSearch } from "../realityData/providers/ships";
 import { fetchOverpassMarineSearch } from "./providers/overpassMarine";
@@ -38,11 +38,19 @@ import { fetchCommoditySearch, fetchMarketQuoteSearch } from "./providers/market
 import { fetchHackerNewsSearch } from "./providers/hackernews";
 import { fetchSpaceXLaunchSearch } from "./providers/spacexLaunch";
 import { fetchUnsupportedSource } from "./providers/unsupported";
+import { fetchSearxngSearch } from "./providers/searxng";
+import { fetchAirQualitySearch } from "./providers/openMeteoAirQuality";
+import { fetchArxivSearch } from "./providers/arxiv";
+import { fetchUrlContextSearch } from "./providers/urlContext";
 import { applySnapshotFallbacks } from "../liveWorld/snapshotFallback";
 import { pingGlobeForLiveSnapshot } from "../liveWorld/bridge";
-import { buildCapabilityLiveReply } from "./capabilityReplyMessages";
+import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
 import { buildSearchBrief, formatSearchBriefContext } from "./searchBrief";
-import type { SearchSourceResult, WebSearchResult, WebSearchOptions } from "./types";
+import { validateLiveDataQuery } from "./entityValidation";
+import { wrapWithQueryCache } from "./queryCache";
+import { routeQuery, shouldAllowWebFallback } from "./routeQuery";
+import { resolveSharedSearchRegion } from "./sharedRegion";
+import type { SearchIntent, SearchProviderId, SearchSourceResult, WebSearchResult, WebSearchOptions } from "./types";
 
 /** @deprecated Use formatSearchBriefContext via runWebSearch */
 export const formatWebContext = (sources: SearchSourceResult[]): string => {
@@ -60,7 +68,11 @@ export const summarizeSearchResult = (sources: SearchSourceResult[], intents: st
       ? `חיפוש: אין תוצאות (${failed.map((f) => f.label).join(", ")})`
       : "חיפוש: אין תוצאות";
   }
-  return `חיפוש: ${ok.length} מקורות (${ok.map((s) => s.label).join(" · ")}) · ${intents.join(", ")}`;
+  const parts = [`${ok.length} מקורות (${ok.map((s) => s.label).join(" · ")})`];
+  if (failed.length) {
+    parts.push(`נכשל: ${failed.map((f) => f.label).join(" · ")}`);
+  }
+  return `חיפוש: ${parts.join(" · ")} · ${intents.join(", ")}`;
 };
 
 export const formatWebSearchNoResultsContext = (): string =>
@@ -85,56 +97,112 @@ const trackTask = (
   });
 };
 
-/** Run routed parallel search — typically 1–5 s total. */
-export const runWebSearch = async (query: string, options?: WebSearchOptions): Promise<WebSearchResult> => {
-  const q = sanitizeSearchQuery(query);
-  const intents = classifySearchIntents(q);
+const cached = (
+  provider: SearchProviderId,
+  query: string,
+  fetch: () => Promise<SearchSourceResult>,
+): Promise<SearchSourceResult> => wrapWithQueryCache(provider, query, fetch);
+
+const mergeIntents = (a: SearchIntent[], b: SearchIntent[]): SearchIntent[] =>
+  [...new Set([...a, ...b])];
+
+const dedupeSources = (sources: SearchSourceResult[]): SearchSourceResult[] => {
+  const byProvider = new Map<string, SearchSourceResult>();
+  for (const s of sources) {
+    const prev = byProvider.get(s.provider);
+    if (!prev || (s.ok && !prev.ok)) byProvider.set(s.provider, s);
+  }
+  return [...byProvider.values()];
+};
+
+const buildTasksForQuery = (
+  q: string,
+  intents: SearchIntent[],
+  options?: WebSearchOptions,
+): Promise<SearchSourceResult>[] => {
   const tasks: Promise<SearchSourceResult>[] = [];
 
-  options?.onProgress?.({ type: "start", intents, query: q });
-
-  if (intents.includes("worldtime")) tasks.push(trackTask(fetchWorldTimeSearch(q), options));
-  if (intents.includes("weather")) tasks.push(trackTask(fetchWeatherSearch(q), options));
-  if (intents.includes("marine")) tasks.push(trackTask(fetchMarineSearch(q), options));
-  if (intents.includes("earthquake")) tasks.push(trackTask(fetchEarthquakeSearch(q), options));
-  if (intents.includes("currency")) tasks.push(trackTask(fetchCurrencySearch(q), options));
-  if (intents.includes("distance")) tasks.push(trackTask(fetchDistanceSearch(q), options));
-  if (intents.includes("places")) tasks.push(trackTask(fetchPlacesSearch(q), options));
-  if (intents.includes("ships")) tasks.push(trackTask(fetchShipsSearch(q), options));
-  if (intents.includes("marine-infra")) tasks.push(trackTask(fetchOverpassMarineSearch(q), options));
-  if (intents.includes("news")) tasks.push(trackTask(fetchNewsSearch(q), options));
+  if (intents.includes("worldtime")) tasks.push(trackTask(cached("world-time", q, () => fetchWorldTimeSearch(q)), options));
+  if (intents.includes("weather")) {
+    tasks.push(
+      trackTask(
+        cached("open-meteo", q, () => fetchWeatherSearch(q, options?.sharedRegion?.place)),
+        options,
+      ),
+    );
+  }
+  if (intents.includes("airquality")) {
+    tasks.push(
+      trackTask(
+        cached("open-meteo-air-quality", q, () =>
+          fetchAirQualitySearch(q, options?.sharedRegion?.place),
+        ),
+        options,
+      ),
+    );
+  }
+  if (intents.includes("arxiv")) tasks.push(trackTask(cached("arxiv", q, () => fetchArxivSearch(q)), options));
+  if (intents.includes("marine")) tasks.push(trackTask(cached("open-meteo-marine", q, () => fetchMarineSearch(q, options?.sharedRegion?.place)), options));
+  if (intents.includes("earthquake")) tasks.push(trackTask(cached("usgs-earthquake", q, () => fetchEarthquakeSearch(q)), options));
+  if (intents.includes("currency")) tasks.push(trackTask(cached("frankfurter-fx", q, () => fetchCurrencySearch(q)), options));
+  if (intents.includes("distance")) tasks.push(trackTask(cached("osrm-distance", q, () => fetchDistanceSearch(q)), options));
+  if (intents.includes("places")) tasks.push(trackTask(cached("nominatim-places", q, () => fetchPlacesSearch(q)), options));
+  if (intents.includes("ships")) tasks.push(trackTask(cached("ais-ships", q, () => fetchShipsSearch(q, options?.sharedRegion)), options));
+  if (intents.includes("marine-infra")) {
+    tasks.push(
+      trackTask(
+        cached("osm-overpass-marine", q, () => fetchOverpassMarineSearch(q, options?.sharedRegion)),
+        options,
+      ),
+    );
+  }
+  if (intents.includes("news")) {
+    const feedKeys = selectNewsFeedKeys(q);
+    for (const key of feedKeys) {
+      tasks.push(
+        trackTask(cached(`news-rss-${key}`, q, () => fetchNewsFeedByKey(key, 3)), options),
+      );
+    }
+  }
   if (intents.includes("aviation") || /\bawacs\b/i.test(q)) {
-    tasks.push(trackTask(fetchAviationSearch(q, options?.recentUserText ?? []), options));
+    tasks.push(
+      trackTask(
+        cached("adsb-aviation", q, () =>
+          fetchAviationSearch(q, options?.recentUserText ?? [], options?.sharedRegion),
+        ),
+        options,
+      ),
+    );
   }
   if (intents.includes("satellite")) {
     if (isStarlinkCountQuery(q)) {
-      tasks.push(trackTask(fetchStarlinkCatalogSearch(q), options));
+      tasks.push(trackTask(cached("starlink-catalog", q, () => fetchStarlinkCatalogSearch(q)), options));
     } else if (isSatelliteCatalogQuery(q) || !isIssQuery(q)) {
-      tasks.push(trackTask(fetchSatelliteCatalogSearch(q), options));
+      tasks.push(trackTask(cached("celestrak", q, () => fetchSatelliteCatalogSearch(q)), options));
     }
     if (isIssQuery(q)) {
       pingGlobeForLiveSnapshot();
-      tasks.push(trackTask(fetchIssSearch(q), options));
+      tasks.push(trackTask(cached("iss-tracker", q, () => fetchIssSearch(q)), options));
     }
   }
-  if (intents.includes("spacex")) tasks.push(trackTask(fetchSpaceXLaunchSearch(q), options));
-  if (intents.includes("spaceweather")) tasks.push(trackTask(fetchSpaceWeatherSearch(q), options));
-  if (intents.includes("alerts")) tasks.push(trackTask(fetchIsraelAlertsSearch(q), options));
-  if (intents.includes("disaster")) tasks.push(trackTask(fetchDisasterSearch(q), options));
-  if (intents.includes("country")) tasks.push(trackTask(fetchCountrySearch(q), options));
-  if (intents.includes("holiday")) tasks.push(trackTask(fetchHolidaySearch(q), options));
-  if (intents.includes("government")) tasks.push(trackTask(fetchGovernmentSearch(q), options));
-  if (intents.includes("github")) tasks.push(trackTask(fetchGitHubSearch(q), options));
+  if (intents.includes("spacex")) tasks.push(trackTask(cached("spacex-launches", q, () => fetchSpaceXLaunchSearch(q)), options));
+  if (intents.includes("spaceweather")) tasks.push(trackTask(cached("noaa-space", q, () => fetchSpaceWeatherSearch(q)), options));
+  if (intents.includes("alerts")) tasks.push(trackTask(cached("israel-alerts", q, () => fetchIsraelAlertsSearch(q)), options));
+  if (intents.includes("disaster")) tasks.push(trackTask(cached("gdacs-disasters", q, () => fetchDisasterSearch(q)), options));
+  if (intents.includes("country")) tasks.push(trackTask(cached("rest-countries", q, () => fetchCountrySearch(q)), options));
+  if (intents.includes("holiday")) tasks.push(trackTask(cached("nager-holidays", q, () => fetchHolidaySearch(q)), options));
+  if (intents.includes("government")) tasks.push(trackTask(cached("wikidata-gov", q, () => fetchGovernmentSearch(q)), options));
+  if (intents.includes("github")) tasks.push(trackTask(cached("github", q, () => fetchGitHubSearch(q)), options));
   if (intents.includes("huggingface")) {
-    tasks.push(trackTask(fetchHuggingFaceModelsSearch(q), options));
-    tasks.push(trackTask(fetchHuggingFaceDatasetsSearch(q), options));
+    tasks.push(trackTask(cached("huggingface-models", q, () => fetchHuggingFaceModelsSearch(q)), options));
+    tasks.push(trackTask(cached("huggingface-datasets", q, () => fetchHuggingFaceDatasetsSearch(q)), options));
   }
-  if (intents.includes("crypto")) tasks.push(trackTask(fetchCoinGeckoSearch(q), options));
-  if (intents.includes("commodity")) tasks.push(trackTask(fetchCommoditySearch(q), options));
-  if (intents.includes("market")) tasks.push(trackTask(fetchMarketQuoteSearch(q), options));
-  if (intents.includes("hackernews")) tasks.push(trackTask(fetchHackerNewsSearch(q), options));
+  if (intents.includes("crypto")) tasks.push(trackTask(cached("coingecko", q, () => fetchCoinGeckoSearch(q)), options));
+  if (intents.includes("commodity")) tasks.push(trackTask(cached("stooq-commodity", q, () => fetchCommoditySearch(q)), options));
+  if (intents.includes("market")) tasks.push(trackTask(cached("yahoo-finance", q, () => fetchMarketQuoteSearch(q)), options));
+  if (intents.includes("hackernews")) tasks.push(trackTask(cached("hacker-news", q, () => fetchHackerNewsSearch(q)), options));
   if (isMarketPriceQuery(q) && !intents.includes("market")) {
-    tasks.push(trackTask(fetchMarketQuoteSearch(q), options));
+    tasks.push(trackTask(cached("yahoo-finance", q, () => fetchMarketQuoteSearch(q)), options));
   }
   if (isRedditQuery(q)) {
     tasks.push(
@@ -180,32 +248,111 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
   }
   if (intents.includes("wikipedia")) {
     const wikiQ = stripSearchVerb(q);
-    tasks.push(trackTask(fetchWikipediaSearch(wikiQ, "en"), options));
+    tasks.push(trackTask(cached("wikipedia-en", wikiQ, () => fetchWikipediaSearch(wikiQ, "en")), options));
     if (/[\u0590-\u05FF]/.test(q)) {
-      tasks.push(trackTask(fetchWikipediaSearch(wikiQ, "he"), options));
+      tasks.push(trackTask(cached("wikipedia-he", wikiQ, () => fetchWikipediaSearch(wikiQ, "he")), options));
     }
+  }
+  if (intents.includes("link")) {
+    tasks.push(trackTask(cached("url-context", q, () => fetchUrlContextSearch(q)), options));
+  }
+
+  return tasks;
+};
+
+const runSingleQuerySearch = async (
+  query: string,
+  intents: SearchIntent[],
+  options?: WebSearchOptions,
+): Promise<{ sources: SearchSourceResult[]; intents: SearchIntent[] }> => {
+  const q = sanitizeSearchQuery(query);
+  const mergedIntents = mergeIntents(intents, classifySearchIntents(q));
+  let tasks = buildTasksForQuery(q, mergedIntents, options);
+
+  const wantWeb = shouldAllowWebFallback(tasks.length, options?.plan, q);
+
+  if (wantWeb) {
+    tasks.push(trackTask(cached("searxng", q, () => fetchSearxngSearch(q)), options));
   }
 
   let settled = tasks.length ? await Promise.all(tasks) : [];
+  settled = applySnapshotFallbacks(q, mergedIntents, settled);
+  return { sources: settled, intents: mergedIntents };
+};
 
-  settled = applySnapshotFallbacks(q, intents, settled);
+/** Run routed parallel search — typically 1–5 s total. */
+export const runWebSearch = async (query: string, options?: WebSearchOptions): Promise<WebSearchResult> => {
+  const q = sanitizeSearchQuery(query);
+  const route = routeQuery(q, options?.plan);
+  const intents = route.intents;
 
-  const brief = buildSearchBrief(settled, intents, q);
+  options?.onProgress?.({ type: "start", intents, query: q });
+
+  const validation = validateLiveDataQuery(q, intents);
+  if (!validation.ok) {
+    options?.onProgress?.({ type: "complete", sources: [] });
+    return {
+      contextText: validation.contextText,
+      sources: [],
+      summaryHe: validation.summaryHe,
+      intents,
+      cannedReply: validation.cannedReply,
+    };
+  }
+
+  const subQueries = route.queries;
+
+  const sharedRegion = await resolveSharedSearchRegion(q, intents);
+  const searchOptions: WebSearchOptions = {
+    ...(sharedRegion ? { ...options, sharedRegion } : (options ?? {})),
+    plan: {
+      ...options?.plan,
+      useWebFallback: route.useWebFallback,
+      blendNewsWithWeb: route.blendNewsWithWeb,
+      answerShape: route.answerShape,
+    },
+  };
+
+  const subResults = await Promise.all(
+    subQueries.map((subQ) => runSingleQuerySearch(subQ, intents, searchOptions)),
+  );
+
+  const mergedIntents = subResults.reduce(
+    (acc, r) => mergeIntents(acc, r.intents),
+    intents,
+  );
+  let settled = dedupeSources(subResults.flatMap((r) => r.sources));
+
+  const brief = buildSearchBrief(settled, mergedIntents, q, undefined, route.answerShape);
   const briefMax = isCrossSourceQuery(q) ? 1400 : 900;
-  const okContext = formatSearchBriefContext(brief, q, briefMax, settled);
+  const okContext = formatSearchBriefContext(
+    brief,
+    q,
+    briefMax,
+    settled,
+    route.answerShape,
+    sharedRegion?.label,
+  );
   const contextText = okContext.trim() && settled.some((s) => s.ok && s.text.trim())
     ? okContext
     : formatWebSearchNoResultsContext();
 
   options?.onProgress?.({ type: "complete", sources: settled });
 
-  const cannedReply = buildCapabilityLiveReply(q, intents, settled);
+  const cannedReply =
+    buildCapabilityLiveReply(q, mergedIntents, settled, {
+      answerShape: route.answerShape,
+      regionLabel: sharedRegion?.label,
+    }) ??
+    (route.useWebFallback && !settled.some((s) => s.ok && s.text.trim())
+      ? buildWebFallbackNoDataReply(q, settled)
+      : null);
 
   return {
     contextText,
     sources: settled,
-    summaryHe: summarizeSearchResult(settled, intents),
-    intents,
+    summaryHe: summarizeSearchResult(settled, mergedIntents),
+    intents: mergedIntents,
     brief,
     cannedReply,
   };
@@ -218,3 +365,4 @@ export const fetchWebContext = async (query: string): Promise<string> => {
 
 export { userRequestsSearch } from "./intents";
 export { warmLiveWorldCache } from "../liveWorld/fetchSnapshot";
+export { clearQueryCache, queryCacheSize } from "./queryCache";

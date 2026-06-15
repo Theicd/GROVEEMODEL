@@ -83,6 +83,28 @@ const resolveTimeLocation = (query: string): string | null => {
   return null;
 };
 
+const resolvePlaceTimezone = async (
+  name: string,
+): Promise<{ place: NonNullable<Awaited<ReturnType<typeof geocodePlace>>>; timezone: string } | null> => {
+  const trimmed = name.trim();
+  const tzDirect = KNOWN_TZ[trimmed.toLowerCase()] ?? KNOWN_TZ[trimmed];
+  const place = await geocodePlace(trimmed);
+  const timezone = place?.timezone ?? tzDirect;
+  if (!timezone) return null;
+  return {
+    place:
+      place ??
+      ({
+        name: trimmed,
+        latitude: 0,
+        longitude: 0,
+        timezone,
+        country_code: "",
+      } as NonNullable<Awaited<ReturnType<typeof geocodePlace>>>),
+    timezone,
+  };
+};
+
 export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "world-time" as const;
@@ -91,9 +113,9 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
     const pair = extractTimeZonePair(sanitizeSearchQuery(query)) ?? extractTimeZonePair(query);
     if (pair) {
       const [aName, bName] = pair;
-      const placeA = await geocodePlace(aName);
-      const placeB = await geocodePlace(bName);
-      if (!placeA?.timezone || !placeB?.timezone) {
+      const resolvedA = await resolvePlaceTimezone(aName);
+      const resolvedB = await resolvePlaceTimezone(bName);
+      if (!resolvedA || !resolvedB) {
         return {
           provider,
           label,
@@ -103,9 +125,11 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
           latencyMs: Math.round(performance.now() - started),
         };
       }
+      const { place: placeA } = resolvedA;
+      const { place: placeB } = resolvedB;
       const [timeA, timeB] = await Promise.all([
-        fetchTimezone(placeA.timezone),
-        fetchTimezone(placeB.timezone),
+        fetchTimezone(resolvedA.timezone),
+        fetchTimezone(resolvedB.timezone),
       ]);
       const offA = timeA.currentUtcOffset?.seconds;
       const offB = timeB.currentUtcOffset?.seconds;

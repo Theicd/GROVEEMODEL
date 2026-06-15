@@ -36,4 +36,11 @@ describe("crossSourceIntents", () => {
     expect(intents).not.toContain("marine");
     expect(intents).not.toContain("alerts");
   });
+
+  it("expands ships for storm + maritime traffic", () => {
+    const query = "האם יש קשר בין סופה לתנועה ימית?";
+    const intents = expandCrossSourceIntents(query, []);
+    expect(intents).toContain("ships");
+    expect(intents).toContain("disaster");
+  });
 });

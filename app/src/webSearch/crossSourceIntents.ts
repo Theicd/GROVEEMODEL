@@ -23,7 +23,7 @@ export const expandCrossSourceIntents = (
   const q = query;
 
   if (/מטוס|תעופ|טיס|awacs/i.test(q)) out.add("aviation");
-  if (/אוני|ספינ|נמל/i.test(q)) out.add("ships");
+  if (/אוני|ספינ|נמל|תנועה\s+ימית|shipping\s+traffic|maritime/i.test(q)) out.add("ships");
   if (/רעיד|earthquake/i.test(q)) out.add("earthquake");
   if (/סופה|hurricane|typhoon|טропי|צונאמ/i.test(q)) out.add("disaster");
   if (/סופה|hurricane|מזג|אזהר/i.test(q)) out.add("weather");

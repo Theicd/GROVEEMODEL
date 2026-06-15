@@ -23,6 +23,8 @@ const CORS_DIRECT_SUFFIXES = [
   "api.open-meteo.com",
   "geocoding-api.open-meteo.com",
   "marine-api.open-meteo.com",
+  "air-quality-api.open-meteo.com",
+  "export.arxiv.org",
   "api.airplanes.live",
   "api.binance.com",
   "open.er-api.com",

@@ -26,6 +26,24 @@ describe.sequential("web search live acceptance", () => {
 
         const okProviders = result.sources.filter((s) => s.ok).map((s) => s.provider);
         const matched = spec.expectProvidersOk.some((p) => okProviders.includes(p));
+        const searxngOnly =
+          spec.expectProvidersOk.length === 1 && spec.expectProvidersOk[0] === "searxng";
+        const searxngMissing = result.sources.some(
+          (s) => s.provider === "searxng" && s.error?.includes("לא מוגדר"),
+        );
+        if (searxngOnly && searxngMissing) {
+          console.warn(`${spec.id}: skipped — SearXNG not configured (VITE_SEARXNG_URL)`);
+          expect(result.contextText.length).toBeGreaterThan(20);
+          return;
+        }
+        if (
+          !matched &&
+          result.sources.some((s) => spec.expectProvidersOk.includes(s.provider) && s.error?.includes("429"))
+        ) {
+          console.warn(`${spec.id}: skipped — provider rate-limited (429)`);
+          expect(result.contextText.length).toBeGreaterThan(20);
+          return;
+        }
         expect(
           matched,
           `${spec.id} expected one of [${spec.expectProvidersOk.join(", ")}] ok; got [${okProviders.join(", ")}]; failures: ${result.sources

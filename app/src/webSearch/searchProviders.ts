@@ -5,10 +5,13 @@ export type SearchProviderInfo = {
   icon: string;
   labelHe: string;
   examplesHe: string[];
+  tier?: "structured" | "news" | "web_fallback";
 };
 
 export const CONNECTED_SEARCH_PROVIDERS: SearchProviderInfo[] = [
   { id: "open-meteo", icon: "🌤", labelHe: "Open-Meteo — מזג אוויר", examplesHe: ["מה הטמפרטורה בפריז?", "תחזית למחר במדריד"] },
+  { id: "open-meteo-air-quality", icon: "😷", labelHe: "Open-Meteo — איכות אוויר", examplesHe: ["מה איכות האוויר בתל אביב?", "PM2.5 בלondon"] },
+  { id: "arxiv", icon: "📄", labelHe: "arXiv — מאמרים מדעיים", examplesHe: ["חפש מאמרים על transformer", "arxiv LLM papers"] },
   { id: "world-time", icon: "🕐", labelHe: "TimeAPI — שעון עולמי", examplesHe: ["מה השעה בטוקיו?", "הפרש שעות ישראל–לונדון"] },
   { id: "usgs-earthquake", icon: "🌋", labelHe: "USGS — רעידות אדמה", examplesHe: ["רעידות ב-24 שעות"] },
   { id: "adsb-aviation", icon: "✈", labelHe: "ADS-B — מטוסים חיים", examplesHe: ["כמה מטוסים מעל ישראל?", "מטוסים באוויר בעולם"] },
@@ -26,7 +29,9 @@ export const CONNECTED_SEARCH_PROVIDERS: SearchProviderInfo[] = [
   { id: "coingecko", icon: "₿", labelHe: "CoinGecko — קריפטו", examplesHe: ["מחיר ביטקוין עכשיו"] },
   { id: "yahoo-finance", icon: "📈", labelHe: "Yahoo Finance — מניות / מדדים / זהב / נפט", examplesHe: ["מצב S&P 500", "מחיר זהב", "Brent"] },
   { id: "wikidata-gov", icon: "🏛", labelHe: "Wikidata — ממשל וראשי מדינה", examplesHe: ["מי ראש הממשלה של בריטניה?"] },
-  { id: "news-rss", icon: "📰", labelHe: "BBC · CNN · Reuters · Guardian — RSS", examplesHe: ["כותרות עולם"] },
+  { id: "news-rss", icon: "📰", labelHe: "BBC · CNN · Reuters · Guardian — RSS", examplesHe: ["כותרות עולם"], tier: "news" },
+  { id: "url-context", icon: "🔗", labelHe: "קישור — GitHub / HF / arXiv / Wikipedia", examplesHe: ["https://github.com/org/repo"], tier: "structured" },
+  { id: "searxng", icon: "🌐", labelHe: "SearXNG — חיפוש web (fallback בלבד)", examplesHe: ["מה קורה בעולם הרובוטיקה?"], tier: "web_fallback" },
 ];
 
 export const LIVE_WORLD_LAYERS_HE =

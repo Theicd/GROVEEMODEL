@@ -1,6 +1,6 @@
 import { resolveShipRegion } from "../../realityData/shipRegion";
 import { fetchJson } from "../fetchJson";
-import type { SearchSourceResult } from "../types";
+import type { SearchSourceResult, SharedSearchRegion } from "../types";
 
 type OverpassElement = {
   type?: string;
@@ -51,12 +51,16 @@ const buildOverpassQuery = (south: number, west: number, north: number, east: nu
 out center 120;`;
 
 /** OpenStreetMap Overpass — static marine infrastructure (harbours, buoys, lighthouses). */
-export const fetchOverpassMarineSearch = async (query: string): Promise<SearchSourceResult> => {
+export const fetchOverpassMarineSearch = async (
+  query: string,
+  sharedRegion?: SharedSearchRegion | null,
+): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "osm-overpass-marine" as const;
   const label = "תשתיות ימיות (OpenStreetMap)";
 
-  const region = await resolveShipRegion(query);
+  try {
+  const region = await resolveShipRegion(query, sharedRegion);
   if (!region.bbox) {
     return {
       provider,
@@ -78,6 +82,8 @@ export const fetchOverpassMarineSearch = async (query: string): Promise<SearchSo
     const q = buildOverpassQuery(minLat, minLon, maxLat, maxLon);
     const endpoints = [
       "https://overpass-api.de/api/interpreter",
+      "https://overpass.openstreetmap.ru/cgi/interpreter",
+      "https://z.overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
     ];
     let lastErr: unknown;
@@ -96,9 +102,21 @@ export const fetchOverpassMarineSearch = async (query: string): Promise<SearchSo
         break;
       } catch (err) {
         lastErr = err;
+        if (String(err).includes("429")) {
+          await new Promise((r) => setTimeout(r, 1200));
+        }
       }
     }
-    if (lastErr || !data) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "Overpass failed"));
+    if (lastErr || !data) {
+      return {
+        provider,
+        label,
+        ok: false,
+        text: "",
+        error: lastErr instanceof Error ? lastErr.message : "Overpass unavailable",
+        latencyMs: Math.round(performance.now() - started),
+      };
+    }
     OVERPASS_CACHE.set(cacheKey, { at: Date.now(), data });
   }
 
@@ -151,4 +169,14 @@ export const fetchOverpassMarineSearch = async (query: string): Promise<SearchSo
     url: "https://www.openstreetmap.org",
     latencyMs: Math.round(performance.now() - started),
   };
+  } catch (err) {
+    return {
+      provider,
+      label,
+      ok: false,
+      text: "",
+      error: err instanceof Error ? err.message : "Overpass error",
+      latencyMs: Math.round(performance.now() - started),
+    };
+  }
 };

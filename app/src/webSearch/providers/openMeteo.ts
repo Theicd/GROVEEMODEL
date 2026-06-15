@@ -1,7 +1,7 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
 import { extractLocationPhrase } from "../queryExtract";
-import { geocodePlace, formatPlaceLabel } from "../geoResolve";
+import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 import { getStartupContextSync } from "../../startupContext";
 
 const stripWeatherNoise = (raw: string): string =>
@@ -55,7 +55,10 @@ type ForecastResult = {
   };
 };
 
-export const fetchWeatherSearch = async (query: string): Promise<SearchSourceResult> => {
+export const fetchWeatherSearch = async (
+  query: string,
+  sharedPlace?: GeoPlace | null,
+): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "open-meteo" as const;
   const label = "מזג אוויר (Open-Meteo)";
@@ -81,7 +84,7 @@ export const fetchWeatherSearch = async (query: string): Promise<SearchSourceRes
       };
     }
 
-    const place = await geocodePlace(location);
+    const place = sharedPlace ?? (await geocodePlace(location));
     if (!place) {
       return {
         provider,

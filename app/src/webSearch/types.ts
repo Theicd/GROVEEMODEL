@@ -34,7 +34,11 @@ export type SearchProviderId =
   | "osm-overpass-marine"
   | "celestrak"
   | "starlink-catalog"
-  | "spacex-launches";
+  | "spacex-launches"
+  | "searxng"
+  | "open-meteo-air-quality"
+  | "arxiv"
+  | "url-context";
 
 export type SearchIntent =
   | "weather"
@@ -63,7 +67,14 @@ export type SearchIntent =
   | "youtube"
   | "ships"
   | "marine-infra"
-  | "spacex";
+  | "spacex"
+  | "airquality"
+  | "arxiv"
+  | "link";
+
+export type DataTier = "structured" | "news" | "web_fallback";
+
+export type AnswerShape = "short_fact" | "bullet_list" | "overview" | "count";
 
 export type SearchBriefLink = { label: string; url: string };
 
@@ -106,8 +117,34 @@ export type FetchJsonOptions = {
   headers?: Record<string, string>;
 };
 
+export type SharedSearchRegion = {
+  label: string;
+  place: {
+    name: string;
+    latitude: number;
+    longitude: number;
+    elevation?: number;
+    country_code?: string;
+    admin1?: string;
+    timezone?: string;
+  };
+  phrase: string;
+};
+
+export type WebSearchPlanHint = {
+  intents?: SearchIntent[];
+  queries?: string[];
+  answerShape?: AnswerShape;
+  useWebFallback?: boolean;
+  blendNewsWithWeb?: boolean;
+};
+
 export type WebSearchOptions = {
   /** Recent user messages — used for aviation region / follow-up context. */
   recentUserText?: string[];
   onProgress?: (event: SearchProgressEvent) => void;
+  /** Optional planner output — merges with regex routing. */
+  plan?: WebSearchPlanHint;
+  /** Single geocode for cross-source / multi-geo intents (Phase 4). */
+  sharedRegion?: SharedSearchRegion;
 };

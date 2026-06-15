@@ -1,7 +1,7 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
 import { extractLocationPhrase } from "../queryExtract";
-import { geocodePlace, formatPlaceLabel } from "../geoResolve";
+import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 
 type MarineResult = {
   current?: {
@@ -14,13 +14,16 @@ type MarineResult = {
   };
 };
 
-export const fetchMarineSearch = async (query: string): Promise<SearchSourceResult> => {
+export const fetchMarineSearch = async (
+  query: string,
+  sharedPlace?: GeoPlace | null,
+): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "open-meteo-marine" as const;
   const label = "ים וגלים (Open-Meteo Marine)";
   try {
     const location = extractLocationPhrase(query) ?? query.replace(/wave\s*height|גלים|marine|ocean/gi, "").trim();
-    const place = await geocodePlace(location);
+    const place = sharedPlace ?? (await geocodePlace(location));
     if (!place) {
       return {
         provider,

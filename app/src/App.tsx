@@ -85,7 +85,7 @@ import {
   GROVEE_CHAT_SYSTEM,
   migrateGemmaSystemPrompt,
   buildLanguageReplyDirective,
-  WEB_SEARCH_GROUNDING_APPEND,
+  buildWebSearchGroundingAppend,
   WEB_SEARCH_NO_RESULTS_APPEND,
   GAME_SEARCH_GROUNDING_APPEND,
   GAME_SEARCH_NO_RESULTS_APPEND,
@@ -170,8 +170,18 @@ import {
   saveChatProfileOverride,
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
-import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, type SearchSourceResult, type SearchBrief } from "./webSearch";
+import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
+import { isGeneralNewsDigestQuery } from "./webSearch/queryExtract";
+import { isTopicalOverviewRouting } from "./webSearch/topicalEnrichment";
+import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
 import { isStarlinkRegionalQuery } from "./webSearch/intents";
+import {
+  buildSearchPlannerUserPrompt,
+  parseSearchPlanJson,
+  regexPlanForQuery,
+  shouldUseSearchPlanner,
+  type SearchPlan,
+} from "./webSearch/searchPlanner";
 import { registerGlobeLiveSnapshotListener } from "./liveWorld";
 import {
   fetchStartupContext,
@@ -271,6 +281,13 @@ type WorkerOutMessage =
     }
   | {
       type: "character_utterance";
+      requestId: string;
+      ok: boolean;
+      text?: string;
+      error?: string;
+    }
+  | {
+      type: "search_plan";
       requestId: string;
       ok: boolean;
       text?: string;
@@ -935,6 +952,7 @@ function App() {
     new Map<string, (result: SceneAnalysisResult | null) => void>(),
   );
   const characterUtteranceResolversRef = useRef(new Map<string, (text: string | null) => void>());
+  const searchPlanResolversRef = useRef(new Map<string, (raw: string | null) => void>());
   const workerInferenceBusyRef = useRef(false);
   const globeHeadlineModeRef = useRef(false);
   const globeHeadlineBufferRef = useRef("");
@@ -1098,6 +1116,8 @@ function App() {
   const pendingWebSearchRef = useRef<{
     sources: SearchSourceResult[];
     summary: string;
+    answerShape?: AnswerShape;
+    crossSource?: boolean;
   } | null>(null);
   const pendingGameCategoryPickerRef = useRef(false);
   const pendingGameBrowseCategoryRef = useRef<GameCategoryId | null>(null);
@@ -1539,6 +1559,54 @@ function App() {
     [pushActivity],
   );
 
+  const requestSearchPlan = useCallback(
+    (query: string, recentUserText: string[]): Promise<string | null> => {
+      return new Promise((resolve) => {
+        if (!workerRef.current || !isLoaded || isGeneratingRef.current || workerInferenceBusyRef.current) {
+          resolve(null);
+          return;
+        }
+        const requestId = crypto.randomUUID();
+        const userPrompt = buildSearchPlannerUserPrompt(query, recentUserText);
+        searchPlanResolversRef.current.set(requestId, resolve);
+        workerInferenceBusyRef.current = true;
+        pushActivity({
+          direction: "out",
+          kind: "web_search",
+          title: "Search planner (Gemma)",
+          detail: userPrompt.slice(0, 800),
+        });
+        workerRef.current.postMessage({
+          type: "search_plan",
+          requestId,
+          modelId: GEMMA_MODEL_ID,
+          userPrompt,
+          maxNewTokens: 120,
+        });
+        window.setTimeout(() => {
+          if (searchPlanResolversRef.current.has(requestId)) {
+            searchPlanResolversRef.current.delete(requestId);
+            workerInferenceBusyRef.current = false;
+            resolve(null);
+          }
+        }, 18_000);
+      });
+    },
+    [isLoaded, pushActivity],
+  );
+
+  const resolveSearchPlanForQuery = useCallback(
+    async (query: string, recentUserText: string[]): Promise<SearchPlan | undefined> => {
+      const regexPlan = regexPlanForQuery(query);
+      if (regexPlan) return regexPlan;
+      if (!shouldUseSearchPlanner(query)) return undefined;
+      const raw = await requestSearchPlan(query, recentUserText);
+      if (!raw) return undefined;
+      return parseSearchPlanJson(raw, query) ?? undefined;
+    },
+    [requestSearchPlan],
+  );
+
   const stopCameraMode = useCallback(() => {
     cameraBootingRef.current = false;
     cameraLoopRef.current?.dispose();
@@ -1558,6 +1626,8 @@ function App() {
     sceneAnalysisResolversRef.current.clear();
     characterUtteranceResolversRef.current.forEach((resolve) => resolve(null));
     characterUtteranceResolversRef.current.clear();
+    searchPlanResolversRef.current.forEach((resolve) => resolve(null));
+    searchPlanResolversRef.current.clear();
   }, [persistCameraMemory]);
 
   const toggleCameraMode = useCallback(async () => {
@@ -2438,6 +2508,23 @@ function App() {
             resolveUtterance(null);
           }
         }
+      } else if (msg.type === "search_plan") {
+        workerInferenceBusyRef.current = false;
+        const resolvePlan = searchPlanResolversRef.current.get(msg.requestId);
+        if (resolvePlan) {
+          searchPlanResolversRef.current.delete(msg.requestId);
+          if (msg.ok && msg.text?.trim()) {
+            pushActivity({
+              direction: "in",
+              kind: "web_search",
+              title: "Search plan (Gemma)",
+              detail: msg.text.trim().slice(0, 1200),
+            });
+            resolvePlan(msg.text.trim());
+          } else {
+            resolvePlan(null);
+          }
+        }
       }
     };
 
@@ -2820,8 +2907,17 @@ function App() {
           .filter((t) => t.role === "user")
           .slice(-4)
           .map((t) => t.content);
+        const searchPlan = await resolveSearchPlanForQuery(effectivePrompt, recentUserText);
         const searchResult = await runWebSearch(effectivePrompt, {
           recentUserText,
+          plan: searchPlan
+            ? {
+                queries: searchPlan.queries,
+                answerShape: searchPlan.answerShape,
+                useWebFallback: searchPlan.useWebFallback,
+                blendNewsWithWeb: searchPlan.blendNewsWithWeb,
+              }
+            : undefined,
           onProgress: (ev) => {
             if (ev.type === "provider_done") {
               setStreamingSearchSources((prev) => {
@@ -2845,14 +2941,27 @@ function App() {
         });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
+        const searchLiveOk = searchResult.sources.some((s) => s.ok && s.text.trim());
         marineLiveCannedReply = searchResult.cannedReply ?? buildCapabilityLiveReply(
           effectivePrompt,
           searchResult.intents,
           searchResult.sources,
         );
+        if (
+          !searchLiveOk &&
+          !marineLiveCannedReply &&
+          (searchPlan?.useWebFallback || searchResult.sources.some((s) => s.provider === "searxng"))
+        ) {
+          marineLiveCannedReply = buildWebFallbackNoDataReply(effectivePrompt, searchResult.sources);
+        }
         pendingWebSearchRef.current = {
           sources: searchResult.sources,
           summary: searchResult.summaryHe,
+          answerShape: searchPlan?.answerShape,
+          crossSource:
+            isCrossSourceQuery(effectivePrompt) ||
+            searchResult.intents.length >= 2 ||
+            !!searchPlan?.blendNewsWithWeb,
         };
         setStreamingSearchSources({
           sources: searchResult.sources,
@@ -2861,6 +2970,37 @@ function App() {
           brief: searchResult.brief,
           active: false,
         });
+        if (
+          marineLiveCannedReply &&
+          !qaTurnForceLlmRef.current &&
+          !qaChatBridge.isForceLlmPending() &&
+          !cameraActive &&
+          !hasAttachments &&
+          !continueCode &&
+          !documentTurn &&
+          !wantsGameSearch &&
+          (searchLiveOk &&
+            (isTopicalOverviewRouting(effectivePrompt) ||
+              isGeneralNewsDigestQuery(effectivePrompt) ||
+              searchPlan?.answerShape === "overview" ||
+              searchPlan?.answerShape === "bullet_list") ||
+            (!searchLiveOk &&
+              !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")))
+        ) {
+          qaChatBridge.setWebContext(webContext);
+          qaChatBridge.setReplySource("canned-live");
+          assistantBufferRef.current = marineLiveCannedReply;
+          setAssistantBuffer(marineLiveCannedReply);
+          setStatus("Ready");
+          pushActivity({
+            direction: "system",
+            kind: "web_search",
+            title: "Live data · fetch failed (canned)",
+            detail: marineLiveCannedReply.slice(0, 1200),
+          });
+          finalizeAssistantReply(false);
+          return;
+        }
         if (marineLiveCannedReply && finishCannedLive(marineLiveCannedReply, webContext)) {
           return;
         }
@@ -3211,7 +3351,10 @@ function App() {
     }
     const searchHadLiveData = pendingWebSearchRef.current?.sources.some((s) => s.ok && s.text.trim()) ?? false;
     if (searchHadLiveData) {
-      systemPrompt = `${systemPrompt}\n\n${WEB_SEARCH_GROUNDING_APPEND}`;
+      systemPrompt = `${systemPrompt}\n\n${buildWebSearchGroundingAppend({
+        answerShape: pendingWebSearchRef.current?.answerShape,
+        crossSource: pendingWebSearchRef.current?.crossSource,
+      })}`;
     } else if (shouldRunWebSearch) {
       systemPrompt = `${systemPrompt}\n\n${WEB_SEARCH_NO_RESULTS_APPEND}`;
     }
