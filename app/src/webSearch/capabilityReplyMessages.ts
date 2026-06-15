@@ -1,13 +1,16 @@
 import {
   isAviationQuery,
+  isAirQualityQuery,
+  isGitHubPopularQuery,
   isIssQuery,
   isMarineInfraQuery,
+  isMarineQuery,
   isNewsQuery,
-  isGitHubPopularQuery,
   isShipsQuery,
   isStarlinkCountQuery,
   isStarlinkRegionalQuery,
   isUnsupportedLiveQuery,
+  isWeatherQuery,
   isWorldOverviewQuery,
 } from "./intents";
 import { formatDataAgeForSource } from "./dataAge";
@@ -151,15 +154,19 @@ const formatGenericSource = (source: SearchSourceResult): string => {
   }
 
   if (source.provider === "open-meteo") {
-    const temp = lines.find((l) => /טמפרatura|temperatur/i.test(l));
+    const temp = lines.find((l) => /טמפר(?:atura|טור)/i.test(l));
     const place = lines.find((l) => l.startsWith("מיקום:"));
     const condition = lines.find((l) => l.startsWith("מצב:"));
-    const tempVal = temp?.match(/([\d.]+)\s*°C/i)?.[1];
+    const humidity = lines.find((l) => l.startsWith("לחות:"));
+    const wind = lines.find((l) => l.startsWith("רוח:"));
+    const tempVal = temp?.match(/([\d.-]+)\s*°C/i)?.[1];
+    const placeName = place?.replace("מיקום:", "").trim() ?? "";
+    const conditionText = condition?.replace("מצב:", "").trim();
     const lead =
-      tempVal && place
-        ? `הטמפרטורה ב${place.replace("מיקום:", "").trim()}: ${tempVal}°C`
+      tempVal && placeName
+        ? `כרגע ב${placeName}: ${tempVal}°C${conditionText ? `, ${conditionText}` : ""}`
         : temp ?? intro;
-    const extras = [condition, temp !== lead ? temp : null].filter(Boolean) as string[];
+    const extras = [humidity, wind].filter(Boolean) as string[];
     return [
       lead,
       ...extras.map((l) => `• ${l}`),
@@ -510,6 +517,46 @@ export type CapabilityLiveReplyOptions = {
   answerShape?: AnswerShape;
   regionLabel?: string;
 };
+
+const STRUCTURED_LIVE_INTENTS = new Set<SearchIntent>([
+  "weather",
+  "airquality",
+  "marine",
+  "currency",
+  "earthquake",
+  "worldtime",
+  "distance",
+  "places",
+  "holiday",
+  "country",
+  "government",
+  "crypto",
+  "market",
+  "aviation",
+  "ships",
+  "marine-infra",
+  "satellite",
+  "disaster",
+  "spaceweather",
+  "github",
+  "hackernews",
+  "huggingface",
+  "arxiv",
+]);
+
+/** Bypass Gemma for structured live facts — model often ignores SEARCH BRIEF for weather. */
+export function shouldDeliverStructuredLiveReply(
+  query: string,
+  intents: SearchIntent[],
+  sources: SearchSourceResult[],
+): boolean {
+  if (!sources.some((s) => s.ok && s.text.trim())) return false;
+  if (isWeatherQuery(query) || isAirQualityQuery(query) || isMarineQuery(query)) return true;
+  if (intents.some((i) => STRUCTURED_LIVE_INTENTS.has(i))) return true;
+  if (isAviationQuery(query) || isShipsQuery(query) || isIssQuery(query)) return true;
+  if (isStarlinkCountQuery(query) || isGitHubPopularQuery(query)) return true;
+  return false;
+}
 
 const stripScore = (line: string): string =>
   line.replace(/^\d+\.\s*/, "").replace(/\s*\(★[\d,]+\).*$/i, "").trim();

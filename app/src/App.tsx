@@ -176,7 +176,7 @@ import {
   saveChatProfileOverride,
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
-import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
+import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
 import { isGeneralNewsDigestQuery } from "./webSearch/queryExtract";
 import { isTopicalOverviewRouting } from "./webSearch/topicalEnrichment";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
@@ -2914,12 +2914,11 @@ function App() {
       needsWebSearch(trimmed || effectivePrompt);
     let searchIntentsForGlobe: string[] = [];
 
-    const finishCannedLive = (reply: string, ctx: string): boolean => {
-      if (!qaChatBridge.hasPending()) return false;
-      if (qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending()) return false;
-      if (cameraActive || hasAttachments || continueCode || documentTurn || wantsGameSearch) return false;
+    const deliverLiveCannedReply = (reply: string, ctx: string, title = "Live data · canned reply"): boolean => {
       const text = reply.trim();
       if (!text) return false;
+      if (qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending()) return false;
+      if (cameraActive || hasAttachments || continueCode || documentTurn || wantsGameSearch) return false;
       qaChatBridge.setWebContext(ctx);
       qaChatBridge.setReplySource("canned-live");
       assistantBufferRef.current = text;
@@ -2928,11 +2927,16 @@ function App() {
       pushActivity({
         direction: "system",
         kind: "web_search",
-        title: "Live data · canned reply",
+        title,
         detail: text.slice(0, 1200),
       });
       finalizeAssistantReply(false);
       return true;
+    };
+
+    const finishCannedLive = (reply: string, ctx: string): boolean => {
+      if (!qaChatBridge.hasPending()) return false;
+      return deliverLiveCannedReply(reply, ctx);
     };
 
     if (!shouldRunWebSearch && !localTimeOnly) {
@@ -3065,6 +3069,14 @@ function App() {
           return;
         }
         if (marineLiveCannedReply && finishCannedLive(marineLiveCannedReply, webContext)) {
+          return;
+        }
+        if (
+          marineLiveCannedReply &&
+          searchLiveOk &&
+          shouldDeliverStructuredLiveReply(effectivePrompt, searchResult.intents, searchResult.sources) &&
+          deliverLiveCannedReply(marineLiveCannedReply, webContext, "Live data · structured reply")
+        ) {
           return;
         }
         if (!webContext.trim()) {

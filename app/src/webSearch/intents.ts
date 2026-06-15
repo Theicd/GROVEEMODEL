@@ -444,7 +444,7 @@ export const isDisasterQuery = (text: string): boolean =>
   /(?:אסון|אסונות|gdacs|הוריקן|hurricane|tsunami|צונאמי|שריפ(?:ה|ות)|wildfire|סופ(?:ה|ות)\s+טרופי)/i.test(text);
 
 export const isWeatherQuery = (text: string): boolean =>
-  /מזג\s*האוויר|מז"?\s*א|טמפרטור|temperatur|weather|temperature|גשם|שלג|מעונן|לחות|מזג|מהירות\s+(?:ה)?רוח|wind\s+speed/i.test(text);
+  /מזג\s*האוויר|מסג\s*האוויר|מז"?\s*א|טמפרטור|temperatur|weather|temperature|גשם|שלג|מעונן|לחות|מזג|מהירות\s+(?:ה)?רוח|wind\s+speed/i.test(text);
 
 /** Live air pollution — Open-Meteo Air Quality API. */
 export const isAirQualityQuery = (text: string): boolean =>

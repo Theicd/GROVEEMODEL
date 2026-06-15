@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clearLiveWorldSnapshotCache, setLiveWorldSnapshot } from "../liveWorld/snapshotStore";
-import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
+import { buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply } from "./capabilityReplyMessages";
 import type { SearchSourceResult } from "./types";
 
 const src = (over: Partial<SearchSourceResult>): SearchSourceResult => ({
@@ -158,6 +158,38 @@ describe("buildCapabilityLiveReply", () => {
     );
     expect(reply).toMatch(/22|סופה|מז"א/i);
     expect(reply).toContain("Sources:");
+  });
+
+  it("returns structured weather reply with exact temperature", () => {
+    const reply = buildCapabilityLiveReply(
+      "מה מזג האוויר בגרמניה?",
+      ["weather"],
+      [
+        src({
+          provider: "open-meteo",
+          label: "מזג אוויר (Open-Meteo)",
+          text: [
+            "מיקום: Germany, DE",
+            "מצב: מעונן חלקית",
+            "טמפרטורה: 18°C (מרגיש 17°C)",
+            "לחות: 62%",
+            "רוח: 12 km/h, כיוון 180°",
+          ].join("\n"),
+        }),
+      ],
+    );
+    expect(reply).toMatch(/18°C/);
+    expect(reply).toMatch(/גרמניה|Germany/i);
+    expect(reply).not.toMatch(/להזין|placeholder|\[כאן/i);
+    expect(reply).toContain("Sources:");
+  });
+
+  it("shouldDeliverStructuredLiveReply is true for weather", () => {
+    expect(
+      shouldDeliverStructuredLiveReply("מה הטמפרטורה בחיפה", ["weather"], [
+        src({ provider: "open-meteo", ok: true, text: "טמפרטורה: 24°C" }),
+      ]),
+    ).toBe(true);
   });
 
   it("web fallback failure returns honest canned reply", () => {
