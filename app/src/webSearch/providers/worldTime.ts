@@ -1,4 +1,4 @@
-import { geocodePlace, formatPlaceLabel } from "../geoResolve";
+import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 import { fetchJson } from "../fetchJson";
 import { getStartupContextSync } from "../../startupContext";
 import type { TimeWidgetData } from "../../timeWidget/types";
@@ -64,12 +64,9 @@ const formatLocalTime = (iso: string | undefined): string => {
   }
 };
 
-const toTimeWidget = (
-  place: { name: string; country_code?: string; timezone: string },
-  time: TimeApiZone,
-): TimeWidgetData => ({
+const toTimeWidget = (place: GeoPlace, time: TimeApiZone): TimeWidgetData => ({
   placeLabel: formatPlaceLabel(place),
-  timezone: time.timeZone ?? place.timezone,
+  timezone: time.timeZone ?? place.timezone ?? "UTC",
   anchorIso: time.currentLocalTime ?? new Date().toISOString(),
   utcOffsetLabel: formatOffset(time.currentUtcOffset?.seconds),
   dstActive: time.isDayLightSavingActive,

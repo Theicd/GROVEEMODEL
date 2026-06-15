@@ -203,6 +203,11 @@ RULES:
 8. SHIPS / AIS / aviation: copy EXACT counts from "ספינות בטווח:" or "מטוסים בטווח:" — do NOT say you lack data.
 9. For partial AIS coverage — cite the provider label honestly.`;
 
+export const buildWebSearchGroundingAppend = (_opts?: {
+  answerShape?: string;
+  crossSource?: boolean;
+}): string => WEB_SEARCH_GROUNDING_APPEND;
+
 export const GAME_SEARCH_GROUNDING_APPEND = `[ONLINE GAMES — browser-playable via Internet Archive]
 Playable game cards appear ONLY in the games side panel (right side of the screen), NOT in the chat.
 RULES:

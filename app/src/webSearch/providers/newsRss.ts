@@ -32,7 +32,6 @@ const FEEDS: Record<string, NewsFeed> = {
   },
 };
 
-const WORLD_FEED_KEYS = ["bbc", "cnn", "reuters", "guardian"] as const;
 const DIGEST_FEED_KEYS = ["ynet", "bbc", "cnn", "reuters", "guardian"] as const;
 
 export const parseRssTitles = (xml: string, limit = 5): string[] => {
@@ -118,21 +117,6 @@ export const fetchNewsFeedByKey = async (key: string, limit = 3): Promise<Search
       latencyMs: Math.round(performance.now() - started),
     };
   }
-};
-
-const fetchWorldHeadlines = async (): Promise<Array<{ feed: NewsFeed; titles: string[] }>> => {
-  const results = await Promise.allSettled(
-    WORLD_FEED_KEYS.map(async (key) => {
-      const feed = FEEDS[key];
-      const titles = await fetchFeedTitles(feed, 2);
-      return { feed, titles };
-    }),
-  );
-
-  return results
-    .filter((r): r is PromiseFulfilledResult<{ feed: NewsFeed; titles: string[] }> => r.status === "fulfilled")
-    .map((r) => r.value)
-    .filter((row) => row.titles.length > 0);
 };
 
 /** Legacy aggregate — prefer per-feed tasks in orchestrator. */

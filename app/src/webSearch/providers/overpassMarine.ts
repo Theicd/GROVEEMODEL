@@ -1,6 +1,6 @@
 import { resolveShipRegion } from "../../realityData/shipRegion";
 import { fetchJson } from "../fetchJson";
-import type { SearchSourceResult, SharedSearchRegion } from "../types";
+import type { SearchSourceResult } from "../types";
 
 type OverpassElement = {
   type?: string;
@@ -51,16 +51,13 @@ const buildOverpassQuery = (south: number, west: number, north: number, east: nu
 out center 120;`;
 
 /** OpenStreetMap Overpass — static marine infrastructure (harbours, buoys, lighthouses). */
-export const fetchOverpassMarineSearch = async (
-  query: string,
-  sharedRegion?: SharedSearchRegion | null,
-): Promise<SearchSourceResult> => {
+export const fetchOverpassMarineSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "osm-overpass-marine" as const;
   const label = "תשתיות ימיות (OpenStreetMap)";
 
   try {
-  const region = await resolveShipRegion(query, sharedRegion);
+  const region = await resolveShipRegion(query);
   if (!region.bbox) {
     return {
       provider,

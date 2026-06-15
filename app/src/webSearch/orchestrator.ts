@@ -18,7 +18,7 @@ import { fetchGitHubSearch } from "./providers/github";
 import { fetchHuggingFaceDatasetsSearch, fetchHuggingFaceModelsSearch } from "./providers/huggingface";
 import { fetchHolidaySearch } from "./providers/nagerHolidays";
 import { fetchPlacesSearch } from "./providers/nominatimPlaces";
-import { fetchNewsSearch, fetchNewsFeedByKey, selectNewsFeedKeys } from "./providers/newsRss";
+import { fetchNewsFeedByKey, selectNewsFeedKeys } from "./providers/newsRss";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
 import { fetchShipsSearch } from "../realityData/providers/ships";
 import { fetchOverpassMarineSearch } from "./providers/overpassMarine";
@@ -35,7 +35,7 @@ import { fetchGovernmentSearch } from "./providers/wikidataGov";
 import { fetchWorldTimeSearch } from "./providers/worldTime";
 import { fetchCoinGeckoSearch } from "./providers/coingecko";
 import { fetchCommoditySearch, fetchMarketQuoteSearch } from "./providers/marketQuotes";
-import { fetchHackerNewsSearch } from "./providers/hackernews";
+import { fetchHackerNewsSearch } from "./providers/hackerNews";
 import { fetchSpaceXLaunchSearch } from "./providers/spacexLaunch";
 import { fetchUnsupportedSource } from "./providers/unsupported";
 import { fetchSearxngSearch } from "./providers/searxng";
@@ -147,11 +147,11 @@ const buildTasksForQuery = (
   if (intents.includes("currency")) tasks.push(trackTask(cached("frankfurter-fx", q, () => fetchCurrencySearch(q)), options));
   if (intents.includes("distance")) tasks.push(trackTask(cached("osrm-distance", q, () => fetchDistanceSearch(q)), options));
   if (intents.includes("places")) tasks.push(trackTask(cached("nominatim-places", q, () => fetchPlacesSearch(q)), options));
-  if (intents.includes("ships")) tasks.push(trackTask(cached("ais-ships", q, () => fetchShipsSearch(q, options?.sharedRegion)), options));
+  if (intents.includes("ships")) tasks.push(trackTask(cached("ais-ships", q, () => fetchShipsSearch(q)), options));
   if (intents.includes("marine-infra")) {
     tasks.push(
       trackTask(
-        cached("osm-overpass-marine", q, () => fetchOverpassMarineSearch(q, options?.sharedRegion)),
+        cached("osm-overpass-marine", q, () => fetchOverpassMarineSearch(q)),
         options,
       ),
     );
@@ -160,7 +160,7 @@ const buildTasksForQuery = (
     const feedKeys = selectNewsFeedKeys(q);
     for (const key of feedKeys) {
       tasks.push(
-        trackTask(cached(`news-rss-${key}`, q, () => fetchNewsFeedByKey(key, 3)), options),
+        trackTask(cached("news-rss", `${q}|${key}`, () => fetchNewsFeedByKey(key, 3)), options),
       );
     }
   }
@@ -168,7 +168,7 @@ const buildTasksForQuery = (
     tasks.push(
       trackTask(
         cached("adsb-aviation", q, () =>
-          fetchAviationSearch(q, options?.recentUserText ?? [], options?.sharedRegion),
+          fetchAviationSearch(q, options?.recentUserText ?? []),
         ),
         options,
       ),
