@@ -35,7 +35,7 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
           sourceKind: "headline" as const,
         } satisfies SearchHit;
       })
-      .filter((h): h is SearchHit => h !== null)
+      .filter((h) => h !== null)
       .slice(0, limit);
     if (hits.length) return hits;
     return [];
@@ -57,7 +57,7 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
           sourceKind: "headline" as const,
         } satisfies SearchHit;
       })
-      .filter((h): h is SearchHit => h !== null);
+      .filter((h) => h !== null);
   }
 
   const sorted = [...rssItems].sort((a, b) => b.publishedTs - a.publishedTs);

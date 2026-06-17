@@ -8,9 +8,9 @@ function storyKey(card: GroveeNewsCard): string {
 }
 
 /** Drop duplicate URLs / near-duplicate titles in panel cards. */
-export function dedupeNewsCards(cards: GroveeNewsCard[]): GroveeNewsCard[] {
+export function dedupeNewsCards<T extends GroveeNewsCard>(cards: T[]): T[] {
   const seen = new Set<string>();
-  const out: GroveeNewsCard[] = [];
+  const out: T[] = [];
   for (const card of cards) {
     const key = storyKey(card);
     if (seen.has(key)) continue;

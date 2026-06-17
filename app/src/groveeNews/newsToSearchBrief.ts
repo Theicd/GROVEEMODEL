@@ -10,6 +10,7 @@ import { buildRecentHeadlineHits } from "./recentHeadlineHits";
 import { hitsToDisplayCards } from "./searchAdapter";
 import { fetchTopicsBundle } from "./topicsAdapter";
 import { startGroveeNewsBoot } from "./engineBoot";
+import type { GroveeNewsCard } from "./types";
 import { searchNews } from "./engine/engine/pipeline";
 import { getEngineLibraryStats } from "./engine/engine/engineStats";
 import { getSearchIndexSize } from "./engine/search/flexIndex";
@@ -94,7 +95,7 @@ export async function fetchGroveeNewsSearch(query: string): Promise<SearchSource
 
       const bundle = await fetchTopicsBundle();
 
-      let cards = bundle.cards.slice(0, 24);
+      let cards: GroveeNewsCard[] = bundle.cards.slice(0, 24);
 
       if (!cards.length && stats.rssHeadlines > 0) {
 
