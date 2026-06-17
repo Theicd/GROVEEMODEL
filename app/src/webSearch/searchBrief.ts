@@ -8,8 +8,6 @@ import type {
 } from "./types";
 import { buildDataAgeLines } from "./dataAge";
 import { LIVE_WORLD_LAYERS_HE } from "./searchProviders";
-import { isIsraelNewsQuery, isWorldHeadlineQuery } from "./queryExtract";
-import { NEWS_FEEDS, feedKeyFromSourceLabel } from "./providers/newsFeeds";
 import {
   buildCrossSourceCorrelationLines,
   extractCrossSourceMetrics,
