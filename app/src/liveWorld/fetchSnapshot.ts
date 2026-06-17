@@ -2,6 +2,7 @@ import { fetchEarthquakeSearch } from "../webSearch/providers/usgsEarthquake";
 import { fetchIssSearch } from "../realityData/providers/iss";
 import { fetchShipsSearch } from "../realityData/providers/ships";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
+import { fetchStarlinkCatalogSearch } from "../realityData/providers/satelliteCatalog";
 import { fetchJson } from "../webSearch/fetchJson";
 import type { SearchSourceResult } from "../webSearch/types";
 import {
@@ -172,6 +173,7 @@ export async function fetchLiveWorldSnapshot(force = false): Promise<LiveWorldSn
 
 export async function warmLiveWorldCache(): Promise<void> {
   if (getInflightSnapshotFetch()) return;
+  void fetchStarlinkCatalogSearch("כמה לווייני Starlink פעילים כרגע?").catch(() => null);
   const p = fetchLiveWorldSnapshot(true).finally(() => setInflightSnapshotFetch(null));
   setInflightSnapshotFetch(p);
   await p.catch(() => null);

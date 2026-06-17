@@ -3,8 +3,11 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { devRealityPlugin } from "./vite-plugins/devReality";
+import { fetchProxyPlugin } from "./vite/fetchProxyPlugin";
+import { translateProxyPlugin } from "./vite/translateProxyPlugin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoName = path.basename(__dirname);
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -13,7 +16,35 @@ export default defineConfig({
   // Default ./ for local dev. Pages from repo /docs/: npm run build:pages-docs (VITE_BASE=/GROVEEMODEL/docs/)
   // Pages from Actions artifact at site root: VITE_BASE=/GROVEEMODEL/
   base: process.env.VITE_BASE ?? "./",
-  plugins: [react(), devRealityPlugin()],
+  resolve: {
+    alias: {
+      "@grovee-news": path.join(__dirname, "app/src/groveeNews/engine"),
+    },
+  },
+  worker: {
+    format: "es",
+  },
+  optimizeDeps: {
+    exclude: ["@huggingface/transformers", "onnxruntime-web"],
+  },
+  plugins: [
+    react(),
+    devRealityPlugin(),
+    fetchProxyPlugin(),
+    translateProxyPlugin(),
+    {
+      name: "grovee-dev-banner",
+      configureServer(server) {
+        server.httpServer?.once("listening", () => {
+          const addr = server.httpServer?.address();
+          const port = typeof addr === "object" && addr ? addr.port : 5180;
+          console.log(
+            `\n  ▶ GROVEEMODEL — HAL space intro (${repoName})\n  → http://127.0.0.1:${port}/\n  ✖ NOT GROVEEMODEL-main (old «טען מודל מקומי» UI)\n`,
+          );
+        });
+      },
+    },
+  ],
   build: {
     outDir: path.join(__dirname, "dist"),
     emptyOutDir: true,

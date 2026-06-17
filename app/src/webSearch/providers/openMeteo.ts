@@ -1,6 +1,6 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
-import { extractLocationPhrase } from "../queryExtract";
+import { extractLocationPhrase, normalizeCountrySearchName } from "../queryExtract";
 import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 import { getStartupContextSync } from "../../startupContext";
 
@@ -84,6 +84,8 @@ export const fetchWeatherSearch = async (
       };
     }
 
+    location = normalizeCountrySearchName(location);
+
     const place = sharedPlace ?? (await geocodePlace(location));
     if (!place) {
       return {
@@ -131,7 +133,7 @@ export const fetchWeatherSearch = async (
       ...(place.elevation != null ? [`גובה: ${Math.round(place.elevation)} m`] : []),
       `זמן (מקומי): ${cur?.time ?? "—"}`,
       `מצב: ${desc}`,
-      `טמפרatura: ${cur?.temperature_2m ?? "—"}°C (מרגיש ${cur?.apparent_temperature ?? "—"}°C)`,
+      `טמפרטורה: ${cur?.temperature_2m ?? "—"}°C (מרגיש ${cur?.apparent_temperature ?? "—"}°C)`,
       `לחות: ${cur?.relative_humidity_2m ?? "—"}%`,
       `רוח: ${cur?.wind_speed_10m ?? "—"} km/h, כיוון ${cur?.wind_direction_10m ?? "—"}°`,
       `לחץ: ${cur?.surface_pressure ?? "—"} hPa`,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clearLiveWorldSnapshotCache, setLiveWorldSnapshot } from "../liveWorld/snapshotStore";
-import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
+import { buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply } from "./capabilityReplyMessages";
 import type { SearchSourceResult } from "./types";
 
 const src = (over: Partial<SearchSourceResult>): SearchSourceResult => ({
@@ -76,29 +76,44 @@ describe("buildCapabilityLiveReply", () => {
     expect(reply!.length).toBeLessThan(900);
   });
 
-  it("returns news headline for B01", () => {
+  it("news queries return panel UI guide — no headline dump", () => {
     const reply = buildCapabilityLiveReply(
-      "מה הכותרת הראשית בעולם כרגע?",
+      "חפש חדשות בנושא סייבר",
       ["news"],
       [
         src({
-          provider: "news-rss",
-          label: "חדשות (RSS — BBC · CNN · Reuters · Guardian)",
-          text: [
-            "ANSWER (headline): [BBC] Breaking news headline",
-            "מקורות RSS בינלאומיים (BBC · CNN · Reuters · Guardian):",
-            "[BBC] 1. Breaking news headline",
-            "[CNN] 1. CNN world headline",
-            "[Reuters] 1. Reuters headline",
-          ].join("\n"),
+          provider: "grovee-news",
+          label: "חדשות (GROVEE NEWS)",
+          text: "ANSWER (headline): [BBC] Cyber headline\n[BBC] 1. Cyber headline",
         }),
       ],
     );
-    expect(reply).toMatch(/Breaking|BBC/i);
-    expect(reply).toMatch(/CNN|Reuters|כותרות נוספות/i);
+    expect(reply).toContain("כרטיסיות");
+    expect(reply).toContain("סכם כתבה");
+    expect(reply).not.toMatch(/Sources:/i);
+    expect(reply).not.toMatch(/Breaking world/i);
   });
 
-  it("includes DATA AGE for stale FX", () => {
+  it("shouldDeliverStructuredLiveReply is false for news", () => {
+    expect(
+      shouldDeliverStructuredLiveReply(
+        "מה הכותרות בעולם",
+        ["news"],
+        [
+          {
+            provider: "grovee-news",
+            label: "חדשות (BBC)",
+            ok: true,
+            text: "ANSWER (headline): [BBC] x",
+            latencyMs: 1,
+          },
+        ],
+        "canned",
+      ),
+    ).toBe(false);
+  });
+
+  it("shouldDeliverStructuredLiveReply is true when canned reply exists", () => {
     const reply = buildCapabilityLiveReply(
       "מה שער הדולר מול השקל כרגע?",
       ["currency"],
@@ -158,6 +173,66 @@ describe("buildCapabilityLiveReply", () => {
     );
     expect(reply).toMatch(/22|סופה|מז"א/i);
     expect(reply).toContain("Sources:");
+  });
+
+  it("returns structured weather reply with exact temperature", () => {
+    const reply = buildCapabilityLiveReply(
+      "מה מזג האוויר בגרמניה?",
+      ["weather"],
+      [
+        src({
+          provider: "open-meteo",
+          label: "מזג אוויר (Open-Meteo)",
+          text: [
+            "מיקום: Germany, DE",
+            "מצב: מעונן חלקית",
+            "טמפרטורה: 18°C (מרגיש 17°C)",
+            "לחות: 62%",
+            "רוח: 12 km/h, כיוון 180°",
+          ].join("\n"),
+        }),
+      ],
+    );
+    expect(reply).toMatch(/18°C/);
+    expect(reply).toMatch(/גרמניה|Germany/i);
+    expect(reply).not.toMatch(/להזין|placeholder|\[כאן/i);
+    expect(reply).toContain("Sources:");
+  });
+
+  it("returns earthquake list for strong recent quakes query", () => {
+    const reply = buildCapabilityLiveReply(
+      "ספר לי על רעידות אדמה חזקות שהיו לאחרונה",
+      ["earthquake"],
+      [
+        src({
+          provider: "usgs-earthquake",
+          label: "רעידות אדמה (USGS)",
+          text: [
+            'סה"כ 12 רעידות מעל M5 ב-24 שעות (USGS). 3 הגדולות:',
+            "הרעידה האחרונה: M6.2 · 67 km ESE of Pondaguitan, Philippines · 2026-06-15 09:18:38 UTC",
+            "- M6.2 · 67 km ESE of Pondaguitan, Philippines · 2026-06-15 09:18:38 UTC",
+          ].join("\n"),
+        }),
+      ],
+    );
+    expect(reply).toMatch(/M6\.2/);
+    expect(reply).toMatch(/Philippines/);
+    expect(reply).toMatch(/Sources:.*USGS/);
+    expect(reply).not.toMatch(/\[N\/A\]/);
+  });
+
+  it("shouldDeliverStructuredLiveReply is true when canned reply exists", () => {
+    expect(
+      shouldDeliverStructuredLiveReply("מה הטמפרטורה בחיפה", ["weather"], [
+        {
+          provider: "open-meteo",
+          label: "מזג אוויר",
+          ok: true,
+          text: "מיקום: חיפה\nטמפרטורה: 22°C",
+          latencyMs: 1,
+        },
+      ], "כרגע בחיפה: 22°C"),
+    ).toBe(true);
   });
 
   it("web fallback failure returns honest canned reply", () => {

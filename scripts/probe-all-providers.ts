@@ -45,7 +45,7 @@ const ALL_PROVIDERS = [
   ...new Set([
     ...Object.keys(PROVIDER_SAMPLES),
     "open-meteo",
-    "news-rss",
+    "grovee-news",
     "arxiv",
     "world-time",
     "usgs-earthquake",

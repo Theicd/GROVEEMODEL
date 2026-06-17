@@ -17,7 +17,7 @@ import {
   isNewsQuery,
 } from "./intents";
 import { regexPlanForQuery } from "./searchPlanner";
-import { extractCurrencyPair, sanitizeSearchQuery } from "./queryExtract";
+import { extractCurrencyPair, isIsraelNewsQuery, isWorldHeadlineQuery, sanitizeSearchQuery } from "./queryExtract";
 import { formatWebContext, summarizeSearchResult } from "./orchestrator";
 import type { SearchSourceResult } from "./types";
 
@@ -75,6 +75,50 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("מה הכותרת הראשית בעולם כרגע?")).toContain("news");
     expect(classifySearchIntents("מי ראש ממשלת בריטניה?")).toContain("government");
     expect(needsWebSearch("מה מחיר חבית נפט Brent?")).toBe(true);
+  });
+
+  it("world headline query routes news only (not GitHub/HN)", () => {
+    const q = "מה הכותרות הראשיות בעולם כרגע?";
+    expect(isWorldHeadlineQuery(q)).toBe(true);
+    expect(isIsraelNewsQuery(q)).toBe(false);
+    const plan = regexPlanForQuery(q);
+    expect(plan?.intents).toEqual(["news"]);
+    expect(plan?.useWebFallback).toBe(false);
+    expect(classifySearchIntents(q)).not.toContain("github");
+    expect(classifySearchIntents(q)).not.toContain("hackernews");
+  });
+
+  it("Israel leading headlines triggers web search", () => {
+    const q = "מה הכותרות המובילות בישראל";
+    expect(needsWebSearch(q)).toBe(true);
+    expect(isIsraelNewsQuery(q)).toBe(true);
+    expect(regexPlanForQuery(q)?.intents).toEqual(["news"]);
+  });
+
+  it("Israel headlines today routes to news only (no GitHub/HN)", () => {
+    const q = "מה הכותרות הראשיות היום בישראל";
+    expect(isNewsQuery(q)).toBe(true);
+    expect(isIsraelNewsQuery(q)).toBe(true);
+    const intents = classifySearchIntents(q);
+    expect(intents).toContain("news");
+    expect(intents).not.toContain("github");
+    expect(intents).not.toContain("hackernews");
+    expect(intents).not.toContain("wikipedia");
+  });
+
+  it("article search routes to news not Wikipedia", () => {
+    const q = "חפש לי עוד כתבות על מרדכי דוד";
+    expect(isNewsQuery(q)).toBe(true);
+    const intents = classifySearchIntents(q);
+    expect(intents).toContain("news");
+    expect(intents).not.toContain("wikipedia");
+  });
+
+  it("tech news query uses news RSS not Hacker News alone", () => {
+    const q = "חדשות טכנולוגיה ו-AI";
+    const intents = classifySearchIntents(q);
+    expect(intents).toContain("news");
+    expect(intents).not.toContain("hackernews");
   });
 
   it("always searches live-world queries (earthquake, ISS, ships)", () => {

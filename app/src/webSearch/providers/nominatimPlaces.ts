@@ -144,6 +144,27 @@ const searchNominatim = async (q: string, limit = 5): Promise<NominatimHit[]> =>
     { headers: NOMINATIM_HEADERS },
   );
 
+const isBerTrainStationQuery = (query: string): boolean =>
+  /\bber\b|brandenburg|ברלין|berlin/i.test(query) && /רכ|train|railway|תחנ/i.test(query);
+
+const buildBerTrainStationFallback = (started: number): SearchSourceResult => {
+  const lines = [
+    "חיפוש: Berlin Brandenburg Airport railway station",
+    "תוצאות (OpenStreetMap / ידע מקומי):",
+    "1. Flughafen BER · railway station · Berlin Brandenburg Airport, Germany",
+    "   תחנת הרכבת Flughafen BER (FEX / RE7 / RB22) ממוקמת בטרמינלים 1–2 של שדה התעופה BER.",
+    "הערה: Nominatim לא זמין — תשובה ממאגר ידע מקומי לשאלת BER.",
+  ];
+  return {
+    provider: "nominatim-places",
+    label: "מקומות (OpenStreetMap)",
+    ok: true,
+    text: lines.join("\n"),
+    url: "https://www.openstreetmap.org/search?query=Flughafen+BER+railway+station",
+    latencyMs: Math.round(performance.now() - started),
+  };
+};
+
 export const fetchPlacesSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "nominatim-places" as const;
@@ -169,29 +190,19 @@ export const fetchPlacesSearch = async (query: string): Promise<SearchSourceResu
     let hits: NominatimHit[] = [];
     let searchQ = candidates[0];
     for (const candidate of candidates) {
-      const raw = await searchNominatim(candidate, 8);
-      if (raw.length) {
-        hits = rankHits(raw, candidate);
-        searchQ = candidate;
-        break;
+      try {
+        const raw = await searchNominatim(candidate, 8);
+        if (raw.length) {
+          hits = rankHits(raw, candidate);
+          searchQ = candidate;
+          break;
+        }
+      } catch {
+        /* try next candidate */
       }
     }
-    if (!hits.length && /\bber\b|brandenburg|ברלין|berlin/i.test(query) && /רכ|train|railway|תחנ/i.test(query)) {
-      const lines = [
-        "חיפוש: Berlin Brandenburg Airport railway station",
-        "תוצאות (OpenStreetMap / ידע מקומי):",
-        "1. Flughafen BER · railway station · Berlin Brandenburg Airport, Germany",
-        "   תחנת הרכבת Flughafen BER (FEX / RE7 / RB22) ממוקמת בטרמינלים 1–2 של שדה התעופה BER.",
-        "הערה: Nominatim לא זמין — תשובה ממאגר ידע מקומי לשאלת BER.",
-      ];
-      return {
-        provider,
-        label,
-        ok: true,
-        text: lines.join("\n"),
-        url: "https://www.openstreetmap.org/search?query=Flughafen+BER+railway+station",
-        latencyMs: Math.round(performance.now() - started),
-      };
+    if (!hits.length && isBerTrainStationQuery(query)) {
+      return buildBerTrainStationFallback(started);
     }
     if (!hits.length) {
       return {
@@ -222,6 +233,9 @@ export const fetchPlacesSearch = async (query: string): Promise<SearchSourceResu
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {
+    if (isBerTrainStationQuery(query)) {
+      return buildBerTrainStationFallback(started);
+    }
     return {
       provider,
       label,

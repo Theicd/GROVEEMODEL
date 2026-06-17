@@ -17,14 +17,25 @@ Browser UI similar to the Gemma-4 WebGPU demo, running ONNX models locally on th
 - `@huggingface/transformers` (Transformers.js)
 - ONNX Runtime Web (brought by Transformers.js)
 
+## GROVEE-NEWS integration
+
+Work-in-progress plan to merge the **GROVEE-NEWS** engine into this repo (replace legacy `news-rss`):
+
+- [docs/GROVEE-NEWS-INTEGRATION-PLAN.md](docs/GROVEE-NEWS-INTEGRATION-PLAN.md) — full phases, QA, E2E flows
+- [docs/GROVEE-NEWS-INTEGRATION-CHECKLIST.md](docs/GROVEE-NEWS-INTEGRATION-CHECKLIST.md) — short tracking checklist
+
 ## Quick start
+
+**Use this folder only:** `GROVEEMODEL` (not `GROVEEMODEL-main` — that clone is deprecated and shows the old intro).
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open: `http://127.0.0.1:4173`
+Open: **`http://127.0.0.1:5180/`** — top bar shows **`HAL·5180`**. Intro button: **«טען מודל לדפדפן»** (space / Earth fly-by).
+
+If you see the old centered logo and **«טען מודל מקומי»**, you are on the wrong port, wrong folder, or stale GitHub Pages cache — hard-refresh or use the URL above.
 
 ## Production build
 
@@ -42,10 +53,12 @@ npm run build
 
 ### GitHub Pages (this repo)
 
-- **Repo root `index.html`** only redirects to **`docs/index.html`** (production bundle). No `/src` paths — works even if Pages uses **`main` / `/ (root)`**.
+- **Live site:** `https://theicd.github.io/GROVEEMODEL/docs/`
+- **Repo root `index.html`** only redirects to **`docs/index.html`** (production bundle).
+- **Update Pages after UI changes:** `npm run build:pages-docs` then commit and push **`docs/`**.
 - **Vite** uses **`app/index.html`** + **`app/src/`** for `npm run dev` and `npm run build`.
-- **Build uses `base: './'`** so JS/CSS load as `./assets/...` from `docs/index.html`. A fixed `/GROVEEMODEL/` base was wrong: the browser requested `/GROVEEMODEL/assets/` while files sit under **`/GROVEEMODEL/docs/assets/`** → blank page.
-- The folder **`docs/`** is updated by **`sync-docs-folder.yml`** after each push (copy of `dist/`).
+- **Build uses `base: './'`** so JS/CSS load as `./assets/...` from `docs/index.html`.
+- **`build:pages-docs`** wipes and recopies `dist/` → `docs/` and prunes stale hashed assets (one bundle only).
 
 Optional: set Pages to **`/docs`** so the site root is the bundle directly (no redirect). **GitHub Actions** deploy is also supported (`deploy-pages.yml`).
 

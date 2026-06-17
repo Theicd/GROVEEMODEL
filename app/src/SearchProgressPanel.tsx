@@ -21,7 +21,7 @@ const PROVIDER_ICONS: Record<string, string> = {
   "usgs-earthquake": "🌋",
   coingecko: "₿",
   "hacker-news": "📰",
-  "news-rss": "📰",
+  "grovee-news": "📰",
   "adsb-aviation": "✈",
   "ais-ships": "⛴",
   "osm-overpass-marine": "⚓",

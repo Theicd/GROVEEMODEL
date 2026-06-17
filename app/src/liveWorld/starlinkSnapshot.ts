@@ -2,6 +2,8 @@ import type { SearchSourceResult } from "../webSearch/types";
 
 const STORAGE_KEY = "grovee-starlink-catalog-v1";
 export const STARLINK_CATALOG_MAX_AGE_MS = 30 * 60 * 1000;
+/** Approximate catalog size when CelesTrak is unreachable (updated periodically). */
+export const STARLINK_SEED_COUNT = 7150;
 
 export type StarlinkCatalogCache = {
   fetchedAt: number;
@@ -11,8 +13,9 @@ export type StarlinkCatalogCache = {
 
 let memoryCache: StarlinkCatalogCache | null = null;
 
-export const loadStarlinkCatalogCache = (): StarlinkCatalogCache | null => {
-  if (memoryCache && Date.now() - memoryCache.fetchedAt < STARLINK_CATALOG_MAX_AGE_MS) {
+export const loadStarlinkCatalogCache = (maxAgeMs?: number): StarlinkCatalogCache | null => {
+  const limit = maxAgeMs ?? STARLINK_CATALOG_MAX_AGE_MS;
+  if (memoryCache && Date.now() - memoryCache.fetchedAt < limit) {
     return memoryCache;
   }
   if (typeof localStorage === "undefined") return memoryCache;
@@ -21,6 +24,7 @@ export const loadStarlinkCatalogCache = (): StarlinkCatalogCache | null => {
     if (!raw) return memoryCache;
     const parsed = JSON.parse(raw) as StarlinkCatalogCache;
     if (!parsed?.total || !parsed.fetchedAt) return memoryCache;
+    if (maxAgeMs != null && Date.now() - parsed.fetchedAt > maxAgeMs) return memoryCache;
     memoryCache = parsed;
     return parsed;
   } catch {
@@ -56,8 +60,20 @@ export const formatStarlinkCatalogText = (cache: StarlinkCatalogCache, stale = f
   ].join("\n");
 };
 
+export const getSeedStarlinkCatalogCache = (): StarlinkCatalogCache => ({
+  fetchedAt: Date.now(),
+  total: STARLINK_SEED_COUNT,
+  sample: [
+    "1. STARLINK-1007 (seed)",
+    "2. STARLINK-2345 (seed)",
+    "3. STARLINK-3012 (seed)",
+  ],
+});
+
 export const starlinkSearchResultFromCache = (_query: string, maxAgeMs?: number): SearchSourceResult | null => {
-  const cache = getFreshStarlinkCatalogCache(maxAgeMs ?? STARLINK_CATALOG_MAX_AGE_MS);
+  const cache =
+    getFreshStarlinkCatalogCache(maxAgeMs ?? STARLINK_CATALOG_MAX_AGE_MS) ??
+    loadStarlinkCatalogCache(maxAgeMs ?? STARLINK_CATALOG_MAX_AGE_MS * 48);
   if (!cache) return null;
   return {
     provider: "starlink-catalog",

@@ -97,6 +97,7 @@ export const LANDING_CAPABILITY_CHIPS: LandingSuggestion[] = [
   // חיפוש
   { icon: "🔎", label: "חפש מידע עדכני", prompt: "חפש לי מידע עדכני על נושא שאבחר", category: "search" },
   { icon: "📰", label: "מה חדש בנושא", prompt: "מה חדש בנושא שאני שואל עליו?", category: "search" },
+  { icon: "🎮", label: "חדשות משחקי מחשב", prompt: "חפש חדשות על משחקי מחשב וקונסולה?", category: "search" },
   { icon: "🔗", label: "מצא מקורות אמינים", prompt: "מצא לי מקורות אמינים לנושא שאשאל", category: "search" },
 
   // רעיונות

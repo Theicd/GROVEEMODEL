@@ -18,7 +18,7 @@ export type SearchProviderId =
   | "frankfurter-fx"
   | "osrm-distance"
   | "nominatim-places"
-  | "news-rss"
+  | "grovee-news"
   | "adsb-aviation"
   | "iss-tracker"
   | "noaa-space"

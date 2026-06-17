@@ -13,7 +13,7 @@ export type QaRecordedResult = QaTurnResult & {
 };
 
 /** Bump when QA pipeline / canned logic changes — stale results get ⚠️ in UI. */
-export const QA_CODE_VERSION = "2026-06-14-canned-v2";
+export const QA_CODE_VERSION = "2026-06-15-web-v9";
 
 export const QA_STATUS_ICON: Record<QaManualStatus, string> = {
   pass: "✅",

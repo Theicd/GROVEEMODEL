@@ -42,6 +42,12 @@ describe("routeQuery", () => {
     expect(primaryTierForIntents(["news", "weather"])).toBe("structured");
   });
 
+  it("routes Israel headline query to news RSS only", () => {
+    const route = routeQuery("מה הכותרות הראשיות היום בישראל");
+    expect(route.intents).toEqual(["news"]);
+    expect(route.useWebFallback).toBe(false);
+  });
+
   it("cross-source storm query expands intents", () => {
     const intents = classifySearchIntents("האם יש סופה פעילה באירופה?");
     expect(intents).toContain("disaster");

@@ -1,8 +1,9 @@
-import { geocodePlace, formatPlaceLabel } from "../geoResolve";
+import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 import { fetchJson } from "../fetchJson";
 import { getStartupContextSync } from "../../startupContext";
 import type { TimeWidgetData } from "../../timeWidget/types";
 import type { SearchSourceResult } from "../types";
+import { agentDebugLog } from "../../debugAgentLog";
 import {
   extractCountryPhrase,
   extractLocationPhrase,
@@ -64,12 +65,9 @@ const formatLocalTime = (iso: string | undefined): string => {
   }
 };
 
-const toTimeWidget = (
-  place: { name: string; country_code?: string; timezone: string },
-  time: TimeApiZone,
-): TimeWidgetData => ({
+const toTimeWidget = (place: GeoPlace, time: TimeApiZone): TimeWidgetData => ({
   placeLabel: formatPlaceLabel(place),
-  timezone: time.timeZone ?? place.timezone,
+  timezone: time.timeZone ?? place.timezone ?? "UTC",
   anchorIso: time.currentLocalTime ?? new Date().toISOString(),
   utcOffsetLabel: formatOffset(time.currentUtcOffset?.seconds),
   dstActive: time.isDayLightSavingActive,
@@ -165,8 +163,14 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
     }
 
     const location = resolveTimeLocation(query);
+    // #region agent log
+    agentDebugLog("H5", "worldTime.ts:fetchWorldTimeSearch", "time location resolved", { queryPreview: query.slice(0, 120), pair: !!pair, location });
+    // #endregion
     if (!location) {
       const ctx = getStartupContextSync();
+      // #region agent log
+      agentDebugLog("H5", "worldTime.ts:fetchWorldTimeSearch", "time using startup context fallback check", { queryPreview: query.slice(0, 120), hasStartupContext: !!ctx, timezone: ctx?.timezone, cityName: ctx?.cityName, countryName: ctx?.countryName });
+      // #endregion
       if (ctx) {
         const place = ctx.cityName
           ? { name: ctx.cityName, timezone: ctx.timezone, latitude: ctx.lat, longitude: ctx.lon, country_code: ctx.countryCode }
@@ -204,6 +208,9 @@ export const fetchWorldTimeSearch = async (query: string): Promise<SearchSourceR
 
     const tzDirect = KNOWN_TZ[location.toLowerCase()] ?? KNOWN_TZ[location];
     let place = await geocodePlace(location);
+    // #region agent log
+    agentDebugLog("H5", "worldTime.ts:fetchWorldTimeSearch", "time place geocoded", { queryPreview: query.slice(0, 120), location, tzDirect, geocodeName: place?.name, geocodeTimezone: place?.timezone });
+    // #endregion
     if (!place?.timezone && tzDirect) {
       place = {
         name: location,

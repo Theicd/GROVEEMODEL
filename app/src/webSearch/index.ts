@@ -18,7 +18,7 @@ export {
 export { extractLocationPhrase, extractCountryPhrase } from "./queryExtract";
 export { runWebSearch, fetchWebContext, formatWebContext, warmLiveWorldCache, clearQueryCache, queryCacheSize } from "./orchestrator";
 export { buildMarineLiveReply } from "./marineReplyMessages";
-export { buildCapabilityLiveReply, buildWebFallbackNoDataReply, buildOverviewMultiSourceReply } from "./capabilityReplyMessages";
+export { buildCapabilityLiveReply, buildWebFallbackNoDataReply, buildOverviewMultiSourceReply, shouldDeliverStructuredLiveReply } from "./capabilityReplyMessages";
 export {
   regexPlanForQuery,
   shouldUseSearchPlanner,

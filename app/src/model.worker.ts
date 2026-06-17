@@ -9,6 +9,10 @@ import {
   env,
 } from "@huggingface/transformers";
 import {
+  resolveDownloadPercent,
+  sumFileProgressMap,
+} from "./introProgressFormat";
+import {
   SCENE_ANALYSIS_SYSTEM_PROMPT,
   buildSceneAnalysisUserPrompt,
 } from "./cameraPrompts";
@@ -388,7 +392,7 @@ const createDownloadProgressBridge = (startedAt: number) => {
     const label = shortFileName(activeFile);
     post({
       type: "progress",
-      text: label ? `מוריד: ${label}` : "מוריד מודל…",
+      text: label ? `טוען לדפדפן: ${label}` : "טוען מודל לדפדפן…",
       progress: overallPct,
       phase: "download",
       loaded: overallLoaded,
@@ -416,16 +420,21 @@ const createDownloadProgressBridge = (startedAt: number) => {
     if (status === "progress_total") {
       const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
       const total = typeof progressData.total === "number" ? progressData.total : 0;
-      if (loaded <= 0 && total <= 0) return;
+      const filesSum = sumFileProgressMap(progressData.files);
+      if (loaded <= 0 && total <= 0 && filesSum.total <= 0) return;
 
-      overallLoaded = Math.max(overallLoaded, loaded);
-      overallTotal = Math.max(overallTotal, total || GEMMA_Q4_MULTIMODAL_PACK_BYTES);
-      const pct =
-        typeof progressData.progress === "number" && progressData.progress > 0
-          ? progressData.progress
-          : overallTotal > 0
-            ? (overallLoaded / overallTotal) * 100
-            : 0;
+      overallLoaded = Math.max(overallLoaded, loaded, filesSum.loaded);
+      overallTotal = Math.max(
+        overallTotal,
+        total,
+        filesSum.total,
+        overallLoaded > 0 ? GEMMA_Q4_MULTIMODAL_PACK_BYTES : 0,
+      );
+      const pct = resolveDownloadPercent({
+        loaded: overallLoaded,
+        total: overallTotal,
+        hfProgress: progressData.progress,
+      });
       overallPct = Math.max(overallPct, clampProgress(pct));
 
       const fromMap = pickActiveDownloadFile(progressData.files);
@@ -440,12 +449,23 @@ const createDownloadProgressBridge = (startedAt: number) => {
       activeFile = progressData.file;
       const loaded = typeof progressData.loaded === "number" ? progressData.loaded : 0;
       const total = typeof progressData.total === "number" ? progressData.total : 0;
-      if (overallTotal <= 0 && (loaded > 0 || total > 0)) {
+      const filesSum = sumFileProgressMap(progressData.files);
+      if (filesSum.total > 0) {
+        overallLoaded = Math.max(overallLoaded, filesSum.loaded);
+        overallTotal = Math.max(overallTotal, filesSum.total);
+        overallPct = Math.max(
+          overallPct,
+          clampProgress(resolveDownloadPercent({ loaded: overallLoaded, total: overallTotal })),
+        );
+        updateSpeed(overallLoaded);
+        emitOverall();
+      } else if (overallTotal <= 0 && (loaded > 0 || total > 0)) {
         overallLoaded = Math.max(overallLoaded, loaded);
         overallTotal = Math.max(overallTotal, total);
-        if (overallTotal > 0) {
-          overallPct = Math.max(overallPct, clampProgress((overallLoaded / overallTotal) * 100));
-        }
+        overallPct = Math.max(
+          overallPct,
+          clampProgress(resolveDownloadPercent({ loaded: overallLoaded, total: overallTotal })),
+        );
         updateSpeed(overallLoaded);
         emitOverall();
       }
@@ -475,7 +495,7 @@ const loadWithDevice = async (
       phase: "init",
       loaded: 0,
       total: 0,
-      detail: "הקבצים הורדו — טוען לזיכרון",
+      detail: "הקבצים במטמון הדפדפן — טוען לזיכרון",
       file: "",
     });
 
@@ -1081,6 +1101,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
       sceneBusy = true;
       let fullText = "";
+      let tokenSteps = 0;
       try {
         const { processor } = await ensureChatSlot(message.modelId);
         await runSceneGenerateWithFallback(message.modelId, async (model) => {
@@ -1089,6 +1110,13 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
             skip_prompt: true,
             callback_function: (text: string) => {
               fullText += text;
+              tokenSteps += 1;
+              post({
+                type: "character_utterance_token",
+                requestId: message.requestId,
+                tokens: tokenSteps,
+                text,
+              });
             },
           });
           await model.generate({

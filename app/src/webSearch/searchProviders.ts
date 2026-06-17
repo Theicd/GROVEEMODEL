@@ -29,7 +29,7 @@ export const CONNECTED_SEARCH_PROVIDERS: SearchProviderInfo[] = [
   { id: "coingecko", icon: "₿", labelHe: "CoinGecko — קריפטו", examplesHe: ["מחיר ביטקוין עכשיו"] },
   { id: "yahoo-finance", icon: "📈", labelHe: "Yahoo Finance — מניות / מדדים / זהב / נפט", examplesHe: ["מצב S&P 500", "מחיר זהב", "Brent"] },
   { id: "wikidata-gov", icon: "🏛", labelHe: "Wikidata — ממשל וראשי מדינה", examplesHe: ["מי ראש הממשלה של בריטניה?"] },
-  { id: "news-rss", icon: "📰", labelHe: "BBC · CNN · Reuters · Guardian — RSS", examplesHe: ["כותרות עולם"], tier: "news" },
+  { id: "grovee-news", icon: "📰", labelHe: "חדשות GROVEE NEWS — מאגר מקומי + Topics", examplesHe: ["כותרות עולם", "חדשות ישראל", "חדשות AI"], tier: "news" },
   { id: "url-context", icon: "🔗", labelHe: "קישור — GitHub / HF / arXiv / Wikipedia", examplesHe: ["https://github.com/org/repo"], tier: "structured" },
   { id: "searxng", icon: "🌐", labelHe: "SearXNG — חיפוש web (fallback בלבד)", examplesHe: ["מה קורה בעולם הרובוטיקה?"], tier: "web_fallback" },
 ];

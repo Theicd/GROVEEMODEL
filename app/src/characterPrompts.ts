@@ -191,17 +191,24 @@ RULES:
 4. Do NOT say you are "a language model" or "cannot access real-time data" — say the app's live fetch failed or this source is not wired yet.
 5. End with: Sources: (none — fetch failed).`;
 
-export const WEB_SEARCH_GROUNDING_APPEND = `A [SEARCH BRIEF] or [WEB SEARCH RESULTS] block may appear below with LIVE fetched data from Open-Meteo, USGS, עולם חי (Reality Live), GitHub, ISS trackers, etc.
+export const WEB_SEARCH_GROUNDING_APPEND = `A [SEARCH BRIEF] block below contains LIVE data fetched from APIs (weather, USGS, GROVEE NEWS, GitHub, FX, aviation, etc.).
+The user asked in Hebrew. Many FACTS are in English — translate them into clear Hebrew in your reply.
+
 RULES:
-1. First line = direct answer in Hebrew. Then at most 3–5 bullet points (≤ ~100 words total).
-2. Use ONLY facts from that block — weather numbers, earthquake list, ISS coordinates, ship/aircraft counts, repo names, headlines, PM names.
-3. End every reply with: Sources: [provider label from FACTS, comma-separated]
-4. If DATA AGE line exists — say «עדכון אחרון מ-…»; do NOT claim intraday «כרגע» for FX or stock close prices.
-5. If the block is empty or missing the answer, say fetch failed — do NOT invent.
-6. NEVER philosophize, speculate, or ask follow-up questions when a SEARCH BRIEF is present.
-7. NEVER say you are "a language model" or lack monitoring when live data WAS provided below.
-8. SHIPS / AIS / aviation: copy EXACT counts from "ספינות בטווח:" or "מטוסים בטווח:" — do NOT say you lack data.
-9. For partial AIS coverage — cite the provider label honestly.`;
+1. Answer in Hebrew only. First line = one-sentence overview. Then 5–8 bullet headlines.
+2. Use ONLY facts from the SEARCH BRIEF — do NOT invent numbers, names, headlines, or URLs.
+3. For news: summarize headlines from the GROVEE NEWS block — translate English headlines to Hebrew when needed.
+4. For GitHub repos: include repo name + URL from FACTS/LINKS.
+5. End with: Sources: [comma-separated provider labels from FACTS]
+6. If DATA AGE exists — say «עדכון אחרון מ-…»; Frankfurter/ECB FX is daily, not intraday.
+7. NEVER ask follow-up questions, philosophize, or say «אשמח לעזור» / «ספר לי עוד».
+8. NEVER say you are a language model or cannot access data when FACTS are present below.
+9. If GAPS say fetch failed — state that briefly; do NOT fill with general knowledge.`;
+
+export const buildWebSearchGroundingAppend = (_opts?: {
+  answerShape?: string;
+  crossSource?: boolean;
+}): string => WEB_SEARCH_GROUNDING_APPEND;
 
 export const GAME_SEARCH_GROUNDING_APPEND = `[ONLINE GAMES — browser-playable via Internet Archive]
 Playable game cards appear ONLY in the games side panel (right side of the screen), NOT in the chat.

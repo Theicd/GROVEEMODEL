@@ -32,7 +32,7 @@ const PROVIDER_FACT_CAPS: Partial<Record<SearchProviderId, number>> = {
   "osm-overpass-marine": 5,
   "wikipedia-en": 3,
   "wikipedia-he": 3,
-  "news-rss": 4,
+  "grovee-news": 8,
   arxiv: 4,
   "url-context": 6,
   searxng: 4,
@@ -47,7 +47,7 @@ const INTENT_PROVIDER_PRIORITY: Partial<Record<SearchIntent, SearchProviderId[]>
   "marine-infra": ["osm-overpass-marine", "ais-ships"],
   marine: ["open-meteo-marine"],
   earthquake: ["usgs-earthquake"],
-  news: ["news-rss"],
+  news: ["grovee-news"],
   government: ["wikidata-gov"],
   wikipedia: ["wikipedia-he", "wikipedia-en"],
   github: ["github"],
@@ -168,7 +168,7 @@ const factProvider = (fact: string): SearchProviderId | null => {
   if (/usgs|רעיד/i.test(label)) return "usgs-earthquake";
   if (/wikipedia/i.test(label)) return label.includes("he") ? "wikipedia-he" : "wikipedia-en";
   if (/wikidata|ממשל/i.test(label)) return "wikidata-gov";
-  if (/חדשות|news/i.test(label)) return "news-rss";
+  if (/חדשות|news|grovee/i.test(label)) return "grovee-news";
   return null;
 };
 
@@ -195,6 +195,7 @@ const scoreFact = (
   if (answerShape === "bullet_list") score += 5;
   if (/רוח|wind/i.test(query) && /רוח|wind/i.test(fact)) score += 40;
   if (/pm2|aqi|איכות/i.test(query) && /AQI|PM2/i.test(fact)) score += 40;
+  if (intents.includes("news") && /חדשות|news|grovee/i.test(fact)) score += 40;
   return score;
 };
 
@@ -218,8 +219,9 @@ export const buildSearchBrief = (
   answerShape?: AnswerShape,
 ): SearchBrief => {
   const facts: string[] = [];
-  const maxFacts =
-    answerShape === "short_fact"
+  const maxFacts = intents.includes("news")
+    ? 24
+    : answerShape === "short_fact"
       ? 5
       : answerShape === "bullet_list"
         ? 16
@@ -257,8 +259,11 @@ export const buildSearchBrief = (
   return { facts: rankedFacts, links, gaps, intents };
 };
 
-const answerShapeInstructions = (shape?: AnswerShape): string[] => {
+const answerShapeInstructions = (shape?: AnswerShape, intents?: SearchIntent[]): string[] => {
   if (!shape) return [];
+  if (shape === "bullet_list" && intents?.includes("news")) {
+    return ["ANSWER SHAPE: bullet_list — 5–8 Hebrew headline bullets from ALL RSS outlets in FACTS; translate English."];
+  }
   const map: Record<AnswerShape, string> = {
     short_fact: "ANSWER SHAPE: short_fact — one crisp Hebrew sentence; lead with ANSWER line if present.",
     count: "ANSWER SHAPE: count — lead with a number (מטוסים/ספינות/AQI/מagnitude).",
@@ -281,12 +286,14 @@ export const formatSearchBriefContext = (
     "Use ONLY facts below. Cite source labels. Do NOT invent numbers, names, or URLs.",
     "If ANSWER line exists — lead with it in Hebrew. If GAPS exist — mention them honestly first.",
     "If DATA AGE exists — say «עדכון אחרון מ-…», NOT «כרגע» as intraday.",
-    "Max 4 sentences. No philosophy. No follow-up questions.",
+    brief.intents.includes("news")
+      ? "For NEWS: write 5–8 short Hebrew bullets — one headline per outlet from ANSWER (news) block; translate English. No single-line answers."
+      : "Max 4 sentences. No philosophy. No follow-up questions.",
   ];
   if (regionLabel) {
     lines.splice(2, 0, `SHARED REGION: ${regionLabel} — compare sources for this area.`);
   }
-  lines.splice(2, 0, ...answerShapeInstructions(answerShape));
+  lines.splice(2, 0, ...answerShapeInstructions(answerShape, brief.intents));
   if (shouldBuildCrossSourceCorrelation(query, brief.intents)) {
     const metrics = extractCrossSourceMetrics(sources, regionLabel);
     const correlation = buildCrossSourceCorrelationLines(query, metrics, brief.intents);
@@ -320,6 +327,15 @@ export const formatSearchBriefContext = (
     const countFact = brief.facts.find((f) => /מטוסים בטווח:/.test(f));
     if (countFact) lines.splice(4, 0, `ANSWER (aircraft count): ${countFact.replace(/^\[[^\]]+\]\s*/, "")}`);
   }
+  if (brief.intents.includes("earthquake") && brief.facts.some((f) => /סה"כ|M\d+\.\d/i.test(f))) {
+    const eqLead =
+      brief.facts.find((f) => /הרעידה/i.test(f)) ??
+      brief.facts.find((f) => /סה"כ/i.test(f)) ??
+      brief.facts.find((f) => /^\- M/.test(f.replace(/^\[[^\]]+\]\s*/, "")));
+    if (eqLead) {
+      lines.splice(4, 0, `ANSWER (earthquake): ${eqLead.replace(/^\[[^\]]+\]\s*/, "")}`);
+    }
+  }
   if (brief.intents.includes("airquality") && brief.facts.some((f) => /ANSWER \(air quality\)|US AQI/i.test(f))) {
     const aqFact =
       brief.facts.find((f) => /ANSWER \(air quality\)/i.test(f)) ??
@@ -331,7 +347,24 @@ export const formatSearchBriefContext = (
     if (infraFact) lines.splice(4, 0, `ANSWER (marine infra): ${infraFact.replace(/^\[[^\]]+\]\s*/, "")}`);
   }
   const newsHeadline = brief.facts.find((f) => /^\[חדשות/.test(f) && /\d+\./.test(f));
-  if (brief.intents.includes("news") && newsHeadline) {
+  const newsHeadlines = sources
+    .filter((s) => s.provider === "grovee-news" && s.ok && s.text.trim())
+    .map((s) => {
+      const m =
+        s.text.match(/ANSWER \(headline\):\s*\[([^\]]+)\]\s*(.+)/) ??
+        s.text.match(/^\[([^\]]+)\]\s*1\.\s*(.+)/m);
+      const label = s.label.replace(/^חדשות \(/, "").replace(/\)$/, "");
+      return m ? `[${m[1] ?? label}] ${m[2].trim()}` : null;
+    })
+    .filter((h): h is string => !!h);
+  if (brief.intents.includes("news") && newsHeadlines.length) {
+    lines.splice(
+      4,
+      0,
+      `ANSWER (news — summarize ALL outlets below in Hebrew; English headlines → translate):`,
+      ...newsHeadlines.slice(0, 10).map((h) => `- ${h}`),
+    );
+  } else if (brief.intents.includes("news") && newsHeadline) {
     lines.splice(4, 0, `ANSWER (headline): ${newsHeadline.replace(/^\[[^\]]+\]\s*/, "")}`);
   }
   const queryWantsPm = /ראש\s+(?:ה)?ממשל(?:ה|ת)|prime\s+minister/i.test(query);

@@ -21,5 +21,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["app/src"]
+  "include": ["app/src"],
+  "exclude": ["app/src/groveeNews/engine"]
 }

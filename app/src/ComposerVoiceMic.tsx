@@ -1,6 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type SpeechRecognitionCtor = new () => SpeechRecognition;
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  [index: number]: { transcript: string };
+};
+
+type SpeechRecognitionEventLike = {
+  results: {
+    length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+};
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+};
+
+type SpeechRecognitionCtor = new () => BrowserSpeechRecognition;
 
 function getSpeechRecognition(): SpeechRecognitionCtor | null {
   const w = window as Window & {
@@ -18,7 +42,7 @@ type Props = {
 export function ComposerVoiceMic({ disabled, onTranscript }: Props) {
   const [listening, setListening] = useState(false);
   const [supported, setSupported] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
   useEffect(() => {
     setSupported(getSpeechRecognition() !== null);
@@ -40,7 +64,7 @@ export function ComposerVoiceMic({ disabled, onTranscript }: Props) {
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
 
-    recognition.onresult = (event) => {
+    recognition.onresult = (event: SpeechRecognitionEventLike) => {
       const last = event.results[event.results.length - 1];
       if (last?.isFinal) {
         const text = last[0]?.transcript?.trim();

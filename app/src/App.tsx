@@ -49,7 +49,8 @@ import {
   revokePendingAttachment,
   type PendingAttachment,
 } from "./documentIngest";
-import { IntroCanvas } from "./IntroCanvas";
+import { IntroScreen } from "./components/IntroScreen";
+import { GroveeInfoModal } from "./components/GroveeInfoModal";
 import { GroveeLogoMark } from "./GroveeLogoMark";
 import { ChatMessageAvatar } from "./ChatMessageAvatar";
 import { SidebarSettingsIcon } from "./SidebarSettingsIcon";
@@ -61,6 +62,7 @@ import {
   extractPrimaryArtifact,
   extractRichParts,
 } from "./artifacts";
+import { downloadProgressPercent } from "./introProgressFormat";
 import { formatBytes, requestPersistentStorage } from "./storageReport";
 import {
   SCENE_ANALYSIS_SYSTEM_PROMPT,
@@ -176,9 +178,29 @@ import {
   saveChatProfileOverride,
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
-import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
-import { isGeneralNewsDigestQuery } from "./webSearch/queryExtract";
-import { isTopicalOverviewRouting } from "./webSearch/topicalEnrichment";
+import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
+import {
+  startGroveeNewsBoot,
+  NewsEnginePanel,
+  NewsEngineRailHint,
+  useNewsEngineStatus,
+} from "./groveeNews/boot";
+import { NewsSidePanel } from "./groveeNews/NewsSidePanel";
+import {
+  clearNewsPanelPayload,
+  getNewsPanelPayload,
+  subscribeNewsPanelPayload,
+  buildNewsPanelGuideReply,
+  type GroveeNewsCard,
+  type NewsPanelPayload,
+  type NewsSummaryGemmaProgress,
+} from "./groveeNews/bridge";
+import {
+  GEMMA_NEWS_POLISH_SYSTEM,
+  buildGemmaNewsPolishUserPrompt,
+  cleanGemmaNewsPolishOutput,
+} from "./groveeNews/gemmaNewsPolish";
+import { agentDebugLog } from "./debugAgentLog";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
 import { isStarlinkRegionalQuery } from "./webSearch/intents";
 import {
@@ -301,6 +323,12 @@ type WorkerOutMessage =
       error?: string;
     }
   | {
+      type: "character_utterance_token";
+      requestId: string;
+      tokens: number;
+      text?: string;
+    }
+  | {
       type: "search_plan";
       requestId: string;
       ok: boolean;
@@ -352,17 +380,17 @@ const QA_FORCE_LLM_DEFAULT = false;
 
 /** Friendly product tips while Gemma downloads — explain what GROVEE is. */
 const LOADING_DOWNLOAD_TIPS = [
-  "GROVEE הוא צ'אט AI חינמי — רץ על המחשב שלך, בלי מנוי ובלי שליחת שיחות לענן.",
+  "GROVEE הוא צ'אט AI חינמי — רץ בדפדפן, בלי התקנה ובלי שליחת שיחות לענן.",
   "שואלים בעברית או באנגלית, מקבלים תשובות ישירות מהדפדפן — המודל Gemma 4 E2B נטען אצלך.",
   "הפרטיות נשארת אצלך: מה שאתה כותב לא עובר לשרת AI חיצוני.",
-  "אחרי שההורדה הראשונה תסתיים, אפשר לשוחח גם בלי חיבור אינטרנט.",
-  "אפשר לבקש קוד, הסברים, סיפורים ודפי HTML — GROVEE מייצר הכול מקומית.",
-  "זו לא אפליקציית ענן: המשקולות (~3.9GB, פעם ראשונה) נשמרות במטמון הדפדפן.",
+  "אחרי שהטעינה הראשונה תסתיים, אפשר לשוחח גם בלי חיבור אינטרנט.",
+  "אפשר לבקש קוד, הסברים, סיפורים ודפי HTML — GROVEE מייצר הכול מקומית בדפדפן.",
+  "זו אפליקציית ווב: המשקולות (~3.9GB, פעם ראשונה) נשמרות במטמון הדפדפן — אין התקנה.",
   "GROVEE בנוי על Transformers.js — AI בדפדפן, כולל ראייה (תמונות) מקומית.",
   "צרף תמונה בכפתור 📎 או הדבק (Ctrl+V) — המודל יתאר ויפענח אותה אצלך במחשב.",
   "כפתור Think מפעיל <|think|> native של Gemma 4; חיפוש ברשת נדלק אוטומטית לשאלות על מזג אוויר, עובדות ומידע עדכני.",
-  "ההורדה ארוכה רק בפעם הראשונה — בפעם הבאה GROVEE יעלה הרבה יותר מהר.",
-  "עוד רגע תוכל לפתוח שיחה חדשה ולדבר עם העוזר המקומי שלך — חינם לגמרי.",
+  "הטעינה הראשונה ארוכה רק פעם אחת — בפעם הבאה GROVEE יעלה הרבה יותר מהר מהמטמון.",
+  "עוד רגע תוכל לפתוח שיחה חדשה ולדבר עם העוזר המקומי שלך — חינם לגמרי, ישירות מהווב.",
 ] as const;
 
 const LOADING_INIT_TIPS = [
@@ -966,6 +994,9 @@ function App() {
     new Map<string, (result: SceneAnalysisResult | null) => void>(),
   );
   const characterUtteranceResolversRef = useRef(new Map<string, (text: string | null) => void>());
+  const characterUtteranceTokenListenersRef = useRef(
+    new Map<string, { onCount?: (tokens: number) => void; onChunk?: (text: string) => void }>(),
+  );
   const searchPlanResolversRef = useRef(new Map<string, (raw: string | null) => void>());
   const workerInferenceBusyRef = useRef(false);
   const globeHeadlineModeRef = useRef(false);
@@ -989,6 +1020,7 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [loadingPhase, setLoadingPhase] = useState<"download" | "init">("download");
   const [loadingBytes, setLoadingBytes] = useState({ loaded: 0, total: 0, speedBps: 0 });
+  const [loadingFile, setLoadingFile] = useState("");
   const [loadingTipIndex, setLoadingTipIndex] = useState(0);
   const [workerBootError, setWorkerBootError] = useState<string | null>(null);
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
@@ -1040,6 +1072,7 @@ function App() {
   const [halConsciousness, setHalConsciousness] = useState<import("./vision2/types").ConsciousnessLayer | null>(null);
   const [halEntity, setHalEntity] = useState<import("./vision2/entityProfile").EntityProfile | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [newsEngineOpen, setNewsEngineOpen] = useState(false);
   const [presentationQaOpen, setPresentationQaOpen] = useState(
     () =>
       QA_BRIDGE_ENABLED &&
@@ -1085,6 +1118,8 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
+  const [newsPanelOpen, setNewsPanelOpen] = useState(false);
+  const [newsPanelPayload, setNewsPanelPayload] = useState<NewsPanelPayload | null>(null);
   const [desktopLayout, setDesktopLayout] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 769px)").matches,
   );
@@ -1100,11 +1135,25 @@ function App() {
   useEffect(() => {
     const off = registerGlobeLiveSnapshotListener();
     void warmLiveWorldCache();
+    void startGroveeNewsBoot();
     const warmId = window.setInterval(() => void warmLiveWorldCache(), 90_000);
     return () => {
       off();
       window.clearInterval(warmId);
     };
+  }, []);
+
+  const { status: newsEngineStatus } = useNewsEngineStatus();
+
+  useEffect(() => {
+    return subscribeNewsPanelPayload((payload) => {
+      if (!payload?.cards.length) return;
+      setNewsPanelPayload(payload);
+      setNewsPanelOpen(true);
+      setArtifactOpen(false);
+      setGlobePanelOpen(false);
+      setGamesPanelOpen(false);
+    });
   }, []);
 
   useEffect(() => {
@@ -1639,6 +1688,58 @@ function App() {
     [isLoaded, pushActivity],
   );
 
+  const requestGemmaNewsPolish = useCallback(
+    (
+      qwenDraft: string,
+      articleTitle: string,
+      progress?: NewsSummaryGemmaProgress,
+    ): Promise<string | null> => {
+      return new Promise((resolve) => {
+        if (!workerRef.current || !isLoaded) {
+          resolve(null);
+          return;
+        }
+        if (workerInferenceBusyRef.current) {
+          resolve(null);
+          return;
+        }
+        const requestId = crypto.randomUUID();
+        const userPrompt = buildGemmaNewsPolishUserPrompt(qwenDraft, articleTitle);
+        characterUtteranceResolversRef.current.set(requestId, resolve);
+        if (progress?.onGemmaToken || progress?.onStreamChunk) {
+          characterUtteranceTokenListenersRef.current.set(requestId, {
+            onCount: progress.onGemmaToken,
+            onChunk: progress.onStreamChunk,
+          });
+        }
+        workerInferenceBusyRef.current = true;
+        pushActivity({
+          direction: "out",
+          kind: "character_utterance",
+          title: "סיכום כתבה (Gemma)",
+          detail: userPrompt.slice(0, 900),
+        });
+        workerRef.current.postMessage({
+          type: "character_utterance",
+          requestId,
+          modelId: GEMMA_MODEL_ID,
+          systemPrompt: GEMMA_NEWS_POLISH_SYSTEM,
+          userPrompt,
+          maxNewTokens: 240,
+        });
+        window.setTimeout(() => {
+          if (characterUtteranceResolversRef.current.has(requestId)) {
+            characterUtteranceResolversRef.current.delete(requestId);
+            characterUtteranceTokenListenersRef.current.delete(requestId);
+            workerInferenceBusyRef.current = false;
+            resolve(null);
+          }
+        }, 45_000);
+      });
+    },
+    [isLoaded, pushActivity],
+  );
+
   const resolveSearchPlanForQuery = useCallback(
     async (query: string, recentUserText: string[]): Promise<SearchPlan | undefined> => {
       const regexPlan = regexPlanForQuery(query);
@@ -1670,6 +1771,7 @@ function App() {
     sceneAnalysisResolversRef.current.clear();
     characterUtteranceResolversRef.current.forEach((resolve) => resolve(null));
     characterUtteranceResolversRef.current.clear();
+    characterUtteranceTokenListenersRef.current.clear();
     searchPlanResolversRef.current.forEach((resolve) => resolve(null));
     searchPlanResolversRef.current.clear();
   }, [persistCameraMemory]);
@@ -1975,13 +2077,23 @@ function App() {
     });
   }, []);
 
-  const showArtifactPanel = artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen;
-  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen;
-  const showGlobePanel = globePanelOpen;
+  const showNewsPanel =
+    newsPanelOpen && !!newsPanelPayload && !gamesPanelOpen;
+  const showArtifactPanel =
+    artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showNewsPanel;
+  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showNewsPanel;
+  const showGlobePanel = globePanelOpen && !showNewsPanel;
   const showCameraSidePanel =
-    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen;
+    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showNewsPanel;
   const showCameraInline = cameraMode && !desktopLayout;
-  const rightPanelOpen = showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel;
+  const rightPanelOpen =
+    showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel || showNewsPanel;
+
+  const closeNewsPanel = useCallback(() => {
+    setNewsPanelOpen(false);
+    setNewsPanelPayload(null);
+    clearNewsPanelPayload();
+  }, []);
 
   const handlePlayGame = useCallback((game: OnlineGame) => {
     setGamesEmbedGame(game);
@@ -2078,9 +2190,10 @@ function App() {
         setStreamingSearchSources(null);
         setStreamingGameCategoryPicker(false);
         setStatus(stopped ? "התשובה נעצרה" : "Ready");
-        continueModeRef.current = false;
-        cameraLoopRef.current?.releaseAfterChat();
-        focusComposerInput();
+      continueModeRef.current = false;
+      cameraLoopRef.current?.releaseAfterChat();
+      qaTurnForceLlmRef.current = false;
+      focusComposerInput();
         qaChatBridge.notifyTurnFailed(stopped ? "stopped empty" : "empty reply");
         return;
       }
@@ -2206,6 +2319,7 @@ function App() {
       generationChatOnlyDocumentRef.current = false;
       setChatOnlyDocumentMode(false);
       cameraLoopRef.current?.releaseAfterChat();
+      qaTurnForceLlmRef.current = false;
       focusComposerInput();
       qaChatBridge.notifyTurnComplete(
         content,
@@ -2214,6 +2328,57 @@ function App() {
       );
     },
     [setMessages, setCameraMessages, appendCameraAssistantMessage, persistCameraMemory, syncVisionBusy, focusComposerInput],
+  );
+
+  const handleNewsArticlePolish = useCallback(
+    async (
+      card: GroveeNewsCard,
+      qwenDraft: string,
+      fallbackHe: string,
+      progress?: NewsSummaryGemmaProgress,
+    ): Promise<string> => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: `סכם כתבה: ${card.title}`,
+        },
+      ]);
+
+      isGeneratingRef.current = true;
+      setIsGenerating(true);
+      assistantBufferRef.current = "";
+      setAssistantBuffer("");
+      setStatus("מנסח תקציר בעברית…");
+
+      const polished = await requestGemmaNewsPolish(qwenDraft, card.title, {
+        onGemmaToken: progress?.onGemmaToken,
+        onStreamChunk: (chunk) => {
+          setAssistantBuffer((prev) => {
+            const next = prev + chunk;
+            assistantBufferRef.current = next;
+            return next;
+          });
+        },
+      });
+
+      const final =
+        (polished ? cleanGemmaNewsPolishOutput(polished) : "") || fallbackHe.trim() || qwenDraft;
+
+      assistantBufferRef.current = final;
+      setAssistantBuffer(final);
+      pushActivity({
+        direction: "in",
+        kind: "character_utterance",
+        title: "סיכום כתבה בצ'אט",
+        detail: final.slice(0, 1200),
+        meta: { source: card.source, url: card.url },
+      });
+      finalizeAssistantReply(false);
+      return final;
+    },
+    [requestGemmaNewsPolish, pushActivity, setMessages, finalizeAssistantReply],
   );
 
   const stopGeneration = useCallback(() => {
@@ -2377,6 +2542,7 @@ function App() {
           if (msg.phase === "init") {
             setProgress(msg.progress);
             loadingFileRef.current = "";
+            setLoadingFile("");
             setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
           } else {
             const nextFile = msg.file ?? "";
@@ -2384,8 +2550,19 @@ function App() {
             const nextTotal = typeof msg.total === "number" ? msg.total : 0;
             const nextSpeed = typeof msg.speedBps === "number" ? msg.speedBps : 0;
 
-            if (nextFile) loadingFileRef.current = nextFile;
-            setProgress((prev) => Math.max(prev, msg.progress));
+            if (nextFile) {
+              loadingFileRef.current = nextFile;
+              setLoadingFile(nextFile);
+            }
+            const bytePct =
+              nextTotal > 0 && nextLoaded > 0
+                ? downloadProgressPercent(nextLoaded, nextTotal)
+                : 0;
+            if (bytePct > 0) {
+              setProgress(bytePct);
+            } else {
+              setProgress((prev) => Math.max(prev, msg.progress));
+            }
             setLoadingBytes((prev) => ({
               loaded: Math.max(prev.loaded, nextLoaded),
               total: Math.max(prev.total, nextTotal),
@@ -2546,11 +2723,16 @@ function App() {
             resolve(null);
           }
         }
+      } else if (msg.type === "character_utterance_token") {
+        const listener = characterUtteranceTokenListenersRef.current.get(msg.requestId);
+        listener?.onCount?.(msg.tokens);
+        if (msg.text) listener?.onChunk?.(msg.text);
       } else if (msg.type === "character_utterance") {
         workerInferenceBusyRef.current = false;
         const resolveUtterance = characterUtteranceResolversRef.current.get(msg.requestId);
         if (resolveUtterance) {
           characterUtteranceResolversRef.current.delete(msg.requestId);
+          characterUtteranceTokenListenersRef.current.delete(msg.requestId);
           if (msg.ok && msg.text?.trim()) {
             pushActivity({
               direction: "in",
@@ -2654,6 +2836,7 @@ function App() {
     setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
     setLoadingTipIndex(0);
     loadingFileRef.current = "";
+    setLoadingFile("");
     const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
     if (opts?.forceWasm && opts?.persistWasm && appSettingsRef.current.inferenceBackend !== "wasm") {
       const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
@@ -2914,12 +3097,11 @@ function App() {
       needsWebSearch(trimmed || effectivePrompt);
     let searchIntentsForGlobe: string[] = [];
 
-    const finishCannedLive = (reply: string, ctx: string): boolean => {
-      if (!qaChatBridge.hasPending()) return false;
-      if (qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending()) return false;
-      if (cameraActive || hasAttachments || continueCode || documentTurn || wantsGameSearch) return false;
+    const deliverLiveCannedReply = (reply: string, ctx: string, title = "Live data · canned reply"): boolean => {
       const text = reply.trim();
       if (!text) return false;
+      if (qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending()) return false;
+      if (cameraActive || hasAttachments || continueCode || documentTurn || wantsGameSearch) return false;
       qaChatBridge.setWebContext(ctx);
       qaChatBridge.setReplySource("canned-live");
       assistantBufferRef.current = text;
@@ -2928,11 +3110,16 @@ function App() {
       pushActivity({
         direction: "system",
         kind: "web_search",
-        title: "Live data · canned reply",
+        title,
         detail: text.slice(0, 1200),
       });
       finalizeAssistantReply(false);
       return true;
+    };
+
+    const finishCannedLive = (reply: string, ctx: string): boolean => {
+      if (!qaChatBridge.hasPending()) return false;
+      return deliverLiveCannedReply(reply, ctx);
     };
 
     if (!shouldRunWebSearch && !localTimeOnly) {
@@ -2999,6 +3186,13 @@ function App() {
         });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
+        const newsPayloadAfterSearch = getNewsPanelPayload();
+        if (newsPayloadAfterSearch?.cards.length) {
+          setNewsPanelPayload(newsPayloadAfterSearch);
+          setNewsPanelOpen(true);
+          setArtifactOpen(false);
+          setGamesPanelOpen(false);
+        }
         if (isSinglePlaceTimeWidgetQuery(effectivePrompt)) {
           const wt = searchResult.sources.find((s) => s.provider === "world-time" && s.ok);
           const widget = wt ? buildTimeWidgetFromWorldTimeSource(wt) : null;
@@ -3010,6 +3204,40 @@ function App() {
           searchResult.intents,
           searchResult.sources,
         );
+        const newsQueryTurn = searchResult.intents.includes("news");
+        const qaCannedOnlyMode =
+          qaChatBridge.hasPending() &&
+          !qaTurnForceLlmRef.current &&
+          !qaChatBridge.isForceLlmPending() &&
+          !newsQueryTurn;
+        const shouldDeliverLive =
+          qaCannedOnlyMode &&
+          !!marineLiveCannedReply &&
+          !cameraActive &&
+          !hasAttachments &&
+          !continueCode &&
+          !documentTurn &&
+          !wantsGameSearch &&
+          (searchLiveOk || !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")) &&
+          shouldDeliverStructuredLiveReply(
+            effectivePrompt,
+            searchResult.intents,
+            searchResult.sources,
+            marineLiveCannedReply,
+          );
+        // #region agent log
+        agentDebugLog("H4,H5", "App.tsx:webSearchDecision", "web search result delivery decision", {
+          queryPreview: effectivePrompt.slice(0, 120),
+          intents: searchResult.intents,
+          sourceLabels: searchResult.sources.map((s) => ({ provider: s.provider, label: s.label, ok: s.ok, hasText: !!s.text.trim(), error: s.error?.slice(0, 120) })),
+          searchLiveOk,
+          cannedReplyExists: !!marineLiveCannedReply,
+          qaCannedOnlyMode,
+          shouldDeliverLive,
+          blockingFlags: { forceLlm: qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending(), cameraActive, hasAttachments, continueCode, documentTurn, wantsGameSearch },
+          pendingTimeWidget: !!pendingTimeWidgetRef.current,
+        });
+        // #endregion
         if (
           !searchLiveOk &&
           !marineLiveCannedReply &&
@@ -3034,38 +3262,34 @@ function App() {
           active: false,
         });
         if (
+          shouldDeliverLive &&
           marineLiveCannedReply &&
-          !qaTurnForceLlmRef.current &&
-          !qaChatBridge.isForceLlmPending() &&
+          deliverLiveCannedReply(marineLiveCannedReply, webContext, "Live data · canned reply")
+        ) {
+          return;
+        }
+        if (
+          newsQueryTurn &&
           !cameraActive &&
           !hasAttachments &&
           !continueCode &&
           !documentTurn &&
           !wantsGameSearch &&
-          (searchLiveOk &&
-            (isTopicalOverviewRouting(effectivePrompt) ||
-              isGeneralNewsDigestQuery(effectivePrompt) ||
-              searchPlan?.answerShape === "overview" ||
-              searchPlan?.answerShape === "bullet_list") ||
-            (!searchLiveOk &&
-              !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")))
+          !qaTurnForceLlmRef.current &&
+          !qaChatBridge.isForceLlmPending()
         ) {
-          qaChatBridge.setWebContext(webContext);
-          qaChatBridge.setReplySource("canned-live");
-          assistantBufferRef.current = marineLiveCannedReply;
-          setAssistantBuffer(marineLiveCannedReply);
-          setStatus("Ready");
-          pushActivity({
-            direction: "system",
-            kind: "web_search",
-            title: "Live data · fetch failed (canned)",
-            detail: marineLiveCannedReply.slice(0, 1200),
-          });
-          finalizeAssistantReply(false);
-          return;
-        }
-        if (marineLiveCannedReply && finishCannedLive(marineLiveCannedReply, webContext)) {
-          return;
+          const guide = buildNewsPanelGuideReply(
+            effectivePrompt,
+            newsPayloadAfterSearch
+              ? {
+                  mode: newsPayloadAfterSearch.mode,
+                  cardCount: newsPayloadAfterSearch.cards.length,
+                }
+              : null,
+          );
+          if (deliverLiveCannedReply(guide, "", "GROVEE NEWS · פאנל")) {
+            return;
+          }
         }
         if (!webContext.trim()) {
           searchHint = " · אין תוצאות חיפוש";
@@ -3237,6 +3461,15 @@ function App() {
       !documentTurn &&
       !!pendingTimeWidgetRef.current &&
       isSinglePlaceTimeWidgetQuery(effectivePrompt);
+    // #region agent log
+    agentDebugLog("H5", "App.tsx:pureTimeWidgetTurn", "time widget direct reply decision", {
+      queryPreview: effectivePrompt.slice(0, 120),
+      pureTimeWidgetTurn,
+      pendingTimeWidget: !!pendingTimeWidgetRef.current,
+      skipCanned,
+      blockingFlags: { wantsGameSearch, cameraActive, hasAttachments, continueCode, documentTurn },
+    });
+    // #endregion
     if (pureTimeWidgetTurn && pendingTimeWidgetRef.current) {
       const reply = buildShortTimeReply(pendingTimeWidgetRef.current);
       qaChatBridge.setReplySource("local-time");
@@ -3254,7 +3487,10 @@ function App() {
     }
 
     const pureCapabilityLiveTurn =
-      !skipCanned &&
+      qaChatBridge.hasPending() &&
+      !qaTurnForceLlmRef.current &&
+      !qaChatBridge.isForceLlmPending() &&
+      !searchIntentsForGlobe.includes("news") &&
       !wantsGameSearch &&
       !cameraActive &&
       !hasAttachments &&
@@ -3891,6 +4127,8 @@ function App() {
         onClear={() => setActivityLog([])}
       />
 
+      <NewsEnginePanel open={newsEngineOpen} onClose={() => setNewsEngineOpen(false)} />
+
       {QA_BRIDGE_ENABLED ? (
         <PresentationQaPanel
           open={presentationQaOpen}
@@ -3958,111 +4196,26 @@ function App() {
         worldMemory={worldMemorySnapshot}
       />
 
-      {infoModalOpen ? (
-        <div
-          className="modal info-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="info-modal-title"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setInfoModalOpen(false);
-          }}
-        >
-          <div className="modal-box">
-            <h3 id="info-modal-title">טכנולוגיית GROVEE</h3>
-            <p>GROVEE מריץ מודלי AI מתקדמים ישירות בדפדפן שלך באמצעות WebAssembly ו-Transformers.js.</p>
-            <p>
-              כל הנתונים נשארים במכשיר שלך. המודל <strong>GEMMA 4 E2B</strong> מורד פעם אחת (~3.9GB, כולל ראייה) ועובד
-              במהירות שיא — גם בלי תלות בענן אחרי ההורדה.
-            </p>
-            <p className="info-modal-attribution">
-              מקורות מידע חיים:{" "}
-              <a href="https://time.now" target="_blank" rel="noreferrer">
-                World Time API by Time.Now
-              </a>
-              , Open-Meteo, OpenStreetMap ועוד.
-            </p>
-            <button type="button" className="close-modal" onClick={() => setInfoModalOpen(false)}>
-              סגור
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <GroveeInfoModal open={infoModalOpen} onClose={() => setInfoModalOpen(false)} />
 
       {(phase === "start" || phase === "loading") && (
-        <div
-          id="intro-screen"
-          className={`intro-screen ${phase === "loading" ? "intro-screen--loading" : ""}`}
-          aria-busy={phase === "loading"}
-          aria-live="polite"
-        >
-          <IntroCanvas />
-
-          <GroveeLogoMark size="lg" className="intro-core-visual" />
-
-          <div className="intro-text">
-            <div className="brand-title">GROVEE</div>
-            <div className="model-name">GEMMA 4 E2B</div>
-
-            {phase === "start" ? (
-              <>
-                <button
-                  type="button"
-                  className="load-btn"
-                  onClick={() => loadModel()}
-                  disabled={isLoading || isGenerating || !!workerBootError}
-                >
-                  טען מודל מקומי
-                </button>
-                {isWebGpuInferenceError(workerBootError ?? "") ? (
-                  <button
-                    type="button"
-                    className="learn-link"
-                    onClick={retryWasmLoad}
-                    disabled={isLoading || isGenerating}
-                  >
-                    טען ב-WASM (CPU)
-                  </button>
-                ) : null}
-                <button type="button" className="learn-link" onClick={() => setInfoModalOpen(true)}>
-                  איך זה עובד?
-                </button>
-                <button
-                  type="button"
-                  className="learn-link learn-link--muted"
-                  onClick={() => void clearModelCache()}
-                  disabled={isGenerating || isLoading || cacheClearing}
-                >
-                  {cacheClearing ? "מנקה מטמון…" : "נקה מטמון"}
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="progress-wrapper progress-wrapper--visible">
-                  <div
-                    className="progress-fill"
-                    role="progressbar"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.min(100, Math.round(progress))}
-                    style={{ width: `${Math.min(100, progress)}%` }}
-                  />
-                </div>
-                <div className="status-msg">{status}</div>
-                {loadingPhase === "init" ? (
-                  <p className="loading-file-detail">מאתחל ONNX — כמעט מוכן</p>
-                ) : loadingByteLine ? (
-                  <p className="loading-file-detail" dir="ltr">
-                    {loadingByteLine}
-                  </p>
-                ) : null}
-                <p className="loading-rotating-tip" key={loadingTipIndex} dir="rtl">
-                  {loadingTip}
-                </p>
-              </>
-            )}
-          </div>
-        </div>
+        <IntroScreen
+          phase={phase}
+          progress={progress}
+          status={status}
+          loadingPhase={loadingPhase}
+          loadingByteLine={loadingByteLine}
+          loadingFile={loadingFile}
+          loadingTip={loadingTip}
+          showWasmRetry={isWebGpuInferenceError(workerBootError ?? "")}
+          cacheClearing={cacheClearing}
+          isLoading={isLoading}
+          isGenerating={isGenerating}
+          onLoad={() => loadModel()}
+          onRetryWasm={retryWasmLoad}
+          onOpenInfo={() => setInfoModalOpen(true)}
+          onClearCache={() => void clearModelCache()}
+        />
       )}
 
       {phase === "ready" && (
@@ -4193,6 +4346,23 @@ function App() {
                 <div className="sidebar__rail-spacer" aria-hidden="true" />
                 <button
                   type="button"
+                  className="sb-rail-btn"
+                  aria-label="מנוע חדשות ברקע"
+                  title="מנוע חדשות — סטטוס איסוף RSS ו-Qwen"
+                  onClick={() => setNewsEngineOpen(true)}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M4 19h16" />
+                    <path d="M5 6h14" />
+                    <path d="M7 6v13" />
+                    <path d="M12 6v13" />
+                    <path d="M17 6v13" />
+                    <path d="M3 6h18" />
+                  </svg>
+                  <NewsEngineRailHint status={newsEngineStatus} />
+                </button>
+                <button
+                  type="button"
                   className="sb-rail-btn sb-rail-settings-foot"
                   aria-label="פתח הגדרות"
                   title="הגדרות Gemma"
@@ -4320,6 +4490,24 @@ function App() {
                   <button
                     type="button"
                     className="sb-nav-item"
+                    onClick={() => setNewsEngineOpen(true)}
+                    title="סטטוס מנוע חדשות ברקע — RSS, אינדקס ו-Qwen"
+                    aria-label="מנוע חדשות"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M4 19h16" />
+                      <path d="M5 6h14" />
+                      <path d="M7 6v13" />
+                      <path d="M12 6v13" />
+                      <path d="M17 6v13" />
+                      <path d="M3 6h18" />
+                    </svg>
+                    <span>חדשות</span>
+                    <NewsEngineRailHint status={newsEngineStatus} countClassName="sb-nav-count" />
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-nav-item"
                     onClick={() => setActivityLogOpen(true)}
                     title="הצג את כל פעילות המודל — הנחיות, בקשות ותשובות"
                     aria-label="פעילות המודל"
@@ -4412,9 +4600,11 @@ function App() {
 
           {rightPanelOpen ? (
             <aside
-              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}`}
+              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showNewsPanel ? " side-panel--news" : ""}`}
               aria-label={
-                showArtifactPanel
+                showNewsPanel
+                  ? "חדשות GROVEE"
+                  : showArtifactPanel
                   ? "חלונית קוד"
                   : showGamesPanel
                     ? "משחקים און־ליין"
@@ -4423,7 +4613,13 @@ function App() {
                       : "מצלמה חיה"
               }
             >
-              {showArtifactPanel ? (
+              {showNewsPanel && newsPanelPayload ? (
+                <NewsSidePanel
+                  payload={newsPanelPayload}
+                  onClose={closeNewsPanel}
+                  onSummaryReady={handleNewsArticlePolish}
+                />
+              ) : showArtifactPanel ? (
                 <ArtifactPanel
                   artifact={activeArtifact!}
                   streaming={isGenerating && !!assistantBuffer}

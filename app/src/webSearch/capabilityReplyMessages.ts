@@ -1,13 +1,17 @@
 import {
   isAviationQuery,
+  isAirQualityQuery,
+  isEarthquakeQuery,
+  isGitHubPopularQuery,
   isIssQuery,
   isMarineInfraQuery,
+  isMarineQuery,
   isNewsQuery,
-  isGitHubPopularQuery,
   isShipsQuery,
   isStarlinkCountQuery,
   isStarlinkRegionalQuery,
   isUnsupportedLiveQuery,
+  isWeatherQuery,
   isWorldOverviewQuery,
 } from "./intents";
 import { formatDataAgeForSource } from "./dataAge";
@@ -24,10 +28,12 @@ import {
   buildCrossSourceCorrelationLines,
   extractCrossSourceMetrics,
 } from "./crossSourceCorrelation";
+import { agentDebugLog } from "../debugAgentLog";
+import { buildNewsPanelGuideReply } from "../groveeNews/newsPanelGuideReply";
 import type { AnswerShape, SearchIntent, SearchSourceResult } from "./types";
 
 const PROVIDER_INTROS: Partial<Record<SearchSourceResult["provider"], string>> = {
-  "news-rss": "לפי עדכוני RSS:",
+  "grovee-news": "לפי GROVEE NEWS (מאגר מקומי):",
   "wikidata-gov": "לפי Wikidata (ממשל):",
   "frankfurter-fx": "לפי Frankfurter (ECB):",
   "yahoo-finance": "לפי Yahoo Finance:",
@@ -126,9 +132,9 @@ const formatGenericSource = (source: SearchSourceResult): string => {
     ].join("\n");
   }
 
-  if (source.provider === "news-rss") {
+  if (source.provider === "grovee-news") {
     const answer = lines.find((l) => l.startsWith("ANSWER (headline):"));
-    const tagged = lines.filter((l) => /^\[(BBC|CNN|Reuters|Guardian|ynet)\]/i.test(l.trim()));
+    const tagged = lines.filter((l) => /^\[[^\]]+\]\s*\d+\./i.test(l.trim()));
     const numbered = lines.filter((l) => /^\d+\.\s/.test(l.trim()));
     const headlineLines = tagged.length ? tagged : numbered;
     const lead = answer
@@ -136,30 +142,32 @@ const formatGenericSource = (source: SearchSourceResult): string => {
       : headlineLines[0]
         ? `הכותרת הראשית: ${headlineLines[0].replace(/^\d+\.\s*/, "")}`
         : intro;
-    const sourcesLine = lines.find((l) => l.startsWith("מקורות RSS"));
     const extras = headlineLines.slice(1, 6);
     return [
       lead,
-      sourcesLine ?? "",
       extras.length ? "כותרות נוספות:" : "",
       ...extras,
       `Sources: ${source.label}`,
-      "מקור: RSS — BBC · CNN · Reuters · Guardian (כותרות עולם).",
+      "מקור: GROVEE NEWS.",
     ]
       .filter(Boolean)
       .join("\n");
   }
 
   if (source.provider === "open-meteo") {
-    const temp = lines.find((l) => /טמפרatura|temperatur/i.test(l));
+    const temp = lines.find((l) => /טמפר(?:atura|טור)/i.test(l));
     const place = lines.find((l) => l.startsWith("מיקום:"));
     const condition = lines.find((l) => l.startsWith("מצב:"));
-    const tempVal = temp?.match(/([\d.]+)\s*°C/i)?.[1];
+    const humidity = lines.find((l) => l.startsWith("לחות:"));
+    const wind = lines.find((l) => l.startsWith("רוח:"));
+    const tempVal = temp?.match(/([\d.-]+)\s*°C/i)?.[1];
+    const placeName = place?.replace("מיקום:", "").trim() ?? "";
+    const conditionText = condition?.replace("מצב:", "").trim();
     const lead =
-      tempVal && place
-        ? `הטמפרטורה ב${place.replace("מיקום:", "").trim()}: ${tempVal}°C`
+      tempVal && placeName
+        ? `כרגע ב${placeName}: ${tempVal}°C${conditionText ? `, ${conditionText}` : ""}`
         : temp ?? intro;
-    const extras = [condition, temp !== lead ? temp : null].filter(Boolean) as string[];
+    const extras = [humidity, wind].filter(Boolean) as string[];
     return [
       lead,
       ...extras.map((l) => `• ${l}`),
@@ -207,6 +215,22 @@ const formatGenericSource = (source: SearchSourceResult): string => {
       .join("\n");
   }
 
+  if (source.provider === "nominatim-places") {
+    const first = lines.find((l) => /^\d+\./.test(l.trim()));
+    const note = lines.find((l) => l.startsWith("הערה:"));
+    const lead = first
+      ? `תחנת הרכבת הקרובה לשדה התעופה: ${first.replace(/^\d+\.\s*/, "").split("\n")[0]?.trim()}`
+      : intro;
+    return [
+      lead,
+      note ?? "",
+      `Sources: ${source.label}`,
+      `מקור: ${source.label}.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (source.provider === "github") {
     const answer = lines.find((l) => l.startsWith("ANSWER (GitHub top):"));
     const filter = lines.find((l) => l.startsWith("סינון:"));
@@ -241,10 +265,48 @@ const formatGenericSource = (source: SearchSourceResult): string => {
 };
 
 const parseAircraftCountLine = (text: string): { count: string; region: string } | null => {
-  const countM = text.match(/מטוסים (?:בטווח|באוויר)[^:\n]*:\s*(\d+)/i);
+  const countM =
+    text.match(/מטוסים (?:בטווח|באוויר)[^:\n]*:\s*(\d+)/i) ??
+    text.match(/סה[״"']?כ\s+(\d+)\s+מטוסים/i) ??
+    text.match(/כל\s+המטוסים:\s*(\d+)/i);
   if (!countM) return null;
-  const regionM = text.match(/^אזור:\s*(.+)$/m);
+  const regionM =
+    text.match(/^אזור:\s*(.+)$/m) ??
+    text.match(/מקור:\s*עולם חי \/ ADS-B \((.+?)\)/i);
   return { count: countM[1], region: regionM?.[1]?.trim() ?? "האזור המבוקש" };
+};
+
+const buildEarthquakeLiveReply = (query: string, sources: SearchSourceResult[]): string | null => {
+  if (!isEarthquakeQuery(query)) return null;
+  const eq = sources.find((s) => s.provider === "usgs-earthquake" && s.ok && s.text.trim());
+  if (!eq) return null;
+
+  const lines = eq.text.trim().split("\n").filter(Boolean);
+  const quakes = lines.filter((l) => l.trim().startsWith("- M"));
+  const header = lines.find((l) => /^סה"כ/i.test(l.trim()));
+  const lead =
+    lines.find((l) => /^הרעידה/i.test(l.trim())) ??
+    lines.find((l) => /^הרעידה החזקה/i.test(l.trim()));
+
+  if (!quakes.length && /אין רעידות|לא נמצאו רעידות/i.test(eq.text)) {
+    return [
+      lines[0] ?? "אין רעידות אדמה מדווחות בתקופה האחרונה (USGS).",
+      `Sources: ${eq.label}`,
+      "מקור: USGS Earthquake Hazards Program.",
+    ].join("\n");
+  }
+
+  return [
+    "רעידות אדמה אחרונות (USGS):",
+    lead ?? "",
+    header ?? "",
+    quakes.length ? "הגדולות:" : "",
+    ...quakes.slice(0, 6).map((q) => `• ${q.replace(/^\-\s*/, "")}`),
+    `Sources: ${eq.label}`,
+    "מקור: USGS Earthquake Hazards Program.",
+  ]
+    .filter(Boolean)
+    .join("\n");
 };
 
 const buildIssLiveReply = (query: string, sources: SearchSourceResult[]): string | null => {
@@ -439,7 +501,25 @@ export const buildCrossSourceLiveReply = (
   if (ok.length < 2) return null;
 
   const metrics = extractCrossSourceMetrics(sources, regionLabel);
-  const correlation = buildCrossSourceCorrelationLines(query, metrics, intents);
+  let correlation = buildCrossSourceCorrelationLines(query, metrics, intents);
+
+  if (!correlation.length && /^האם\s+/i.test(query)) {
+    const eq = ok.find((s) => s.provider === "usgs-earthquake");
+    if (eq && /אין רעידות|לא נמצאו רעידות/i.test(eq.text)) {
+      correlation = ["CORRELATION: לא — אין רעידות אדמה מדווחות ב-24 שעות (USGS)."];
+    } else if (metrics.aviation && metrics.weather) {
+      correlation = [
+        `CORRELATION GEO: מז"א ${metrics.weather.condition ?? "—"} · ADS-B ${metrics.aviation.count} מטוסים.`,
+      ];
+    } else if (ok.length >= 2) {
+      const preview = ok
+        .slice(0, 3)
+        .map((s) => `${s.label}: ${s.text.trim().split("\n")[0] ?? ""}`)
+        .join(" · ");
+      correlation = [`CORRELATION: ${preview}`];
+    }
+  }
+
   if (!correlation.length) return null;
 
   if (
@@ -463,6 +543,28 @@ const buildUnsupportedReply = (query: string): string | null => {
   return null;
 };
 
+const pickBestNewsSource = (_query: string, sources: SearchSourceResult[]): SearchSourceResult | null => {
+  const news = sources.filter((s) => s.provider === "grovee-news" && s.ok && s.text.trim());
+  return news[0] ?? null;
+};
+
+function countNewsCardsInBrief(text: string): number {
+  const rows = text.split("\n").filter((l) => /^\[[^\]]+\]\s*\d+\./.test(l.trim()));
+  return rows.length || (text.includes("ANSWER (headline):") ? 1 : 0);
+}
+
+/** Headline reply from GROVEE NEWS engine. */
+export const buildNewsAggregatedReply = (
+  query: string,
+  sources: SearchSourceResult[],
+): string | null => {
+  const news = sources.filter((s) => s.provider === "grovee-news" && s.ok && s.text.trim());
+  if (!news.length) return null;
+
+  const one = pickBestNewsSource(query, sources);
+  return one ? formatGenericSource(one) : null;
+};
+
 const pickPrimarySource = (
   query: string,
   intents: SearchIntent[],
@@ -477,7 +579,10 @@ const pickPrimarySource = (
   if (isMarineInfraQuery(query)) {
     return ok.find((s) => s.provider === "osm-overpass-marine") ?? ok[0];
   }
-  if (isNewsQuery(query)) return ok.find((s) => s.provider === "news-rss") ?? ok[0];
+  if (isNewsQuery(query)) {
+    const best = pickBestNewsSource(query, ok);
+    if (best) return best;
+  }
   if (intents.includes("government")) return ok.find((s) => s.provider === "wikidata-gov") ?? ok[0];
   if (intents.includes("currency")) return ok.find((s) => s.provider === "frankfurter-fx") ?? ok[0];
   if (intents.includes("market")) return ok.find((s) => s.provider === "yahoo-finance") ?? ok[0];
@@ -511,6 +616,50 @@ export type CapabilityLiveReplyOptions = {
   regionLabel?: string;
 };
 
+const STRUCTURED_LIVE_INTENTS = new Set<SearchIntent>([
+  "weather",
+  "airquality",
+  "marine",
+  "currency",
+  "earthquake",
+  "worldtime",
+  "distance",
+  "places",
+  "holiday",
+  "country",
+  "government",
+  "crypto",
+  "market",
+  "aviation",
+  "ships",
+  "marine-infra",
+  "satellite",
+  "disaster",
+  "spaceweather",
+  "github",
+  "hackernews",
+  "huggingface",
+  "arxiv",
+]);
+
+/** Bypass Gemma for structured live data — never for news (model must synthesize RSS). */
+export function shouldDeliverStructuredLiveReply(
+  query: string,
+  intents: SearchIntent[],
+  sources: SearchSourceResult[],
+  cannedReply?: string | null,
+): boolean {
+  if (intents.includes("news") || isNewsQuery(query)) return false;
+  if (cannedReply?.trim()) return true;
+  if (!sources.some((s) => s.ok && s.text.trim())) return false;
+  if (isWeatherQuery(query) || isAirQualityQuery(query) || isMarineQuery(query)) return true;
+  if (isCrossSourceQuery(query) || isWorldOverviewQuery(query)) return true;
+  if (intents.some((i) => STRUCTURED_LIVE_INTENTS.has(i))) return true;
+  if (isAviationQuery(query) || isShipsQuery(query) || isIssQuery(query)) return true;
+  if (isStarlinkCountQuery(query) || isGitHubPopularQuery(query)) return true;
+  return false;
+}
+
 const stripScore = (line: string): string =>
   line.replace(/^\d+\.\s*/, "").replace(/\s*\(★[\d,]+\).*$/i, "").trim();
 
@@ -525,14 +674,14 @@ export function buildOverviewMultiSourceReply(
   const bullets: string[] = [];
   const labels: string[] = [];
 
-  for (const ns of ok.filter((s) => s.provider === "news-rss")) {
+  for (const ns of ok.filter((s) => s.provider === "grovee-news")) {
     const headline =
       ns.text.match(/ANSWER \(headline\):\s*\[([^\]]+)\]\s*(.+)/) ??
       ns.text.match(/^\[([^\]]+)\]\s*1\.\s*(.+)/m);
     if (headline) {
       bullets.push(`• [${headline[1]}] ${headline[2].trim()}`);
     } else {
-      const row = ns.text.split("\n").find((l) => /^\[(BBC|CNN|Reuters|Guardian|ynet)\]/i.test(l.trim()));
+      const row = ns.text.split("\n").find((l) => /^\[[^\]]+\]\s*\d+\./.test(l.trim()));
       if (row) bullets.push(`• ${row.trim()}`);
     }
     labels.push(ns.label.replace(/^חדשות \(/, "").replace(/\)$/, ""));
@@ -590,6 +739,14 @@ export function buildCapabilityLiveReply(
 ): string | null {
   const q = query.trim();
   if (!q) return null;
+  // #region agent log
+  agentDebugLog("H4,H5", "capabilityReplyMessages.ts:buildCapabilityLiveReply", "canned reply evaluation started", {
+    queryPreview: q.slice(0, 120),
+    intents,
+    answerShape: options?.answerShape,
+    sourceLabels: sources.map((s) => ({ provider: s.provider, label: s.label, ok: s.ok, hasText: !!s.text.trim(), error: s.error?.slice(0, 120) })),
+  });
+  // #endregion
 
   const impossible = detectImpossiblePlace(q);
   if (impossible && /(?:מטוס|aircraft|weather|מזג|ספינ|ship)/i.test(q)) {
@@ -624,6 +781,9 @@ export function buildCapabilityLiveReply(
   const aviation = buildAviationLiveReply(q, sources);
   if (aviation) return aviation;
 
+  const earthquake = buildEarthquakeLiveReply(q, sources);
+  if (earthquake) return earthquake;
+
   if (isWorldOverviewQuery(q)) {
     const overview = buildOverviewReply(sources);
     if (overview) return overview;
@@ -638,11 +798,22 @@ export function buildCapabilityLiveReply(
   );
   if (crossSource) return crossSource;
 
+  if (isNewsQuery(q)) {
+    const news = sources.find((s) => s.provider === "grovee-news");
+    if (news) {
+      const cardCount = news.ok ? countNewsCardsInBrief(news.text) : 0;
+      return buildNewsPanelGuideReply(q, {
+        mode: isTopicalOverviewRouting(q) ? "topics" : "search",
+        cardCount,
+      });
+    }
+    return null;
+  }
+
   if (
     isTopicalOverviewRouting(q) ||
-    isGeneralNewsDigestQuery(q) ||
     options?.answerShape === "overview" ||
-    options?.answerShape === "bullet_list"
+    (options?.answerShape === "bullet_list" && !isNewsQuery(q))
   ) {
     const multi = buildOverviewMultiSourceReply(q, sources);
     if (multi) return multi;

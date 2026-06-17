@@ -13,7 +13,7 @@ export const sanitizeSearchQuery = (query: string): string => {
 };
 
 const KNOWN_PLACES =
-  /(?:ניו\s*יורק|תל\s*א(?:ביב|ב)?|ירושלים|חיפה|לונדון|פריז|paris|london|tokyo|טוקיו|berlin|ברlin|moscow|מוסקבה|rome|רומא|madrid|מדריד|sydney|סידני|miami|מיאמי|los\s*angeles|לוס\s*אנgeles|california|קליפורניה|new\s*zealand|ניו\s*זילנד|אוסטרליה|australia|germany|גרמניה|france|צרפת|japan|יפן|israel|ישראל)/gi;
+  /(?:ניו\s*יורק|תל\s*א(?:ביב|ב)?|ירושלים|חיפה|לונדון|פריז|paris|london|tokyo|טוקיו|berlin|ברlin|moscow|מוסקבה|rome|רומא|madrid|מדריד|sydney|סידני|miami|מיאמי|los\s*angeles|לוס\s*אנgeles|california|קליפורניה|new\s*zealand|ניו\s*זילנד|אוסטרליה|australia|germany|גרמניה|france|צרפת|japan|יפן|israel|ישראל|russia|רוסיה)/gi;
 
 const COUNTRY_ALIASES: Record<string, string> = {
   ישראל: "Israel",
@@ -64,8 +64,8 @@ export const extractLocationPhrase = (query: string): string | null => {
     /(?:מה\s+)?(?:ה)?שע(?:ה|ת)\s+(?:ב)?(יש(?:rael|ר(?:א|a)el)|israel)(?:[?!.]?$)/i,
     /(?:what\s+)?(?:date|time)\s+(?:in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:what\s+)?time\s+(?:is\s+it\s+)?(?:in|at|for)\s+(.+?)(?:[?!.]?$)/i,
-    /(?:מזג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
-    /(?:מה\s+)?(?:מזג\s*האוויר|מז"?\s*א)\s+(?:ב|ב־|של)?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:מזג\s*האוויר|מסג\s*האוויר|מז"?\s*א|weather|temperature)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
+    /(?:מה\s+)?(?:מזג\s*האוויר|מסג\s*האוויר|מז"?\s*א)\s+(?:ב|ב־|של)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:גשם|שלג|מעונן|גשום|rain|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:צפוי|forecast|expect)\s+(?:גשם|rain|שלג|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:wave\s*height|גובה\s*גלים|גלים)\s+(?:in|at|near|ב|ב־|ליד)?\s*(.+?)(?:[?!.]?$)/i,
@@ -351,28 +351,83 @@ export const isGeneralNewsDigestQuery = (query: string): boolean => {
   if (!q) return false;
   if (/(?:bbc|cnn|reuters|guardian|ynet)\b/i.test(q)) return false;
   return (
-    (/(?:מה\s+חדש|what'?s\s+new|עדכונ(?:ים|י)|כותרות|headlines?|ספר\s+לי|תן\s+לי)/i.test(q) &&
+    (/(?:מה\s+חדש|what'?s\s+new|עדכונ(?:ים|י)|כותרות|headlines?|ספר\s+לי|תן\s+לי|מידע\s+על)/i.test(q) &&
       /(?:חדשות|\bnews\b)/i.test(q)) ||
+    (/(?:כותרות|headlines?|מובילות)/i.test(q) &&
+      /(?:היום|עכשיו|כרגע|בישראל|בעולם|today|now|latest|אחרונ)/i.test(q)) ||
     /(?:חדשות\s+(?:ה)?יום|חדשות\s+עכשיו|news\s+today|today'?s\s+news)/i.test(q) ||
     (/חדשות/i.test(q) && /(?:היום|עכשיו|כרגע|today|now|latest|אחרונ)/i.test(q))
   );
 };
 
+/** Israel-focused news — multi-feed Hebrew outlets. */
+export const isIsraelNewsQuery = (query: string): boolean => {
+  const q = query.trim();
+  if (!q) return false;
+  if (/(?:בעולם|world|global|בינלאומ|international)/i.test(q) && !/(?:בישראל|ישראל)/i.test(q)) {
+    return false;
+  }
+  if (/חדשות\s+(?:ב)?ישראל|(?:ב)?ישראל\s+חדשות/i.test(q)) return true;
+  if (/(?:ישראל|בישראל|israel|ישראלי)/i.test(q) && /(?:חדשות|news|כותר(?:ת|ות)|headline|קור(?:ה|ה)|עדכונ|דיווח|מדווח|כתבות?|מובילות|עיקר)/i.test(q)) {
+    return true;
+  }
+  if (/כתבות?/i.test(q) && /[\u0590-\u05FF]/.test(q) && !/(?:בעולם|world|global|בינלאומ)/i.test(q)) {
+    return true;
+  }
+  return false;
+};
+
 /** World / international headline — aggregate several RSS feeds. */
-export const isWorldHeadlineQuery = (query: string): boolean =>
-  (/(?:בעולם|באזור|global|world|בינלאומ|international)/i.test(query) &&
-    /(?:כותרת|headline|חדשות|news)/i.test(query)) ||
-  isGeneralNewsDigestQuery(query);
+export const isWorldHeadlineQuery = (query: string): boolean => {
+  if (isIsraelNewsQuery(query)) return false;
+  if (
+    /(?:בעולם|באזור|global|world|בינלאומ|international|עולם)/i.test(query) &&
+    /(?:כותרת|כותרות|headline|חדשות|news|עיקר|מובילות|דיווח)/i.test(query)
+  ) {
+    return true;
+  }
+  if (isGeneralNewsDigestQuery(query) && !/(?:בישראל|ישראל)/i.test(query)) {
+    return true;
+  }
+  return false;
+};
 
 /** News site hint e.g. BBC. Returns null → multi-feed headlines. */
 export const extractNewsSite = (query: string): string | null => {
+  if (isGeneralNewsDigestQuery(query)) return null;
+  if (isWorldHeadlineQuery(query)) return null;
+
+  if (isIsraelNewsQuery(query)) {
+    if (/ynet/i.test(query)) return "ynet";
+    if (/haaretz|הארץ/i.test(query)) return "haaretz";
+    if (/walla/i.test(query)) return "walla";
+    if (/mako|n12/i.test(query)) return "mako";
+    if (/(?:^|\s)(?:כאן|kan)\s*11/i.test(query)) return "kan";
+    if (/globes|גלובס/i.test(query)) return "globes";
+    if (/(?:^|\s)(?:ישראל\s*היום|israel\s*hayom)(?:\s|$|[?!.])/i.test(query)) return "israelhayom";
+    return null;
+  }
+
   if (/bbc/i.test(query)) return "bbc";
   if (/cnn/i.test(query)) return "cnn";
   if (/ynet|ynetnews/i.test(query)) return "ynet";
+  if (/haaretz|הארץ/i.test(query)) return "haaretz";
+  if (/walla/i.test(query)) return "walla";
+  if (/mako|n12/i.test(query)) return "mako";
+  if (/(?:^|\s)(?:כאן|kan)\s*11/i.test(query)) return "kan";
+  if (/globes|גלובס/i.test(query)) return "globes";
+  if (/(?:^|\s)(?:ישראל\s*היום|israel\s*hayom)(?:\s|$|[?!.])/i.test(query)) return "israelhayom";
   if (/reuters/i.test(query)) return "reuters";
   if (/guardian/i.test(query)) return "guardian";
-  if (isGeneralNewsDigestQuery(query)) return null;
-  if (isWorldHeadlineQuery(query)) return null;
+  if (/\bap\s+news\b/i.test(query)) return "ap";
+  if (/\bnpr\b/i.test(query)) return "npr";
+  if (/\bdw\b|deutsche\s+welle/i.test(query)) return "dw";
+  if (/france\s*24/i.test(query)) return "france24";
+  if (/al\s*jazeera|אל\s*ג'זירה/i.test(query)) return "aljazeera";
+  if (/spiegel/i.test(query)) return "spiegel";
+  if (/le\s*monde/i.test(query)) return "lemonde";
+  if (/arab\s*news/i.test(query)) return "arabnews";
+  if (/cbc/i.test(query)) return "cbc";
   if (
     /(?:artificial\s+intelligence|\bai\b|machine\s+learning|בינה\s+מלאכותית|openai|llm)/i.test(query) &&
     /(?:חדשות|news|headline|קורה|כרגע|היום)/i.test(query)

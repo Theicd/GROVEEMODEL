@@ -1,11 +1,19 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import "./intro-theme.css";
 import App from "./App.tsx";
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { installGlobalErrorHooks } from "./bootHelpers.ts";
 
 installGlobalErrorHooks();
+
+if (import.meta.env.DEV) {
+  (window as unknown as { __GROVEE_UI__?: string }).__GROVEE_UI__ = "hal-space-v2";
+  console.info(
+    "[GROVEE] hal-space-v2 — dev ONLY at http://127.0.0.1:5180/ (port changed; NOT :5173/:5174)",
+  );
+}
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
