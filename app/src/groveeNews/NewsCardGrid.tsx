@@ -7,8 +7,7 @@ type Props = {
   cards: GroveeNewsCard[];
   onSummaryReady?: (
     card: GroveeNewsCard,
-    qwenDraft: string,
-    fallbackHe: string,
+    gemmaInput: string,
     progress?: NewsSummaryGemmaProgress,
   ) => Promise<string>;
 };

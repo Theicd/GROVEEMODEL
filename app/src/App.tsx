@@ -197,8 +197,9 @@ import {
 } from "./groveeNews/bridge";
 import {
   GEMMA_NEWS_POLISH_SYSTEM,
+  GEMMA_SUMMARY_FALLBACK_HE,
   buildGemmaNewsPolishUserPrompt,
-  cleanGemmaNewsPolishOutput,
+  finalizeGemmaNewsSummary,
 } from "./groveeNews/gemmaNewsPolish";
 import { agentDebugLog } from "./debugAgentLog";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
@@ -1690,7 +1691,7 @@ function App() {
 
   const requestGemmaNewsPolish = useCallback(
     (
-      qwenDraft: string,
+      articleExcerpt: string,
       articleTitle: string,
       progress?: NewsSummaryGemmaProgress,
     ): Promise<string | null> => {
@@ -1704,7 +1705,7 @@ function App() {
           return;
         }
         const requestId = crypto.randomUUID();
-        const userPrompt = buildGemmaNewsPolishUserPrompt(qwenDraft, articleTitle);
+        const userPrompt = buildGemmaNewsPolishUserPrompt(articleExcerpt, articleTitle);
         characterUtteranceResolversRef.current.set(requestId, resolve);
         if (progress?.onGemmaToken || progress?.onStreamChunk) {
           characterUtteranceTokenListenersRef.current.set(requestId, {
@@ -1725,7 +1726,7 @@ function App() {
           modelId: GEMMA_MODEL_ID,
           systemPrompt: GEMMA_NEWS_POLISH_SYSTEM,
           userPrompt,
-          maxNewTokens: 240,
+          maxNewTokens: 380,
         });
         window.setTimeout(() => {
           if (characterUtteranceResolversRef.current.has(requestId)) {
@@ -1734,7 +1735,7 @@ function App() {
             workerInferenceBusyRef.current = false;
             resolve(null);
           }
-        }, 45_000);
+        }, 120_000);
       });
     },
     [isLoaded, pushActivity],
@@ -2333,8 +2334,7 @@ function App() {
   const handleNewsArticlePolish = useCallback(
     async (
       card: GroveeNewsCard,
-      qwenDraft: string,
-      fallbackHe: string,
+      gemmaInput: string,
       progress?: NewsSummaryGemmaProgress,
     ): Promise<string> => {
       setMessages((prev) => [
@@ -2342,9 +2342,17 @@ function App() {
         {
           id: crypto.randomUUID(),
           role: "user",
-          content: `סכם כתבה: ${card.title}`,
+          content: "סכם כתבה",
         },
       ]);
+
+      if (!isLoaded) {
+        const err = GEMMA_SUMMARY_FALLBACK_HE;
+        assistantBufferRef.current = err;
+        setAssistantBuffer(err);
+        finalizeAssistantReply(false);
+        return err;
+      }
 
       isGeneratingRef.current = true;
       setIsGenerating(true);
@@ -2352,7 +2360,7 @@ function App() {
       setAssistantBuffer("");
       setStatus("מנסח תקציר בעברית…");
 
-      const polished = await requestGemmaNewsPolish(qwenDraft, card.title, {
+      const polished = await requestGemmaNewsPolish(gemmaInput, card.title, {
         onGemmaToken: progress?.onGemmaToken,
         onStreamChunk: (chunk) => {
           setAssistantBuffer((prev) => {
@@ -2363,8 +2371,7 @@ function App() {
         },
       });
 
-      const final =
-        (polished ? cleanGemmaNewsPolishOutput(polished) : "") || fallbackHe.trim() || qwenDraft;
+      const final = finalizeGemmaNewsSummary(polished);
 
       assistantBufferRef.current = final;
       setAssistantBuffer(final);
@@ -2378,7 +2385,7 @@ function App() {
       finalizeAssistantReply(false);
       return final;
     },
-    [requestGemmaNewsPolish, pushActivity, setMessages, finalizeAssistantReply],
+    [isLoaded, requestGemmaNewsPolish, pushActivity, setMessages, finalizeAssistantReply],
   );
 
   const stopGeneration = useCallback(() => {

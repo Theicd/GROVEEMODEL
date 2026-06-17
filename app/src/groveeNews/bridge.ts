@@ -4,10 +4,7 @@ import { getSearchIndexSize } from "./engine/search/flexIndex";
 import { hitsToDisplayCards } from "./searchAdapter";
 import { fetchTopicsBundle } from "./topicsAdapter";
 import { extractArticleFromUrl } from "./engine/extract/readabilityExtract";
-import { buildBriefNotes, formatArticleSummaryForUser } from "./articleSummaryDisplay";
-import { isLikelyEnglish, needsEnglishDisplay } from "./engine/summarize/languageDetect";
-import { normalizeSummarizerResult } from "./engine/summarize/summaryQuality";
-import { summarizeArticle } from "./summarizerApp";
+import { buildArticleExcerptForGemma } from "./gemmaNewsPolish";
 import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
 import type { ArticleReadResult, GroveeNewsCard, GroveeTopicsBundle } from "./types";
 import { startGroveeNewsBoot, isGroveeNewsReady } from "./engineBoot";
@@ -40,13 +37,9 @@ export async function groveeNewsTopics(): Promise<GroveeTopicsBundle> {
   return fetchTopicsBundle();
 }
 
-export async function readAndSummarizeArticle(
-  url: string,
-  options: { onQwenToken?: (tokens: number) => void } = {},
-): Promise<ArticleReadResult> {
+/** Fetch article body and prepare a long excerpt for Gemma (no Qwen). */
+export async function readAndSummarizeArticle(url: string): Promise<ArticleReadResult> {
   await startGroveeNewsBoot();
-  const profile = getUserNewsProfile();
-  const targetLang = profile.uiLanguage || "he";
 
   try {
     const extracted = await extractArticleFromUrl(url);
@@ -56,29 +49,17 @@ export async function readAndSummarizeArticle(
       return { title, summaryHe: "לא ניתן לשלוף את תוכן הכתבה.", url, usedQwen: false, error: "empty" };
     }
 
-    const hebrewArticle =
-      !isLikelyEnglish(body.slice(0, 600)) && !needsEnglishDisplay(title, body.slice(0, 600));
-
-    if (hebrewArticle) {
-      const summaryHe = body.slice(0, 900).trim();
-      return { title, summaryHe, url, usedQwen: false };
+    const gemmaInput = buildArticleExcerptForGemma(body);
+    if (!gemmaInput.trim()) {
+      return { title, summaryHe: "לא ניתן להכין טקסט לסיכום.", url, usedQwen: false, error: "empty" };
     }
-
-    const summarized = await summarizeArticle(body, { onDemand: true, onQwenToken: options.onQwenToken });
-    const normalized = normalizeSummarizerResult(summarized, "", body, title);
-    const notes = buildBriefNotes(normalized, title);
-    const summaryHe = formatArticleSummaryForUser(
-      normalized,
-      title,
-      targetLang === "en" ? "en" : "he",
-    );
 
     return {
       title,
-      summaryHe,
-      qwenDraft: targetLang === "en" ? undefined : notes,
+      summaryHe: "",
+      gemmaInput,
       url,
-      usedQwen: true,
+      usedQwen: false,
     };
   } catch (err) {
     return {

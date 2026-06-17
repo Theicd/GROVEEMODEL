@@ -2,7 +2,6 @@ import { useState, type MouseEvent } from "react";
 import { readAndSummarizeArticle } from "./bridge";
 import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
 import { needsDisplayTranslation } from "./engine/summarize/languageDetect";
-import { armOnDemandDeepRead } from "./summarizerApp";
 import { useArticleImage } from "./engine/hooks/useArticleImage";
 import { NewsSummaryTokenHud } from "./NewsSummaryTokenHud";
 import type { GroveeNewsCard, NewsSummaryGemmaProgress } from "./types";
@@ -11,30 +10,17 @@ type Props = {
   card: GroveeNewsCard;
   expanded: boolean;
   onToggle: () => void;
-  /** Gemma polish: receives Qwen draft, returns final Hebrew for card + chat. */
+  /** Gemma: receives article excerpt, returns final Hebrew for card + chat. */
   onSummaryReady?: (
     card: GroveeNewsCard,
-    qwenDraft: string,
-    fallbackHe: string,
+    gemmaInput: string,
     progress?: NewsSummaryGemmaProgress,
   ) => Promise<string>;
 };
 
-const PHASE_COPY = {
-  qwen: {
-    title: "שלב 1 · Qwen",
-    detail: "קורא את הכתבה ומפיק עובדות ותקציר ראשוני באנגלית",
-  },
-  gemma: {
-    title: "שלב 2 · Gemma",
-    detail: "מנסח מחדש בעברית ברורה לתצוגה בכרטיסיה ובצ'אט",
-  },
-} as const;
-
 export function NewsCard({ card, expanded, onToggle, onSummaryReady }: Props) {
   const [loading, setLoading] = useState(false);
-  const [loadingPhase, setLoadingPhase] = useState<"qwen" | "gemma" | null>(null);
-  const [qwenTokens, setQwenTokens] = useState(0);
+  const [loadingPhase, setLoadingPhase] = useState<"fetch" | "gemma" | null>(null);
   const [gemmaTokens, setGemmaTokens] = useState(0);
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,26 +47,25 @@ export function NewsCard({ card, expanded, onToggle, onSummaryReady }: Props) {
   const runSummary = async (e: MouseEvent) => {
     e.stopPropagation();
     setLoading(true);
-    setLoadingPhase("qwen");
-    setQwenTokens(0);
+    setLoadingPhase("fetch");
     setGemmaTokens(0);
     setError(null);
-    armOnDemandDeepRead();
     try {
-      const result = await readAndSummarizeArticle(card.url, {
-        onQwenToken: setQwenTokens,
-      });
-      if (result.error && !result.summaryHe) {
+      const result = await readAndSummarizeArticle(card.url);
+      if (result.error && !result.gemmaInput) {
         setError(result.error);
         return;
       }
 
       let display = result.summaryHe;
-      if (result.qwenDraft && onSummaryReady) {
+      if (result.gemmaInput && onSummaryReady) {
         setLoadingPhase("gemma");
-        display = await onSummaryReady(card, result.qwenDraft, result.summaryHe, {
+        display = await onSummaryReady(card, result.gemmaInput, {
           onGemmaToken: setGemmaTokens,
         });
+      } else if (!display) {
+        setError("לא ניתן לסכם את הכתבה");
+        return;
       }
       setSummary(display);
     } catch (err) {
@@ -95,8 +80,6 @@ export function NewsCard({ card, expanded, onToggle, onSummaryReady }: Props) {
     e.stopPropagation();
     window.open(card.url, "_blank", "noopener,noreferrer");
   };
-
-  const phaseCopy = loadingPhase ? PHASE_COPY[loadingPhase] : null;
 
   return (
     <article className={`news-card-wrap${expanded ? " news-card-wrap--open" : ""}`}>
@@ -146,18 +129,17 @@ export function NewsCard({ card, expanded, onToggle, onSummaryReady }: Props) {
               disabled={loading}
             >
               {loading
-                ? loadingPhase === "gemma"
-                  ? "מנסח…"
+                ? loadingPhase === "fetch"
+                  ? "קורא כתבה…"
                   : "מסכם…"
                 : "סכם כתבה"}
             </button>
 
             <div className="news-card-actions__hud">
               <NewsSummaryTokenHud
-                qwenTokens={qwenTokens}
                 gemmaTokens={gemmaTokens}
-                activeModel={loadingPhase}
-                visible={loading}
+                active={loadingPhase === "gemma"}
+                visible={loading && loadingPhase === "gemma"}
               />
             </div>
 
@@ -170,24 +152,15 @@ export function NewsCard({ card, expanded, onToggle, onSummaryReady }: Props) {
             </button>
           </div>
 
-          {loading && phaseCopy ? (
+          {loading && loadingPhase === "gemma" ? (
             <div className="news-card-phase" role="status" aria-live="polite">
-              <div
-                className={`news-card-phase-step${loadingPhase === "qwen" ? " news-card-phase-step--active" : ""}${loadingPhase === "gemma" && qwenTokens > 0 ? " news-card-phase-step--done" : ""}`}
-              >
-                <span className="news-card-phase-badge">1</span>
+              <div className="news-card-phase-step news-card-phase-step--active">
+                <span className="news-card-phase-badge">✦</span>
                 <div>
-                  <p className="news-card-phase-title">{PHASE_COPY.qwen.title}</p>
-                  <p className="news-card-phase-detail">{PHASE_COPY.qwen.detail}</p>
-                </div>
-              </div>
-              <div
-                className={`news-card-phase-step${loadingPhase === "gemma" ? " news-card-phase-step--active" : ""}`}
-              >
-                <span className="news-card-phase-badge">2</span>
-                <div>
-                  <p className="news-card-phase-title">{PHASE_COPY.gemma.title}</p>
-                  <p className="news-card-phase-detail">{PHASE_COPY.gemma.detail}</p>
+                  <p className="news-card-phase-title">Gemma · סיכום בעברית</p>
+                  <p className="news-card-phase-detail">
+                    קורא את הכתבה המלאה ומנסח תקציר ברמה עיתונאית
+                  </p>
                 </div>
               </div>
             </div>

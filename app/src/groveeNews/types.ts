@@ -43,8 +43,8 @@ export type NewsPanelPayload = {
 export type ArticleReadResult = {
   title: string;
   summaryHe: string;
-  /** English structured notes from Qwen — input for Gemma polish. */
-  qwenDraft?: string;
+  /** Article excerpt for Gemma Hebrew summary (replaces Qwen notes). */
+  gemmaInput?: string;
   url: string;
   usedQwen: boolean;
   error?: string;
