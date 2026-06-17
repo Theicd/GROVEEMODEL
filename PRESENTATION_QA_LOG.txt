@@ -1,4 +1,0 @@
-PRESENTATION QA — 2026-06-14T00:54:12.459Z
-URL: http://127.0.0.1:5173/?qa=chat&forceLlm=1
-שאלות: 39
-
