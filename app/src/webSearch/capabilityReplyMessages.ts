@@ -23,7 +23,12 @@ import { buildMarineLiveReply } from "./marineReplyMessages";
 import { detectImpossiblePlace } from "./entityValidation";
 import { isCrossSourceQuery } from "./crossSourceIntents";
 import { isTopicalOverviewRouting } from "./topicalEnrichment";
-import { isGeneralNewsDigestQuery } from "./queryExtract";
+import { isGeneralNewsDigestQuery, isIsraelNewsQuery, isWorldHeadlineQuery } from "./queryExtract";
+import {
+  feedKeyFromSourceLabel,
+  NEWS_FEEDS,
+  sortFeedKeysByPriority,
+} from "./providers/newsFeeds";
 import {
   buildCrossSourceCorrelationLines,
   extractCrossSourceMetrics,
@@ -143,6 +148,11 @@ const formatGenericSource = (source: SearchSourceResult): string => {
         ? `הכותרת הראשית: ${headlineLines[0].replace(/^\d+\.\s*/, "")}`
         : intro;
     const extras = headlineLines.slice(1, 6);
+    const feedKey = feedKeyFromSourceLabel(source.label);
+    const regionHint =
+      feedKey && NEWS_FEEDS[feedKey]?.region === "israel"
+        ? "מקור: RSS ישראלי."
+        : "מקור: RSS בינלאומי.";
     return [
       lead,
       extras.length ? "כותרות נוספות:" : "",
