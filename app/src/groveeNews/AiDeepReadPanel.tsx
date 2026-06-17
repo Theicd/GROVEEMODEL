@@ -1,47 +1,60 @@
 import { useEffect, useState } from "react";
-import { formatBytes, QWEN_ESTIMATED_BYTES, QWEN_MODEL_ID } from "./engine/model/modelInfo";
+import { formatBytes } from "./engine/model/modelInfo";
 import { isAiDeepReadEnabled, setAiDeepReadEnabled } from "./engine/settings/aiMode";
-import {
-  bootSummarizer,
-  getModelBootState,
-  isSummarizerReady,
-  subscribeModelBoot,
-  type ModelBootState,
-} from "./engine/summarize/summarizerClient";
+import { GEMMA_ARTICLE_MODEL_ID, GEMMA_ESTIMATED_BYTES } from "./gemmaModelInfo";
 import { CircularProgress } from "./CircularProgress";
 
-type LampState = "off" | "connecting" | "connected" | "error";
+export type GemmaDeepReadPanelProps = {
+  compact?: boolean;
+  gemmaReady: boolean;
+  gemmaLoading: boolean;
+  gemmaLoadPct?: number;
+  gemmaLoadDetail?: string;
+  onRequestGemmaLoad?: () => void;
+};
 
-function lampState(enabled: boolean, boot: ModelBootState, ready: boolean): LampState {
+type LampState = "off" | "connecting" | "connected" | "waiting";
+
+function lampState(enabled: boolean, gemmaReady: boolean, gemmaLoading: boolean): LampState {
   if (!enabled) return "off";
-  if (boot.phase === "error") return "error";
-  if (ready) return "connected";
-  return "connecting";
+  if (gemmaReady) return "connected";
+  if (gemmaLoading) return "connecting";
+  return "waiting";
 }
 
 const LAMP_LABEL: Record<LampState, string> = {
-  off: "מודל מנותק",
-  connecting: "מתחבר למודל…",
-  connected: "מודל מחובר",
-  error: "שגיאת מודל",
+  off: "סיכום כתבות כבוי",
+  connecting: "טוען Gemma לדפדפן…",
+  connected: "Gemma מוכן לסיכום",
+  waiting: "נדרש טעינת מודל",
 };
 
-export function AiDeepReadPanel({ compact = false }: { compact?: boolean }) {
+export function AiDeepReadPanel({
+  compact = false,
+  gemmaReady,
+  gemmaLoading,
+  gemmaLoadPct = 0,
+  gemmaLoadDetail,
+  onRequestGemmaLoad,
+}: GemmaDeepReadPanelProps) {
   const [enabled, setEnabled] = useState(isAiDeepReadEnabled);
-  const [boot, setBoot] = useState<ModelBootState>(getModelBootState());
 
-  useEffect(() => subscribeModelBoot(setBoot), []);
+  useEffect(() => {
+    const sync = () => setEnabled(isAiDeepReadEnabled());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "gn-ai-deep-read") sync();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
-  const ready = isSummarizerReady() || boot.phase === "ready";
-  const busy = boot.phase === "downloading" || boot.phase === "loading";
-  const lamp = lampState(enabled, boot, ready);
+  const lamp = lampState(enabled, gemmaReady, gemmaLoading);
+  const busy = gemmaLoading;
 
   const connect = () => {
     setEnabled(true);
     setAiDeepReadEnabled(true);
-    if (!ready && boot.phase !== "downloading" && boot.phase !== "loading") {
-      bootSummarizer();
-    }
+    if (!gemmaReady && !gemmaLoading) onRequestGemmaLoad?.();
   };
 
   const disconnect = () => {
@@ -50,10 +63,10 @@ export function AiDeepReadPanel({ compact = false }: { compact?: boolean }) {
   };
 
   return (
-    <section className="gn-ai-ignition" aria-label="שליטה במודל Qwen לסיכום ידיעות">
+    <section className="gn-ai-ignition" aria-label="סיכום כתבות עם Gemma">
       <div className="gn-ai-ignition__row">
         <span
-          className={`gn-model-lamp gn-model-lamp--${lamp}`}
+          className={`gn-model-lamp gn-model-lamp--${lamp === "waiting" ? "connecting" : lamp}`}
           role="status"
           aria-label={LAMP_LABEL[lamp]}
           title={LAMP_LABEL[lamp]}
@@ -62,17 +75,17 @@ export function AiDeepReadPanel({ compact = false }: { compact?: boolean }) {
         </span>
 
         <div className="gn-ai-ignition__copy">
-          <strong>חקירה עמוקה (Qwen)</strong>
-          <span className={`gn-ai-ignition__status gn-ai-ignition__status--${lamp}`}>
+          <strong>חקירה עמוקה (Gemma 4)</strong>
+          <span className={`gn-ai-ignition__status gn-ai-ignition__status--${lamp === "waiting" ? "connecting" : lamp}`}>
             {lamp === "off"
               ? "כבוי"
               : lamp === "connecting"
                 ? busy
-                  ? `${boot.phase === "downloading" ? "מוריד" : "טוען"}${boot.pct > 0 ? ` · ${boot.pct}%` : ""}`
+                  ? `טוען${gemmaLoadPct > 0 ? ` · ${Math.round(gemmaLoadPct)}%` : ""}`
                   : "מתחיל…"
                 : lamp === "connected"
-                  ? `מוכן${boot.device ? ` · ${boot.device}` : ""}`
-                  : "החיבור נכשל"}
+                  ? "מוכן לסיכום בעברית"
+                  : "לחץ «טען מודל לדפדפן»"}
           </span>
         </div>
 
@@ -89,43 +102,45 @@ export function AiDeepReadPanel({ compact = false }: { compact?: boolean }) {
 
       <p className="gn-ai-ignition__hint">
         {compact
-          ? "סיכום לפי בקשה מכרטיסיית ידיעה — לא סריקה אוטומטית של המאגר."
-          : "ברירת מחדל: כבוי. «סכם כתבה» בפאנל החדשות מפעיל Qwen לכתבה אחת בלבד (~380MB)."}
+          ? "«סכם כתבה» שולף טקסט מהמקור ומנסח בעברית דרך Gemma — לא סריקה אוטומטית של כל המאגר."
+          : "ברירת מחדל: כבוי. «סכם כתבה» בפאנל החדשות שולף את הכתבה ומנסח תקציר בעברית עם Gemma 4 (אותו מודל כמו הצ'אט)."}
       </p>
 
-      {!compact && enabled && !ready && lamp !== "error" ? (
+      {!compact && enabled && !gemmaReady && lamp !== "off" ? (
         <div className="gn-ai-panel__install">
           <p className="gn-ai-panel__model" dir="ltr">
-            {QWEN_MODEL_ID}
+            {GEMMA_ARTICLE_MODEL_ID}
           </p>
-          {busy || boot.phase === "idle" ? (
+          {busy ? (
             <>
               <CircularProgress
-                percent={boot.pct}
-                label="QWEN"
-                indeterminate={boot.pct < 2 && boot.phase !== "idle"}
+                percent={gemmaLoadPct}
+                label="GEMMA"
+                indeterminate={gemmaLoadPct < 2}
               />
               <p className="gn-ai-panel__status">
-                {boot.message || `~${formatBytes(QWEN_ESTIMATED_BYTES)}`}
+                {gemmaLoadDetail || `~${formatBytes(GEMMA_ESTIMATED_BYTES)}`}
               </p>
             </>
-          ) : null}
+          ) : (
+            <>
+              <p className="gn-ai-panel__status">
+                המודל לא נטען — לחץ «טען מודל לדפדפן» במסך הראשי או «הפעל» כאן.
+              </p>
+              {onRequestGemmaLoad ? (
+                <button type="button" className="gn-ai-panel__retry" onClick={onRequestGemmaLoad}>
+                  טען Gemma
+                </button>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
 
-      {!compact && enabled && lamp === "error" ? (
-        <div className="gn-ai-panel__install">
-          <p className="gn-ai-panel__status gn-ai-panel__status--error">
-            {boot.message || "לא ניתן לטעון את המודל."}
-          </p>
-          <button type="button" className="gn-ai-panel__retry" onClick={() => bootSummarizer(true)}>
-            נסה שוב
-          </button>
-        </div>
-      ) : null}
-
-      {!compact && enabled && ready ? (
-        <p className="gn-ai-panel__ready">המודל מוכן — סיכום עמוק רק בלחיצה על «סכם כתבה».</p>
+      {!compact && enabled && gemmaReady ? (
+        <p className="gn-ai-panel__ready">
+          Gemma מוכן — לחץ «סכם כתבה» בכרטיס ידיעה לתקציר בעברית (כותרת + תקציר).
+        </p>
       ) : null}
     </section>
   );

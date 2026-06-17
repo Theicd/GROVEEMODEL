@@ -4134,7 +4134,18 @@ function App() {
         onClear={() => setActivityLog([])}
       />
 
-      <NewsEnginePanel open={newsEngineOpen} onClose={() => setNewsEngineOpen(false)} />
+      <NewsEnginePanel
+        open={newsEngineOpen}
+        onClose={() => setNewsEngineOpen(false)}
+        gemmaReady={isLoaded}
+        gemmaLoading={isLoading}
+        gemmaLoadPct={downloadProgressPercent(
+          loadingBytes.loaded,
+          loadingBytes.total > 0 ? loadingBytes.total : 0,
+        )}
+        gemmaLoadDetail={loadingByteLine}
+        onRequestGemmaLoad={() => loadModel()}
+      />
 
       {QA_BRIDGE_ENABLED ? (
         <PresentationQaPanel

@@ -26,21 +26,23 @@ function nextPollShort(lastPollAt: number, phase: EngineStatus["phase"]): string
   return `~${Math.ceil(remain / 60_000)} דק׳`;
 }
 
-function phaseLabelHe(status: EngineStatus, aiOn: boolean): string {
+function phaseLabelHe(status: EngineStatus, aiOn: boolean, gemmaReady: boolean): string {
   if (!aiOn && status.phase === "ready") {
-    return "מנוע פעיל — אוסף כותרות RSS (חקירה עמוקה כבויה)";
+    return "מנוע פעיל — אוסף כותרות RSS (סיכום כתבות לפי בקשה עם Gemma)";
   }
   switch (status.phase) {
     case "polling":
       return status.message || `סורק מקורות ${status.feedsOk + status.feedsFailed}/${status.feedsTotal}…`;
     case "extracting":
-      return "שולף עמודי כתבות מלאים…";
+      return "שולף עמודי כתבות…";
     case "summarizing":
-      return "Qwen מסכם כתבות…";
+      return "מעבד כתבות לאינדקס…";
     case "indexing":
       return "מעדכן אינדקס חיפוש…";
     case "ready":
-      return status.message || "מוכן — אוסף ברקע כל 5 דקות";
+      return gemmaReady && aiOn
+        ? "מוכן — RSS ברקע · Gemma לסיכום כתבה"
+        : status.message || "מוכן — אוסף ברקע כל 5 דקות";
     case "error":
       return status.message || "שגיאה במנוע";
     default:
@@ -81,7 +83,23 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
   );
 }
 
-export function NewsEnginePanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function NewsEnginePanel({
+  open,
+  onClose,
+  gemmaReady = false,
+  gemmaLoading = false,
+  gemmaLoadPct = 0,
+  gemmaLoadDetail,
+  onRequestGemmaLoad,
+}: {
+  open: boolean;
+  onClose: () => void;
+  gemmaReady?: boolean;
+  gemmaLoading?: boolean;
+  gemmaLoadPct?: number;
+  gemmaLoadDetail?: string;
+  onRequestGemmaLoad?: () => void;
+}) {
   const { status } = useNewsEngineStatus();
   const [aiOn, setAiOn] = useState(isAiDeepReadEnabled);
   const [tab, setTab] = useState<EngineTab>("status");
@@ -135,7 +153,7 @@ export function NewsEnginePanel({ open, onClose }: { open: boolean; onClose: () 
         <header className="activity-panel-head">
           <div>
             <h2 id="news-engine-title">מנוע חדשות ברקע</h2>
-            <p className="activity-panel-sub">RSS · אינדקס · חקירה עמוקה עם Qwen</p>
+            <p className="activity-panel-sub">RSS · אינדקס · סיכום כתבות עם Gemma 4</p>
           </div>
           <button type="button" className="icon-close" onClick={onClose} aria-label="סגור">
             ×
@@ -179,7 +197,9 @@ export function NewsEnginePanel({ open, onClose }: { open: boolean; onClose: () 
         <div className="news-engine-body">
           {tab === "status" ? (
             <>
-              <p className={`gn-engine-phase gn-engine-phase--${phaseClass}`}>{phaseLabelHe(status, aiOn)}</p>
+              <p className={`gn-engine-phase gn-engine-phase--${phaseClass}`}>
+                {phaseLabelHe(status, aiOn, gemmaReady)}
+              </p>
 
               {busy && status.phase === "polling" && status.feedsTotal > 0 ? (
                 <div className="news-engine-progress" role="progressbar" aria-valuenow={scanPct} aria-valuemin={0} aria-valuemax={100}>
@@ -216,13 +236,19 @@ export function NewsEnginePanel({ open, onClose }: { open: boolean; onClose: () 
                 <StatCard label="בחיפוש" value={fmtNum(articles)} hint="FlexSearch" />
                 <StatCard label="בתור" value={fmtNum(pending)} hint="ממתין לעיבוד" />
                 <StatCard
-                  label="סוכמו ב-Qwen"
+                  label="סיכומי עומק"
                   value={fmtNum(summarized)}
-                  hint={aiOn ? "כתבות מלאות" : "הפעל חקירה עמוקה"}
+                  hint={gemmaReady ? "Gemma · לפי בקשה" : "טען Gemma לסיכום"}
                 />
               </div>
 
-              <AiDeepReadPanel />
+              <AiDeepReadPanel
+                gemmaReady={gemmaReady}
+                gemmaLoading={gemmaLoading}
+                gemmaLoadPct={gemmaLoadPct}
+                gemmaLoadDetail={gemmaLoadDetail}
+                onRequestGemmaLoad={onRequestGemmaLoad}
+              />
             </>
           ) : (
             <ul className="gn-activity-log gn-activity-log--panel">
@@ -244,7 +270,7 @@ export function NewsEnginePanel({ open, onClose }: { open: boolean; onClose: () 
         {status.lastSummary ? (
           <footer className="activity-panel-foot news-engine-foot">
             <span className="news-engine-foot__label">
-              סיכום אחרון {status.lastSummary.byModel ? "(Qwen)" : "(RSS)"}:
+              סיכום אחרון {status.lastSummary.byModel ? "(מודל)" : "(RSS)"}:
             </span>
             <span className="news-engine-foot__title">{status.lastSummary.title}</span>
           </footer>
