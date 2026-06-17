@@ -5,7 +5,6 @@ import { hitsToDisplayCards } from "./searchAdapter";
 import { fetchTopicsBundle } from "./topicsAdapter";
 import { extractArticleFromUrl } from "./engine/extract/readabilityExtract";
 import { buildArticleExcerptForGemma } from "./gemmaNewsPolish";
-import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
 import type { ArticleReadResult, GroveeNewsCard, GroveeTopicsBundle } from "./types";
 import { startGroveeNewsBoot, isGroveeNewsReady } from "./engineBoot";
 
