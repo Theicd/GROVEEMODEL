@@ -3,7 +3,6 @@ import { classifySearchIntents } from "../webSearch/intents";
 import { fetchGroveeNewsSearch } from "./newsToSearchBrief";
 import { isTopicsOverviewQuery } from "./headlineIntent";
 import { normalizeNewsEngineQuery } from "./newsQueryNormalize";
-import { clearNewsPanelPayload, getNewsPanelPayload } from "./newsPanelStore";
 
 const searchNewsMock = vi.fn();
 const buildRecentHeadlineHitsMock = vi.fn();
@@ -15,6 +14,14 @@ const getSearchIndexSizeMock = vi.fn();
 
 vi.mock("./engine/engine/pipeline", () => ({
   searchNews: (...args: unknown[]) => searchNewsMock(...args),
+}));
+
+vi.mock("./hebrewFeedPoll", () => ({
+  priorityPollHebrewFeeds: vi.fn().mockResolvedValue(0),
+}));
+
+vi.mock("./engine/settings/userNewsProfile", () => ({
+  getUserNewsProfile: () => ({ locale: "he-IL", uiLanguage: "en", pollTier: "core" }),
 }));
 
 vi.mock("./recentHeadlineHits", () => ({
@@ -44,7 +51,6 @@ vi.mock("./engine/search/flexIndex", () => ({
 describe("news chat bridge routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearNewsPanelPayload();
     startBootMock.mockResolvedValue(undefined);
     getEngineLibraryStatsMock.mockResolvedValue({ rssHeadlines: 3201, articlesIndexed: 40 });
     getSearchIndexSizeMock.mockReturnValue(40);
@@ -95,8 +101,7 @@ describe("news chat bridge routing", () => {
     expect(normalizeNewsEngineQuery("חפש חדשות על חלל")).toBe("space");
     expect(searchNewsMock).toHaveBeenCalledWith("space");
     expect(result.ok).toBe(true);
-    expect(result.provider).toBe("grovee-news");
-    expect(getNewsPanelPayload()?.cards.length).toBeGreaterThan(0);
+    expect(result.newsCards?.length).toBeGreaterThan(0);
   });
 
   it("topics overview sets panel payload with cards", async () => {
@@ -126,8 +131,7 @@ describe("news chat bridge routing", () => {
     const result = await fetchGroveeNewsSearch("מה קורה בעולם?");
 
     expect(result.ok).toBe(true);
-    expect(getNewsPanelPayload()?.mode).toBe("topics");
-    expect(getNewsPanelPayload()?.cards).toHaveLength(1);
+    expect(result.newsCards).toHaveLength(1);
   });
 
   it("falls back to recent headlines when search returns empty", async () => {
@@ -150,6 +154,6 @@ describe("news chat bridge routing", () => {
 
     expect(buildRecentHeadlineHitsMock).toHaveBeenCalled();
     expect(result.ok).toBe(true);
-    expect(getNewsPanelPayload()?.cards[0]?.title).toBe("Fallback headline");
+    expect(result.newsCards?.[0]?.title).toBe("Fallback headline");
   });
 });

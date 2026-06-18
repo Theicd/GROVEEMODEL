@@ -7,6 +7,8 @@ import {
   isMarineInfraQuery,
   isMarineQuery,
   isNewsQuery,
+  isPriceQuery,
+  isProductsQuery,
   isShipsQuery,
   isStarlinkCountQuery,
   isStarlinkRegionalQuery,
@@ -15,6 +17,7 @@ import {
   isWorldOverviewQuery,
 } from "./intents";
 import { formatDataAgeForSource } from "./dataAge";
+import { formatProductPriceSummary, isCheapersalConfigured } from "./providers/cheapersalPrices";
 import { fallbackFromLiveWorldSnapshot } from "../liveWorld/snapshotFallback";
 import { issSearchResultFromLiveWorld } from "../liveWorld/issSnapshot";
 import { getCachedLiveWorldSnapshot } from "../liveWorld/snapshotStore";
@@ -54,6 +57,7 @@ const PROVIDER_INTROS: Partial<Record<SearchSourceResult["provider"], string>> =
   "nominatim-places": "לפי OpenStreetMap:",
   "osrm-distance": "לפי חישוב מרחק:",
   "hacker-news": "לפי Hacker News:",
+  "israeli-products": "לפי Cheapersal (מחירי סופרמרקטים בישראל):",
 };
 
 const UNSUPPORTED_REPLIES: Array<{ re: RegExp; text: string }> = [
@@ -130,6 +134,44 @@ const formatGenericSource = (source: SearchSourceResult): string => {
       `Sources: ${source.label}`,
       `מקור: ${source.label}.`,
     ].join("\n");
+  }
+
+  if (source.provider === "israeli-products") {
+    const hits = source.productHits ?? [];
+    const priced = hits.filter((h) => h.priceNis != null);
+    if (priced.length) {
+      const top = priced[0];
+      const lead = `${top.title}: ${formatProductPriceSummary(top)}.`;
+      const extras = priced.slice(1, 4).map((h) => `• ${h.title} — ${formatProductPriceSummary(h)}`);
+      return [
+        intro,
+        lead,
+        extras.length ? "אפשרויות נוספות:" : "",
+        ...extras,
+        `Sources: ${source.label} · Cheapersal`,
+        `מקור: השוואת מחירים מ-30+ רשתות סופר בישראל.`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+    if (hits.length) {
+      const rows = hits.slice(0, 4).map((h, i) => `${i + 1}. ${h.title} [${h.barcode}]`);
+      const answer = lines.find((l) => l.startsWith("ANSWER:"));
+      const note = lines.find((l) => l.startsWith("הערה:"));
+      return [
+        intro,
+        answer?.replace(/^ANSWER:\s*/, "") ?? `נמצאו ${hits.length} מוצרים:`,
+        ...rows,
+        note ?? "",
+        `Sources: ${source.label}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+    const answer = lines.find((l) => l.startsWith("ANSWER:"));
+    if (answer) {
+      return [intro, answer.replace(/^ANSWER:\s*/, ""), `Sources: ${source.label}`].join("\n");
+    }
   }
 
   if (source.provider === "grovee-news") {
@@ -565,6 +607,43 @@ export const buildNewsAggregatedReply = (
   return one ? formatGenericSource(one) : null;
 };
 
+const buildProductsPriceReply = (
+  query: string,
+  sources: SearchSourceResult[],
+): string | null => {
+  const prod = sources.find((s) => s.provider === "israeli-products");
+  if (!prod) return null;
+
+  if (!prod.ok && prod.error?.trim()) {
+    if (!isPriceQuery(query) && !isProductsQuery(query)) return null;
+    return [
+      prod.error.trim(),
+      isCheapersalConfigured()
+        ? "ייתכן שהמוצר לא נמצא במאגר המחירים — נסה שם מדויק יותר (למשל «חלב תנובה 3%»)."
+        : "קבל מפתח חינמי ב-cheapersal.co.il/developers והוסף CHEAPERSAL_API_KEY ל-app/.env.",
+      "Sources: מוצרי סופר · ישראל",
+    ].join("\n");
+  }
+
+  if (prod.ok && (prod.productHits?.length || prod.text.trim())) {
+    return formatGenericSource(prod);
+  }
+
+  const priced = (prod.productHits ?? []).filter((h) => h.priceNis != null);
+  if (!priced.length) {
+    if (!isPriceQuery(query)) return null;
+    return [
+      "לא הצלחתי להביא מחירים מסופרמרקטים לשאלה הזו.",
+      isCheapersalConfigured()
+        ? "ייתכן שהמוצר לא נמצא במאגר — נסה שם מדויק יותר או ברקוד."
+        : "הוסף CHEAPERSAL_API_KEY ב-app/.env (חינם: cheapersal.co.il/developers).",
+      "Sources: מוצרי סופר · ישראל",
+    ].join("\n");
+  }
+
+  return formatGenericSource({ ...prod, productHits: priced });
+};
+
 const pickPrimarySource = (
   query: string,
   intents: SearchIntent[],
@@ -608,6 +687,9 @@ const pickPrimarySource = (
   if (intents.includes("places")) return ok.find((s) => s.provider === "nominatim-places") ?? ok[0];
   if (intents.includes("distance")) return ok.find((s) => s.provider === "osrm-distance") ?? ok[0];
   if (intents.includes("hackernews")) return ok.find((s) => s.provider === "hacker-news") ?? ok[0];
+  if (intents.includes("products") || isPriceQuery(query)) {
+    return ok.find((s) => s.provider === "israeli-products") ?? ok[0];
+  }
   return ok[0];
 };
 
@@ -640,6 +722,7 @@ const STRUCTURED_LIVE_INTENTS = new Set<SearchIntent>([
   "hackernews",
   "huggingface",
   "arxiv",
+  "products",
 ]);
 
 /** Bypass Gemma for structured live data — never for news (model must synthesize RSS). */
@@ -657,6 +740,7 @@ export function shouldDeliverStructuredLiveReply(
   if (intents.some((i) => STRUCTURED_LIVE_INTENTS.has(i))) return true;
   if (isAviationQuery(query) || isShipsQuery(query) || isIssQuery(query)) return true;
   if (isStarlinkCountQuery(query) || isGitHubPopularQuery(query)) return true;
+  if (isPriceQuery(query)) return true;
   return false;
 }
 
@@ -797,6 +881,9 @@ export function buildCapabilityLiveReply(
     options?.regionLabel,
   );
   if (crossSource) return crossSource;
+
+  const productsPrice = buildProductsPriceReply(q, sources);
+  if (productsPrice) return productsPrice;
 
   if (isNewsQuery(q)) {
     const news = sources.find((s) => s.provider === "grovee-news");

@@ -1,14 +1,7 @@
 import { fetchJson } from "../fetchJson";
+import { enrichHfModelsSearch } from "../hf/hfModelEnrich";
+import { buildHuggingFaceSearchQuery } from "../intents";
 import type { SearchSourceResult } from "../types";
-import { buildHuggingFaceSearchQuery, isHuggingFaceImageQuery } from "../intents";
-
-type HfModel = {
-  id: string;
-  downloads?: number;
-  likes?: number;
-  pipeline_tag?: string;
-  tags?: string[];
-};
 
 export const fetchHuggingFaceModelsSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
@@ -26,12 +19,8 @@ export const fetchHuggingFaceModelsSearch = async (query: string): Promise<Searc
     };
   }
   try {
-    const imageModels = isHuggingFaceImageQuery(query);
-    const pipeline = imageModels ? "&pipeline_tag=text-to-image" : "";
-    const data = await fetchJson<HfModel[]>(
-      `https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=6&sort=downloads&direction=-1${pipeline}`,
-    );
-    if (!Array.isArray(data) || !data.length) {
+    const hfModelHits = await enrichHfModelsSearch(query);
+    if (!hfModelHits.length) {
       return {
         provider,
         label,
@@ -42,10 +31,11 @@ export const fetchHuggingFaceModelsSearch = async (query: string): Promise<Searc
       };
     }
 
-    const text = data
+    const text = hfModelHits
       .map((m) => {
-        const tags = m.pipeline_tag ?? m.tags?.slice(0, 3).join(", ") ?? "";
-        return `- ${m.id}${tags ? ` (${tags})` : ""} · ⬇${m.downloads ?? 0} · ♥${m.likes ?? 0}\n  https://huggingface.co/${m.id}`;
+        const tags = m.pipelineTag ? ` (${m.pipelineTag})` : "";
+        const status = m.probed ? ` · ${m.status}` : "";
+        return `- ${m.modelId}${tags} · ⬇${m.downloads ?? 0} · ♥${m.likes ?? 0}${status}\n  ${m.url}`;
       })
       .join("\n");
 
@@ -55,6 +45,7 @@ export const fetchHuggingFaceModelsSearch = async (query: string): Promise<Searc
       ok: true,
       text: `שאילתה: ${q}\n${text}`,
       url: `https://huggingface.co/models?search=${encodeURIComponent(q)}`,
+      hfModelHits,
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

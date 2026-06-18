@@ -7,7 +7,9 @@ import {
   isRedditQuery,
   isSatelliteCatalogQuery,
   isStarlinkCountQuery,
-  isYouTubeQuery,
+  isMoviesQuery,
+  isLikelyMediaTitleQuery,
+  isProductsQuery,
   sanitizeSearchQuery,
   stripSearchVerb,
 } from "./intents";
@@ -42,6 +44,15 @@ import { fetchSearxngSearch } from "./providers/searxng";
 import { fetchAirQualitySearch } from "./providers/openMeteoAirQuality";
 import { fetchArxivSearch } from "./providers/arxiv";
 import { fetchUrlContextSearch } from "./providers/urlContext";
+import { fetchMovieCatalogSearch } from "./providers/movieCatalog";
+import {
+  fetchPixabayImagesSearch,
+  fetchPixabayVideosSearch,
+} from "./providers/pixabayMedia";
+import { fetchPeerTubeVideosSearch } from "./providers/peertubeMedia";
+import { fetchInternetArchiveMediaSearch } from "./providers/internetArchiveMedia";
+import { fetchInvidiousVideosSearch } from "./providers/invidiousMedia";
+import { fetchIsraeliProductsSearch } from "./providers/israeliProducts";
 import { applySnapshotFallbacks } from "../liveWorld/snapshotFallback";
 import { pingGlobeForLiveSnapshot } from "../liveWorld/bridge";
 import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
@@ -119,6 +130,28 @@ const dedupeSources = (sources: SearchSourceResult[]): SearchSourceResult[] => {
   return [...byProvider.values()];
 };
 
+/** PeerTube, Internet Archive video, and optional Invidious — in-browser playback. */
+const pushFederatedVideoTasks = (
+  tasks: Promise<SearchSourceResult>[],
+  q: string,
+  options?: WebSearchOptions,
+) => {
+  tasks.push(trackTask(cached("peertube-videos", q, () => fetchPeerTubeVideosSearch(q)), options));
+  tasks.push(
+    trackTask(cached("internet-archive-media", q, () => fetchInternetArchiveMediaSearch(q)), options),
+  );
+  tasks.push(trackTask(cached("invidious-videos", q, () => fetchInvidiousVideosSearch(q)), options));
+};
+
+/** YouTube-only search (Invidious mirror) — for music / explicit YouTube queries. */
+const pushYouTubeTasks = (
+  tasks: Promise<SearchSourceResult>[],
+  q: string,
+  options?: WebSearchOptions,
+) => {
+  tasks.push(trackTask(cached("invidious-videos", q, () => fetchInvidiousVideosSearch(q)), options));
+};
+
 const buildTasksForQuery = (
   q: string,
   intents: SearchIntent[],
@@ -162,7 +195,25 @@ const buildTasksForQuery = (
   }
   if (intents.includes("news")) {
     tasks.push(
-      trackTask(cached("grovee-news", q, () => fetchGroveeNewsSearch(q)), options),
+      trackTask(
+        cached("grovee-news", q, () =>
+          fetchGroveeNewsSearch(q, {
+            onRefresh: (refreshed) => options?.onProgress?.({ type: "provider_done", result: refreshed }),
+          }),
+        ),
+        options,
+      ),
+    );
+  } else if (options?.plan?.blendNewsWithWeb) {
+    tasks.push(
+      trackTask(
+        cached("grovee-news", q, () =>
+          fetchGroveeNewsSearch(q, {
+            onRefresh: (refreshed) => options?.onProgress?.({ type: "provider_done", result: refreshed }),
+          }),
+        ),
+        options,
+      ),
     );
   }
   if (intents.includes("aviation") || /\bawacs\b/i.test(q)) {
@@ -194,6 +245,20 @@ const buildTasksForQuery = (
   if (intents.includes("holiday")) tasks.push(trackTask(cached("nager-holidays", q, () => fetchHolidaySearch(q)), options));
   if (intents.includes("government")) tasks.push(trackTask(cached("wikidata-gov", q, () => fetchGovernmentSearch(q)), options));
   if (intents.includes("github")) tasks.push(trackTask(cached("github", q, () => fetchGitHubSearch(q)), options));
+  if (intents.includes("movies")) {
+    tasks.push(trackTask(cached("movie-catalog", q, () => fetchMovieCatalogSearch(q)), options));
+    pushFederatedVideoTasks(tasks, q, options);
+  }
+  if (intents.includes("images")) {
+    tasks.push(trackTask(cached("pixabay-images", q, () => fetchPixabayImagesSearch(q)), options));
+  }
+  if (intents.includes("video")) {
+    tasks.push(trackTask(cached("pixabay-videos", q, () => fetchPixabayVideosSearch(q)), options));
+    pushFederatedVideoTasks(tasks, q, options);
+  }
+  if (intents.includes("products")) {
+    tasks.push(trackTask(cached("israeli-products", q, () => fetchIsraeliProductsSearch(q)), options));
+  }
   if (intents.includes("huggingface")) {
     tasks.push(trackTask(cached("huggingface-models", q, () => fetchHuggingFaceModelsSearch(q)), options));
     tasks.push(trackTask(cached("huggingface-datasets", q, () => fetchHuggingFaceDatasetsSearch(q)), options));
@@ -233,19 +298,8 @@ const buildTasksForQuery = (
       ),
     );
   }
-  if (isYouTubeQuery(q)) {
-    tasks.push(
-      trackTask(
-        Promise.resolve(
-          fetchUnsupportedSource(
-            "youtube",
-            "YouTube",
-            "YouTube Data API דורש API key — לא מחובר בדפדפן; חפש ישירות ב-youtube.com או נסה שאלה על Hacker News / GitHub",
-          ),
-        ),
-        options,
-      ),
-    );
+  if (intents.includes("youtube")) {
+    pushYouTubeTasks(tasks, q, options);
   }
   if (intents.includes("wikipedia")) {
     const wikiQ = stripSearchVerb(q);
@@ -256,6 +310,34 @@ const buildTasksForQuery = (
   }
   if (intents.includes("link")) {
     tasks.push(trackTask(cached("url-context", q, () => fetchUrlContextSearch(q)), options));
+  }
+
+  if (options?.panelSearch) {
+    const wikiQ = stripSearchVerb(q) || q;
+    if (!intents.includes("wikipedia")) {
+      tasks.push(trackTask(cached("wikipedia-en", wikiQ, () => fetchWikipediaSearch(wikiQ, "en")), options));
+      tasks.push(trackTask(cached("wikipedia-he", wikiQ, () => fetchWikipediaSearch(wikiQ, "he")), options));
+    }
+    if (!intents.includes("github")) {
+      tasks.push(trackTask(cached("github", q, () => fetchGitHubSearch(q)), options));
+    }
+    if (!intents.includes("movies") && (isMoviesQuery(q) || isLikelyMediaTitleQuery(q))) {
+      tasks.push(trackTask(cached("movie-catalog", q, () => fetchMovieCatalogSearch(q)), options));
+    }
+    if (!intents.includes("images")) {
+      tasks.push(trackTask(cached("pixabay-images", q, () => fetchPixabayImagesSearch(q)), options));
+    }
+    if (!intents.includes("video")) {
+      tasks.push(trackTask(cached("pixabay-videos", q, () => fetchPixabayVideosSearch(q)), options));
+    }
+    pushFederatedVideoTasks(tasks, q, options);
+    if (!intents.includes("products") && isProductsQuery(q)) {
+      tasks.push(trackTask(cached("israeli-products", q, () => fetchIsraeliProductsSearch(q)), options));
+    }
+    if (!intents.includes("huggingface")) {
+      tasks.push(trackTask(cached("huggingface-models", q, () => fetchHuggingFaceModelsSearch(q)), options));
+      tasks.push(trackTask(cached("huggingface-datasets", q, () => fetchHuggingFaceDatasetsSearch(q)), options));
+    }
   }
 
   return tasks;
@@ -287,8 +369,17 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
   const q = sanitizeSearchQuery(query);
   const route = routeQuery(q, options?.plan);
   const intents = route.intents;
+  const panelMode = options?.panelSearch === true;
+  const effectiveRoute = panelMode
+    ? {
+        ...route,
+        useWebFallback: true,
+        blendNewsWithWeb: true,
+        answerShape: route.answerShape === "short_fact" ? ("overview" as const) : route.answerShape,
+      }
+    : route;
   // #region agent log
-  agentDebugLog("H1", "orchestrator.ts:runWebSearch", "route selected", { queryPreview: q.slice(0, 120), route: { intents, queries: route.queries, answerShape: route.answerShape, useWebFallback: route.useWebFallback, blendNewsWithWeb: route.blendNewsWithWeb } });
+  agentDebugLog("H1", "orchestrator.ts:runWebSearch", "route selected", { queryPreview: q.slice(0, 120), route: { intents, queries: effectiveRoute.queries, answerShape: effectiveRoute.answerShape, useWebFallback: effectiveRoute.useWebFallback, blendNewsWithWeb: effectiveRoute.blendNewsWithWeb } });
   // #endregion
 
   options?.onProgress?.({ type: "start", intents, query: q });
@@ -305,16 +396,17 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
     };
   }
 
-  const subQueries = route.queries;
+  const subQueries = effectiveRoute.queries;
 
   const sharedRegion = await resolveSharedSearchRegion(q, intents);
   const searchOptions: WebSearchOptions = {
     ...(sharedRegion ? { ...options, sharedRegion } : (options ?? {})),
+    panelSearch: panelMode,
     plan: {
       ...options?.plan,
-      useWebFallback: route.useWebFallback,
-      blendNewsWithWeb: route.blendNewsWithWeb,
-      answerShape: route.answerShape,
+      useWebFallback: effectiveRoute.useWebFallback,
+      blendNewsWithWeb: effectiveRoute.blendNewsWithWeb,
+      answerShape: effectiveRoute.answerShape,
     },
   };
 
@@ -336,7 +428,7 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
   });
   // #endregion
 
-  const brief = buildSearchBrief(settled, mergedIntents, q, undefined, route.answerShape);
+  const brief = buildSearchBrief(settled, mergedIntents, q, undefined, effectiveRoute.answerShape);
   const briefMax =
     isCrossSourceQuery(q) ? 1400 : mergedIntents.includes("news") ? (isStaticWebHost() ? 2200 : 1800) : 900;
   const okContext = formatSearchBriefContext(
@@ -344,7 +436,7 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
     q,
     briefMax,
     settled,
-    route.answerShape,
+    effectiveRoute.answerShape,
     sharedRegion?.label,
   );
   const contextText = okContext.trim() && settled.some((s) => s.ok && s.text.trim())
@@ -355,10 +447,10 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
 
   const cannedReply =
     buildCapabilityLiveReply(q, mergedIntents, settled, {
-      answerShape: route.answerShape,
+      answerShape: effectiveRoute.answerShape,
       regionLabel: sharedRegion?.label,
     }) ??
-    (route.useWebFallback && !settled.some((s) => s.ok && s.text.trim())
+    (effectiveRoute.useWebFallback && !settled.some((s) => s.ok && s.text.trim())
       ? buildWebFallbackNoDataReply(q, settled)
       : null);
 

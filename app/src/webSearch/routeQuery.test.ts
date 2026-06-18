@@ -22,6 +22,7 @@ describe("routeQuery", () => {
     expect(route.intents).toContain("hackernews");
     expect(route.intents).toContain("github");
     expect(route.intents).toContain("arxiv");
+    expect(route.intents).toContain("news");
     expect(route.useWebFallback).toBe(true);
     expect(route.blendNewsWithWeb).toBe(true);
   });
@@ -30,11 +31,11 @@ describe("routeQuery", () => {
     expect(
       shouldAllowWebFallback(1, { blendNewsWithWeb: true, useWebFallback: true }, "מה קורה בעולם?"),
     ).toBe(true);
-    expect(shouldAllowWebFallback(2, { useWebFallback: true }, "מה מזג האוויר")).toBe(false);
+    expect(shouldAllowWebFallback(2, {}, "מה מזג האוויר")).toBe(false);
   });
 
-  it("blocks web fallback when structured tasks exist", () => {
-    expect(shouldAllowWebFallback(2, { useWebFallback: true }, "מה מזג האוויר")).toBe(false);
+  it("allows web fallback when plan explicitly requests it", () => {
+    expect(shouldAllowWebFallback(2, { useWebFallback: true }, "מה מזג האוויר")).toBe(true);
   });
 
   it("classifies news tier", () => {

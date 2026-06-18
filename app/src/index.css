@@ -3764,6 +3764,39 @@ button:disabled {
   margin-inline-start: auto;
 }
 
+.ui-lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  flex-shrink: 0;
+}
+
+.ui-lang-toggle-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.ui-lang-toggle-btn:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.ui-lang-toggle-btn--active {
+  background: rgba(0, 243, 255, 0.14);
+  color: var(--sci-fi-blue);
+  box-shadow: 0 0 0 1px rgba(0, 243, 255, 0.25);
+}
+
 .local-context-bar {
   display: inline-flex;
   align-items: center;
@@ -6517,6 +6550,12 @@ button:disabled {
 
 .sb-globe-icon-wrap--nav {
   margin-inline-end: 2px;
+}
+
+.sb-rail-btn--search.is-active,
+.sb-nav-item--search.is-active {
+  color: var(--sci-fi-blue);
+  background: rgba(0, 243, 255, 0.1);
 }
 
 .sb-rail-btn--globe {

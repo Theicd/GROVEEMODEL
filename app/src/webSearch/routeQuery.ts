@@ -78,8 +78,8 @@ export const shouldAllowWebFallback = (
   query = "",
 ): boolean => {
   if (plan?.blendNewsWithWeb) return true;
-  if (structuredTaskCount > 0) return false;
   if (plan?.useWebFallback) return true;
+  if (structuredTaskCount > 0) return false;
   if (!isSearxngConfigured()) return false;
   return planWantsWebFallback(plan, query);
 };

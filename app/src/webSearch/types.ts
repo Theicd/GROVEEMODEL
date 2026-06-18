@@ -40,7 +40,14 @@ export type SearchProviderId =
   | "searxng"
   | "open-meteo-air-quality"
   | "arxiv"
-  | "url-context";
+  | "url-context"
+  | "movie-catalog"
+  | "pixabay-images"
+  | "pixabay-videos"
+  | "peertube-videos"
+  | "internet-archive-media"
+  | "invidious-videos"
+  | "israeli-products";
 
 export type SearchIntent =
   | "weather"
@@ -72,13 +79,90 @@ export type SearchIntent =
   | "spacex"
   | "airquality"
   | "arxiv"
-  | "link";
+  | "link"
+  | "movies"
+  | "images"
+  | "video"
+  | "products";
 
 export type DataTier = "structured" | "news" | "web_fallback";
 
 export type AnswerShape = "short_fact" | "bullet_list" | "overview" | "count";
 
 export type SearchBriefLink = { label: string; url: string };
+
+/** Movie / TV metadata row from Wikidata, TVMaze, Archive.org, or TMDB. */
+export type MovieSerpHit = {
+  id: string;
+  title: string;
+  titleHe?: string;
+  originalTitle?: string;
+  year?: number;
+  url: string;
+  snippet: string;
+  poster?: string;
+  runtime?: number;
+  genres?: string[];
+  ageRating?: string;
+  seeds?: number;
+  quality?: string;
+  source?: string;
+  rating?: number;
+  /** Direct mp4/webm URL when Internet Archive item is playable in-browser. */
+  playUrl?: string;
+  durationSec?: number;
+};
+
+/** Stock image / video row from Pixabay (PIXEL-ISR). */
+export type MediaSerpHit = {
+  id: string;
+  mediaType: "image" | "video";
+  title: string;
+  url: string;
+  playUrl: string;
+  downloadUrl?: string;
+  thumbnail: string;
+  snippet?: string;
+  author?: string;
+  licenseUrl?: string;
+  tags?: string;
+  durationSec?: number;
+  width?: number;
+  height?: number;
+  source?: string;
+  /** YouTube-specific result shape when source is YouTube / Invidious. */
+  youtubeSubType?: "video" | "playlist" | "channel";
+};
+
+/** Israeli supermarket product row (catalog + Open Food Facts + optional Cheapersal prices). */
+export type ProductSerpHit = {
+  id: string;
+  barcode: string;
+  title: string;
+  brand?: string;
+  category?: string;
+  url: string;
+  snippet: string;
+  imageUrl?: string;
+  source: string;
+  /** Cheapest price in NIS (Cheapersal). */
+  priceNis?: number;
+  priceMaxNis?: number;
+  priceAvgNis?: number;
+  cheapestChain?: string;
+  priceStoreCount?: number;
+  unitQty?: string;
+  priceSummary?: string;
+};
+
+/** Single web search result row (SearXNG / unified SERP). */
+export type WebSerpHit = {
+  id: string;
+  title: string;
+  url: string;
+  snippet: string;
+  engine?: string;
+};
 
 export type SearchBrief = {
   facts: string[];
@@ -96,6 +180,18 @@ export type SearchSourceResult = {
   error?: string;
   latencyMs: number;
   timeWidget?: TimeWidgetData;
+  /** RSS cards attached by grovee-news provider. */
+  newsCards?: import("../groveeNews/types").GroveeNewsCard[];
+  /** Structured web hits from SearXNG. */
+  webHits?: WebSerpHit[];
+  /** Enriched movie rows from movie catalog providers. */
+  movieHits?: MovieSerpHit[];
+  /** Stock photos / videos from Pixabay. */
+  mediaHits?: MediaSerpHit[];
+  /** Israeli supermarket products (barcode catalog + OFF). */
+  productHits?: ProductSerpHit[];
+  /** Hugging Face models with API probe / connection snippets. */
+  hfModelHits?: import("./hf/hfModelTypes").HfModelSerpHit[];
 };
 
 export type SearchProgressEvent =
@@ -150,4 +246,6 @@ export type WebSearchOptions = {
   plan?: WebSearchPlanHint;
   /** Single geocode for cross-source / multi-geo intents (Phase 4). */
   sharedRegion?: SharedSearchRegion;
+  /** Side-panel SERP — force broad web + news + wiki/github enrichment. */
+  panelSearch?: boolean;
 };

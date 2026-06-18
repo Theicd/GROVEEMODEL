@@ -1,3 +1,5 @@
+import { queryHasHebrew } from "./hebrewSearchTerms";
+import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
 import { getAllRssItems } from "./engine/storage/db";
 import { rankRssHeadlinesForQuery, rssItemToSearchArticle, isTopHitRelevant } from "./engine/search/relevance";
 import type { SearchHit } from "./engine/types";
@@ -17,17 +19,18 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
   const terms = extractNewsTopicTerms(query);
   const specific = isSpecificNewsTopicQuery(query);
 
-  if (specific && !terms.length) return [];
+  if (specific && !terms.length && !queryHasHebrew(query)) return [];
 
-  if (specific && engineQuery) {
-    const ranked = rankRssHeadlinesForQuery(rssItems, engineQuery, new Set(), limit * 3);
+  if (specific && (engineQuery || queryHasHebrew(query))) {
+    const rankQuery = engineQuery || query;
+    const ranked = rankRssHeadlinesForQuery(rssItems, rankQuery, new Set(), limit * 3);
     const byId = new Map(rssItems.map((r) => [r.id, r]));
     const hits = ranked
       .map((h) => {
         const item = byId.get(h.id);
         if (!item) return null;
         const article = rssItemToSearchArticle(item);
-        if (!isTopHitRelevant(article, engineQuery)) return null;
+        if (!isTopHitRelevant(article, query)) return null;
         return {
           article,
           cluster: null,
@@ -38,7 +41,7 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
       .filter((h) => h !== null)
       .slice(0, limit);
     if (hits.length) return hits;
-    return [];
+    if (specific) return [];
   }
 
   if (!isBroadNewsOverviewQuery(engineQuery)) return [];
@@ -60,7 +63,15 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
       .filter((h) => h !== null);
   }
 
-  const sorted = [...rssItems].sort((a, b) => b.publishedTs - a.publishedTs);
+  const preferIlHe = getUserNewsProfile().uiLanguage === "he";
+  const sorted = [...rssItems].sort((a, b) => {
+    if (preferIlHe) {
+      const aIl = (a.sourceKey ?? "").startsWith("il_") ? 1 : 0;
+      const bIl = (b.sourceKey ?? "").startsWith("il_") ? 1 : 0;
+      if (aIl !== bIl) return bIl - aIl;
+    }
+    return b.publishedTs - a.publishedTs;
+  });
   return sorted.slice(0, limit).map((item) => ({
     article: rssItemToSearchArticle(item),
     cluster: null,

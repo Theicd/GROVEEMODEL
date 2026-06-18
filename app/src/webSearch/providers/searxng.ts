@@ -1,11 +1,12 @@
 import { fetchJson } from "../fetchJson";
-import type { SearchSourceResult } from "../types";
+import type { SearchSourceResult, WebSerpHit } from "../types";
+import { promoteArchiveWebHitsToMedia } from "./archiveOrgVideo";
 
 type SearxResult = {
   results?: Array<{ title?: string; url?: string; content?: string; engine?: string }>;
 };
 
-const getSearxngBaseUrl = (): string => {
+export const getSearxngBaseUrl = (): string => {
   const env = import.meta.env.VITE_SEARXNG_URL as string | undefined;
   if (!env?.trim()) return "";
   const base = env.trim().replace(/\/$/, "");
@@ -15,8 +16,24 @@ const getSearxngBaseUrl = (): string => {
   return base;
 };
 
+const toWebHits = (
+  rows: Array<{ title?: string; url?: string; content?: string; engine?: string }>,
+): WebSerpHit[] =>
+  rows
+    .filter((r) => r.url?.trim())
+    .map((r, i) => ({
+      id: `searxng-${i}-${(r.url ?? "").slice(0, 48)}`,
+      title: (r.title ?? "ללא כותרת").trim(),
+      url: r.url!.trim(),
+      snippet: (r.content ?? "").replace(/\s+/g, " ").trim().slice(0, 280),
+      engine: r.engine,
+    }));
+
 /** Open-domain fallback via self-hosted SearXNG JSON API (optional VITE_SEARXNG_URL). */
-export const fetchSearxngSearch = async (query: string): Promise<SearchSourceResult> => {
+export const fetchSearxngSearch = async (
+  query: string,
+  category = "general",
+): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "searxng" as const;
   const label = "SearXNG (web)";
@@ -33,10 +50,17 @@ export const fetchSearxngSearch = async (query: string): Promise<SearchSourceRes
     };
   }
 
-  const url = `${base}/search?q=${encodeURIComponent(query.trim())}&format=json&language=he-IL`;
+  const params = new URLSearchParams({
+    q: query.trim(),
+    format: "json",
+    language: "he-IL",
+    categories: category,
+  });
+  const url = `${base}/search?${params.toString()}`;
   try {
     const data = await fetchJson<SearxResult>(url, undefined, { timeoutMs: 12_000 });
-    const hits = (data.results ?? []).slice(0, 6);
+    const rawHits = toWebHits((data.results ?? []).slice(0, 15));
+    const { webHits: hits, mediaHits } = await promoteArchiveWebHitsToMedia(rawHits);
     if (!hits.length) {
       return {
         provider,
@@ -48,8 +72,8 @@ export const fetchSearxngSearch = async (query: string): Promise<SearchSourceRes
       };
     }
     const lines = hits.map((r, i) => {
-      const snippet = (r.content ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
-      return `${i + 1}. ${r.title ?? "ללא כותרת"} · ${r.url ?? ""}${snippet ? `\n   ${snippet}` : ""}`;
+      const snippet = r.snippet.slice(0, 120);
+      return `${i + 1}. ${r.title} · ${r.url}${snippet ? `\n   ${snippet}` : ""}`;
     });
     return {
       provider,
@@ -57,6 +81,8 @@ export const fetchSearxngSearch = async (query: string): Promise<SearchSourceRes
       ok: true,
       text: ["תוצאות חיפוש כללי (SearXNG):", ...lines].join("\n"),
       url: base,
+      webHits: hits,
+      mediaHits: mediaHits.length ? mediaHits : undefined,
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

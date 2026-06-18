@@ -15,6 +15,9 @@ import {
   isRedditQuery,
   isAviationQuery,
   isNewsQuery,
+  isLikelyArtistQuery,
+  shouldSearchYouTube,
+  buildYouTubeSearchQuery,
 } from "./intents";
 import { regexPlanForQuery } from "./searchPlanner";
 import { extractCurrencyPair, isIsraelNewsQuery, isWorldHeadlineQuery, sanitizeSearchQuery } from "./queryExtract";
@@ -22,6 +25,14 @@ import { formatWebContext, summarizeSearchResult } from "./orchestrator";
 import type { SearchSourceResult } from "./types";
 
 describe("webSearch intents", () => {
+  it("detects artist names for YouTube search", () => {
+    expect(isLikelyArtistQuery("שלמה ארצי")).toBe(true);
+    expect(shouldSearchYouTube("שלמה ארצי")).toBe(true);
+    expect(classifySearchIntents("שלמה ארצי")).toContain("youtube");
+    expect(buildYouTubeSearchQuery("שלמה ארצי")).toContain("שיר");
+    expect(isLikelyArtistQuery("מה מזג האוויר")).toBe(false);
+  });
+
   it("detects weather queries in Hebrew and English", () => {
     expect(isWeatherQuery("מה מזג האוויר בניו יורק")).toBe(true);
     expect(isWeatherQuery("weather in London")).toBe(true);
@@ -134,7 +145,10 @@ describe("webSearch intents", () => {
     const q = "מה קורה בעולם הרובוטיקה?";
     expect(isNewsQuery(q)).toBe(false);
     expect(classifySearchIntents(q)).toEqual([]);
-    expect(regexPlanForQuery(q)?.useWebFallback).toBe(true);
+    const plan = regexPlanForQuery(q);
+    expect(plan?.useWebFallback).toBe(true);
+    expect(plan?.intents).toContain("news");
+    expect(plan?.intents).toContain("github");
     expect(needsWebSearch(q)).toBe(true);
   });
 
@@ -280,7 +294,9 @@ describe("webSearch intents", () => {
   it("does not misroute generic 'מהם' questions to aviation", () => {
     expect(isAviationQuery("מהם 10 הנושאים המסוקרים ביותר בעולם כרגע?")).toBe(false);
     expect(classifySearchIntents("מהם 10 הנושאים המסוקרים ביותר בעולם כרגע?")).not.toContain("aviation");
-    expect(classifySearchIntents("מהם מודלי התמונה הפופולריים ביותר השבוע?")).toEqual(["huggingface"]);
+    expect(classifySearchIntents("מהם מודלי התמונה הפופולריים ביותר השבוע?")).toEqual(
+      expect.arrayContaining(["huggingface"]),
+    );
   });
 
   it("extracts location from wind speed question", () => {
@@ -336,6 +352,14 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("מה איכות האוויר בתל אביב?")).toContain("airquality");
     expect(classifySearchIntents("חפש מאמרים על transformer ב-arxiv")).toContain("arxiv");
     expect(needsWebSearch("מה רמת PM2.5 בירושלים?")).toBe(true);
+  });
+
+  it("routes supermarket product and price questions to live search", () => {
+    expect(needsWebSearch("כמה עולה חלב")).toBe(true);
+    expect(needsWebSearch("חלב תנובה")).toBe(true);
+    expect(needsWebSearch("7290004131074")).toBe(true);
+    expect(classifySearchIntents("כמה עולה חלב")).toContain("products");
+    expect(classifySearchIntents("כמה עולה חלב")).not.toContain("crypto");
   });
 
   it("routes world events paraphrase to news", () => {

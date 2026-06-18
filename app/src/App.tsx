@@ -185,14 +185,19 @@ import {
   NewsEngineRailHint,
   useNewsEngineStatus,
 } from "./groveeNews/boot";
-import { NewsSidePanel } from "./groveeNews/NewsSidePanel";
+import { SearchResultsPanel } from "./searchResults/SearchResultsPanel";
+import { UiLanguageToggle } from "./ui/UiLanguageToggle";
 import {
-  clearNewsPanelPayload,
-  getNewsPanelPayload,
-  subscribeNewsPanelPayload,
+  buildPanelSearchPlan,
+  buildUnifiedSearchPayload,
+  createEmptySearchPayload,
+  clearSearchResultsPayload,
+  shouldOpenSearchResultsPanel,
+  type SearchResultsPayload,
+} from "./searchResults";
+import {
   buildNewsPanelGuideReply,
   type GroveeNewsCard,
-  type NewsPanelPayload,
   type NewsSummaryGemmaProgress,
 } from "./groveeNews/bridge";
 import {
@@ -204,6 +209,7 @@ import {
 import { agentDebugLog } from "./debugAgentLog";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
 import { isStarlinkRegionalQuery } from "./webSearch/intents";
+import { getHfToken, setHfToken } from "./webSearch/hf/hfModelSettings";
 import {
   buildSearchPlannerUserPrompt,
   parseSearchPlanJson,
@@ -753,6 +759,7 @@ function SettingsModal({
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
   const [settingsTab, setSettingsTab] = useState<"gemma" | "vision">("gemma");
+  const [hfTokenDraft, setHfTokenDraft] = useState(() => getHfToken() ?? "");
   const [chatProfile, setChatProfile] = useState<ChatHardwareProfileId>(
     () => loadChatProfileOverride() ?? detectChatHardwareProfile(),
   );
@@ -941,6 +948,27 @@ function SettingsModal({
           </div>
         </section>
 
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            Hugging Face API
+          </h3>
+          <p className="settings-danger-note" style={{ marginBottom: 12 }}>
+            אופציונלי — לבדיקת מודלים ב-Inference API של Hugging Face. נשמר מקומית בדפדפן.
+          </p>
+          <label className="settings-field settings-field--full">
+            <span className="settings-field-label">HF Token</span>
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder="hf_…"
+              value={hfTokenDraft}
+              onChange={(e) => setHfTokenDraft(e.target.value)}
+              dir="ltr"
+            />
+          </label>
+        </section>
+
         <section className="settings-card settings-card--danger">
           <h3 className="settings-card-title">
             <span className="settings-card-dot settings-card-dot--warn" aria-hidden="true" />
@@ -963,6 +991,7 @@ function SettingsModal({
             className="settings-btn-save"
             onClick={() => {
               saveChatProfileOverride(chatProfile);
+              setHfToken(hfTokenDraft);
               onSave(draft);
               onClose();
             }}
@@ -1119,8 +1148,9 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
-  const [newsPanelOpen, setNewsPanelOpen] = useState(false);
-  const [newsPanelPayload, setNewsPanelPayload] = useState<NewsPanelPayload | null>(null);
+  const [searchResultsOpen, setSearchResultsOpen] = useState(false);
+  const [searchResultsPayload, setSearchResultsPayload] = useState<SearchResultsPayload | null>(null);
+  const [searchPanelLoading, setSearchPanelLoading] = useState(false);
   const [desktopLayout, setDesktopLayout] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 769px)").matches,
   );
@@ -1145,17 +1175,6 @@ function App() {
   }, []);
 
   const { status: newsEngineStatus } = useNewsEngineStatus();
-
-  useEffect(() => {
-    return subscribeNewsPanelPayload((payload) => {
-      if (!payload?.cards.length) return;
-      setNewsPanelPayload(payload);
-      setNewsPanelOpen(true);
-      setArtifactOpen(false);
-      setGlobePanelOpen(false);
-      setGamesPanelOpen(false);
-    });
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2078,22 +2097,90 @@ function App() {
     });
   }, []);
 
-  const showNewsPanel =
-    newsPanelOpen && !!newsPanelPayload && !gamesPanelOpen;
+  const showSearchResultsPanel =
+    searchResultsOpen && !!searchResultsPayload && !gamesPanelOpen;
   const showArtifactPanel =
-    artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showNewsPanel;
-  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showNewsPanel;
-  const showGlobePanel = globePanelOpen && !showNewsPanel;
+    artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel;
+  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showSearchResultsPanel;
+  const showGlobePanel = globePanelOpen && !showSearchResultsPanel;
   const showCameraSidePanel =
-    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showNewsPanel;
+    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel;
   const showCameraInline = cameraMode && !desktopLayout;
   const rightPanelOpen =
-    showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel || showNewsPanel;
+    showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel || showSearchResultsPanel;
 
-  const closeNewsPanel = useCallback(() => {
-    setNewsPanelOpen(false);
-    setNewsPanelPayload(null);
-    clearNewsPanelPayload();
+  const closeSearchResultsPanel = useCallback(() => {
+    setSearchResultsOpen(false);
+    setSearchResultsPayload(null);
+    clearSearchResultsPayload();
+  }, []);
+
+  const handleSearchPanelQuery = useCallback(
+    async (query: string) => {
+      const q = query.trim();
+      if (!q) return;
+      setSearchPanelLoading(true);
+      setStatus("מחפש מידע…");
+      try {
+        const recentUserText = messages
+          .filter((m) => m.role === "user")
+          .slice(-4)
+          .map((m) => m.content);
+        const searchPlan = await resolveSearchPlanForQuery(q, recentUserText);
+        const panelPlan = buildPanelSearchPlan(q);
+        const liveSources: SearchSourceResult[] = [];
+        const searchResult = await runWebSearch(q, {
+          recentUserText,
+          panelSearch: true,
+          plan: searchPlan
+            ? {
+                queries: searchPlan.queries.length ? searchPlan.queries : panelPlan.queries,
+                answerShape: searchPlan.answerShape ?? panelPlan.answerShape,
+                useWebFallback: true,
+                blendNewsWithWeb: true,
+              }
+            : panelPlan,
+          onProgress: (ev) => {
+            if (ev.type === "provider_done") {
+              const rest = liveSources.filter((s) => s.provider !== ev.result.provider);
+              liveSources.length = 0;
+              liveSources.push(...rest, ev.result);
+              if (ev.result.provider === "grovee-news" && (ev.result.newsCards?.length ?? 0) > 0) {
+                setSearchResultsPayload(buildUnifiedSearchPayload(q, [...liveSources]));
+                setSearchResultsOpen(true);
+              }
+              if (ev.result.provider === "huggingface-models" && (ev.result.hfModelHits?.length ?? 0) > 0) {
+                setSearchResultsPayload(buildUnifiedSearchPayload(q, [...liveSources]));
+                setSearchResultsOpen(true);
+              }
+            }
+            if (ev.type === "complete") {
+              liveSources.length = 0;
+              liveSources.push(...ev.sources);
+            }
+          },
+        });
+        const unifiedSearchPayload = buildUnifiedSearchPayload(q, searchResult.sources);
+        setSearchResultsPayload(unifiedSearchPayload);
+        setSearchResultsOpen(true);
+        setArtifactOpen(false);
+        setGlobePanelOpen(false);
+        setGamesPanelOpen(false);
+      } finally {
+        setSearchPanelLoading(false);
+        setStatus("");
+      }
+    },
+    [messages, resolveSearchPlanForQuery],
+  );
+
+  const openSearchPanelFull = useCallback(() => {
+    setSearchResultsPayload(createEmptySearchPayload());
+    setSearchResultsOpen(true);
+    setArtifactOpen(false);
+    setGlobePanelOpen(false);
+    setGamesPanelOpen(false);
+    setGamesEmbedGame(null);
   }, []);
 
   const handlePlayGame = useCallback((game: OnlineGame) => {
@@ -3193,13 +3280,17 @@ function App() {
         });
         searchIntentsForGlobe = searchResult.intents;
         webContext = searchResult.contextText;
-        const newsPayloadAfterSearch = getNewsPanelPayload();
-        if (newsPayloadAfterSearch?.cards.length) {
-          setNewsPanelPayload(newsPayloadAfterSearch);
-          setNewsPanelOpen(true);
+        const unifiedSearchPayload = buildUnifiedSearchPayload(effectivePrompt, searchResult.sources);
+        if (shouldOpenSearchResultsPanel(unifiedSearchPayload)) {
+          setSearchResultsPayload(unifiedSearchPayload);
+          setSearchResultsOpen(true);
           setArtifactOpen(false);
+          setGlobePanelOpen(false);
           setGamesPanelOpen(false);
         }
+        const newsPayloadAfterSearch = unifiedSearchPayload.hits.length
+          ? { cardCount: unifiedSearchPayload.facets.rss, mode: "search" as const }
+          : null;
         if (isSinglePlaceTimeWidgetQuery(effectivePrompt)) {
           const wt = searchResult.sources.find((s) => s.provider === "world-time" && s.ok);
           const widget = wt ? buildTimeWidgetFromWorldTimeSource(wt) : null;
@@ -3290,7 +3381,7 @@ function App() {
             newsPayloadAfterSearch
               ? {
                   mode: newsPayloadAfterSearch.mode,
-                  cardCount: newsPayloadAfterSearch.cards.length,
+                  cardCount: newsPayloadAfterSearch.cardCount,
                 }
               : null,
           );
@@ -3301,7 +3392,9 @@ function App() {
         if (!webContext.trim()) {
           searchHint = " · אין תוצאות חיפוש";
         } else {
-          searchHint = ` · ${searchResult.summaryHe}`;
+          searchHint = unifiedSearchPayload.hits.length
+            ? ` · ${unifiedSearchPayload.hits.length} תוצאות בפאנל · ${searchResult.summaryHe}`
+            : ` · ${searchResult.summaryHe}`;
         }
         pushActivity({
           direction: "system",
@@ -4275,11 +4368,11 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  className="sb-rail-btn sb-rail-btn--placeholder"
-                  aria-label="חיפוש שיחות"
-                  title="חיפוש שיחות (בקרוב)"
-                  disabled
-                  tabIndex={-1}
+                  className={`sb-rail-btn sb-rail-btn--search${showSearchResultsPanel ? " is-active" : ""}`}
+                  aria-label="חיפוש GROVEE"
+                  title="פתח חיפוש GROVEE"
+                  aria-pressed={showSearchResultsPanel}
+                  onClick={openSearchPanelFull}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <circle cx="11" cy="11" r="7" />
@@ -4433,16 +4526,17 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    className="sb-nav-item sb-nav-item--placeholder"
-                    disabled
-                    tabIndex={-1}
-                    aria-label="חיפוש שיחות"
+                    className={`sb-nav-item sb-nav-item--search${showSearchResultsPanel ? " is-active" : ""}`}
+                    onClick={openSearchPanelFull}
+                    title="פתח חיפוש GROVEE"
+                    aria-label="חיפוש GROVEE"
+                    aria-pressed={showSearchResultsPanel}
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                       <circle cx="11" cy="11" r="7" />
                       <path d="m20 20-3.5-3.5" />
                     </svg>
-                    <span>חיפוש שיחות</span>
+                    <span>חיפוש GROVEE</span>
                   </button>
                   <button
                     type="button"
@@ -4618,10 +4712,10 @@ function App() {
 
           {rightPanelOpen ? (
             <aside
-              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showNewsPanel ? " side-panel--news" : ""}`}
+              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}`}
               aria-label={
-                showNewsPanel
-                  ? "חדשות GROVEE"
+                showSearchResultsPanel
+                  ? "תוצאות חיפוש"
                   : showArtifactPanel
                   ? "חלונית קוד"
                   : showGamesPanel
@@ -4631,10 +4725,12 @@ function App() {
                       : "מצלמה חיה"
               }
             >
-              {showNewsPanel && newsPanelPayload ? (
-                <NewsSidePanel
-                  payload={newsPanelPayload}
-                  onClose={closeNewsPanel}
+              {showSearchResultsPanel && searchResultsPayload ? (
+                <SearchResultsPanel
+                  payload={searchResultsPayload}
+                  onClose={closeSearchResultsPanel}
+                  onSearch={handleSearchPanelQuery}
+                  searching={searchPanelLoading}
                   onSummaryReady={handleNewsArticlePolish}
                 />
               ) : showArtifactPanel ? (
@@ -4716,6 +4812,7 @@ function App() {
                 </div>
               )}
               <div className="chat-header-actions">
+                <UiLanguageToggle />
                 <LocalContextBar context={startupContext} />
                 {activeArtifact && !artifactOpen ? (
                   <button

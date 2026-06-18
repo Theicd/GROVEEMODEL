@@ -47,19 +47,20 @@ describe("searchPlanner", () => {
     expect(plan?.blendNewsWithWeb).toBe(true);
     expect(plan?.intents).toContain("hackernews");
     expect(plan?.intents).toContain("github");
-    expect(plan?.intents ?? []).not.toContain("news");
+    expect(plan?.intents).toContain("news");
   });
 
-  it("regex plan for robotics includes arxiv", () => {
+  it("regex plan for robotics includes arxiv and RSS blend", () => {
     const plan = regexPlanForQuery("מה קורה בעולם הרובוטיקה?");
     expect(plan?.useWebFallback).toBe(true);
     expect(plan?.intents).toContain("arxiv");
-    expect(plan?.intents ?? []).not.toContain("news");
+    expect(plan?.intents).toContain("news");
   });
 
-  it("gaming «מה חדש» routes to HN + GitHub", () => {
-    const plan = regexPlanForQuery("מה חדש בעולם הגיימינג?");
-    expect(plan?.intents).toContain("hackernews");
-    expect(plan?.intents).toContain("github");
+  it("explicit search blends RSS and web", () => {
+    const plan = regexPlanForQuery("חפש חדשות על כלכלה");
+    expect(plan?.blendNewsWithWeb).toBe(true);
+    expect(plan?.useWebFallback).toBe(true);
+    expect(plan?.intents).toContain("news");
   });
 });

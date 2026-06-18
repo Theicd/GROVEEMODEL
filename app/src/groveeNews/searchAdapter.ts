@@ -1,4 +1,5 @@
 import { dedupeNewsCards } from "./dedupeCards";
+import { filterBlockedNewsCards } from "../searchResults/serpBlocklist";
 import { applyDisplayLanguageBatch } from "./engine/display/liveFeedDisplay";
 import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
 import type { SearchHit } from "./engine/types";
@@ -30,5 +31,7 @@ export async function hitsToDisplayCards(hits: SearchHit[]): Promise<GroveeNewsC
   if (profile.uiLanguage !== "en") {
     articles = await applyDisplayLanguageBatch(articles, profile.uiLanguage);
   }
-  return dedupeNewsCards(sliced.map((hit, i) => hitToCard(hit, articles[i])));
+  return dedupeNewsCards(
+    filterBlockedNewsCards(sliced.map((hit, i) => hitToCard(hit, articles[i]))),
+  );
 }

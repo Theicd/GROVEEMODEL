@@ -62,9 +62,9 @@ const truncate = (s: string, max = MAX_FACT_LEN) =>
 const formatGithub = (text: string): string[] =>
   text
     .split("\n")
-    .filter((l) => l.startsWith("- "))
+    .filter((l) => /^(?:- |\d+\. )/.test(l.trim()))
     .slice(0, 5)
-    .map((l) => truncate(l.replace(/^- /, "")));
+    .map((l) => truncate(l.replace(/^(?:- |\d+\.\s*)/, "")));
 
 const formatWeather = (text: string): string[] => {
   const lines = text.split("\n").filter(Boolean);

@@ -1,4 +1,4 @@
-import { classifySearchIntents, needsWebSearch, userRequestsSearch, isGeneralWebTopicQuery, isTopicalOverviewQuery, isBareWorldNewsQuery, isTimelyOverviewQuery } from "./intents";
+import { classifySearchIntents, needsWebSearch, userRequestsSearch, isGeneralWebTopicQuery, isTopicalOverviewQuery, isBareWorldNewsQuery, isTimelyOverviewQuery, isNewsQuery } from "./intents";
 import { expandCrossSourceIntents } from "./crossSourceIntents";
 import { isGeneralNewsDigestQuery, isIsraelNewsQuery, isWorldHeadlineQuery } from "./queryExtract";
 import { isTopicalOverviewRouting, topicalEnrichmentIntents, topicalProviderQuery } from "./topicalEnrichment";
@@ -162,7 +162,7 @@ export const regexPlanForQuery = (query: string): SearchPlan | null => {
   }
 
   if (isTopicalOverviewRouting(q)) {
-    const intents = topicalEnrichmentIntents(q);
+    const intents = [...new Set<SearchIntent>([...topicalEnrichmentIntents(q), "news"])];
     const enriched = topicalProviderQuery(q);
     return {
       intents,
@@ -171,6 +171,22 @@ export const regexPlanForQuery = (query: string): SearchPlan | null => {
       useWebFallback: true,
       blendNewsWithWeb: true,
       reason: `topical: ${intents.join("+")} + optional SearXNG`,
+    };
+  }
+
+  if (
+    userRequestsSearch(q) &&
+    !hasUrlInQuery(q) &&
+    !/מזג|weather|מטוס|aircraft|ספינ|ship|רעיד|earthquake/i.test(q)
+  ) {
+    const intents = [...new Set<SearchIntent>([...(isNewsQuery(q) ? ["news" as const] : []), "news", ...topicalEnrichmentIntents(q)])];
+    return {
+      intents,
+      queries: [topicalProviderQuery(q), q],
+      answerShape: "overview",
+      useWebFallback: true,
+      blendNewsWithWeb: true,
+      reason: "explicit search: RSS + web + enrichment",
     };
   }
 

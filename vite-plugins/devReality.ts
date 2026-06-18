@@ -24,6 +24,8 @@ function sendFile(res: ServerResponse, filePath: string) {
 
 const REALITY_SERVER = process.env.REALITY_SERVER ?? "http://127.0.0.1:3000";
 const SEARXNG_UPSTREAM = (process.env.SEARXNG_UPSTREAM ?? process.env.VITE_SEARXNG_UPSTREAM ?? "").replace(/\/$/, "");
+const CHEAPERSAL_API_KEY = process.env.CHEAPERSAL_API_KEY ?? process.env.VITE_CHEAPERSAL_API_KEY ?? "";
+const CHEAPERSAL_UPSTREAM = (process.env.CHEAPERSAL_UPSTREAM ?? "https://api.cheapersal.co.il/api/v1").replace(/\/$/, "");
 
 /** Dev-only: CORS proxy + serve reality-core UI at /reality/ */
 export function devRealityPlugin(): Plugin {
@@ -79,6 +81,38 @@ export function devRealityPlugin(): Plugin {
         } catch (e) {
           res.statusCode = 502;
           res.end(e instanceof Error ? e.message : "searxng proxy error");
+        }
+      });
+
+      server.middlewares.use("/api/cheapersal", async (req, res) => {
+        if (req.method !== "GET") {
+          res.statusCode = 405;
+          res.end("Method not allowed");
+          return;
+        }
+        if (!CHEAPERSAL_API_KEY) {
+          res.statusCode = 503;
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          res.end("CHEAPERSAL_API_KEY not set — add to app/.env (see .env.example)");
+          return;
+        }
+        const raw = req.url ?? "/";
+        const target = `${CHEAPERSAL_UPSTREAM}${raw.startsWith("/") ? raw : `/${raw}`}`;
+        try {
+          const upstream = await fetch(target, {
+            headers: {
+              Accept: "application/json",
+              "X-API-Key": CHEAPERSAL_API_KEY,
+              "User-Agent": "GROVEEMODEL/1.0 (cheapersal dev proxy)",
+            },
+          });
+          res.statusCode = upstream.status;
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "application/json");
+          res.end(await upstream.text());
+        } catch (e) {
+          res.statusCode = 502;
+          res.end(e instanceof Error ? e.message : "cheapersal proxy error");
         }
       });
 

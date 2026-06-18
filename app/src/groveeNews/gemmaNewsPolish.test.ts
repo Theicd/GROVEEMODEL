@@ -73,4 +73,4 @@ Rules:
     expect(sanitizeHebrewNewsOutput("נסח בעברית|!@!@!@ טקסט !@!@!@")).toBe("נסח בעברית טקסט");
   });
 });
-
+

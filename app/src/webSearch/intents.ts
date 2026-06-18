@@ -194,9 +194,61 @@ export const isHuggingFaceImageQuery = (text: string): boolean =>
     text,
   );
 
+export const isMusicQuery = (text: string): boolean =>
+  /(?:שיר(?:ים)?|מוזיקה|שירון|פלייליסט|playlist|song|songs|music|album|אלבום|קליפ|clip|artist|אמן|זמר(?:ה)?|band|להקה|מלודיה)/i.test(
+    text,
+  );
+
+/** Person / performer name without explicit «music» keyword — e.g. «שלמה ארצי». */
+export const isLikelyArtistQuery = (text: string): boolean => {
+  const q = stripSearchVerb(text.trim());
+  if (!q || q.length < 3 || q.length > 48) return false;
+  if (/\?/.test(q)) return false;
+  if (
+    /^(?:מה|איך|למה|מי|why|how|what|when|where)\s/i.test(q) ||
+    isNewsQuery(q) ||
+    isProductsQuery(q) ||
+    isWeatherQuery(q) ||
+    isGitHubQuery(q) ||
+    hasUrlInQuery(q)
+  ) {
+    return false;
+  }
+  const words = q.split(/\s+/).filter(Boolean);
+  if (words.length < 1 || words.length > 5) return false;
+  const joined = words.join(" ");
+  if (/^[\u0590-\u05FF][\u0590-\u05FF\s'-]+$/u.test(joined) && words.length >= 2) {
+    return true;
+  }
+  if (isMusicQuery(text) && /^[A-Za-z][A-Za-z\s'.-]+$/u.test(joined) && words.length >= 2) {
+    return true;
+  }
+  return false;
+};
+
+export const shouldSearchYouTube = (text: string): boolean =>
+  isYouTubeQuery(text) || isLikelyArtistQuery(text);
+
 export const isYouTubeQuery = (text: string): boolean =>
-  /(?:youtube|יוטיוב)/i.test(text) &&
-  /(?:פופולר|popular|trending|best|top|סרטון|video|videos)/i.test(text);
+  /(?:youtube|יוטיוב)/i.test(text) ||
+  /חפש\s+(?:ב)?(?:יוטיוב|youtube)/i.test(text) ||
+  isMusicQuery(text);
+
+export const buildYouTubeSearchQuery = (query: string): string => {
+  let q = query.trim();
+  if (!q) return "";
+  q = q
+    .replace(/^(?:חפש|מצא|תמצא|search|find)\s+(?:ב)?/i, "")
+    .replace(/\b(?:youtube|יוטיוב)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const base = q.length >= 2 ? q : buildMediaSearchQuery(query) || query.trim();
+  if (!base) return "";
+  if (isLikelyArtistQuery(query) && !/\b(?:שיר|song|music|מוזיקה)\b/i.test(base)) {
+    return `${base} שיר`.trim();
+  }
+  return base;
+};
 
 export const isRedditQuery = (text: string): boolean =>
   /(?:^|[\s\-/])r\/\w+|reddit|רדיט|סאב(?:רeddit)?/i.test(text);
@@ -297,7 +349,8 @@ export const needsWebSearch = (text: string): boolean => {
 
   if (isGovernmentQuery(q)) return true;
   if (isCommodityPriceQuery(q) || isMarketPriceQuery(q) || isRedditQuery(q)) return true;
-  if (isYouTubeQuery(q)) return true;
+  if (isProductsQuery(q)) return true;
+  if (shouldSearchYouTube(q) || isMusicQuery(q)) return true;
   if (isStaticFactualQuery(q)) return false;
   if (isGeneralWebTopicQuery(q)) return true;
   if (isTopicalOverviewQuery(q)) return true;
@@ -479,7 +532,12 @@ export const isEarthquakeQuery = (text: string): boolean =>
   /רעיד(?:ת|ות)?\s*(?:ה)?אדמה|רעש\s*אדמה|earthquake|seismic|tsunami|רichter|סוללת\s*רעיד/i.test(text);
 
 export const isHuggingFaceQuery = (text: string): boolean =>
-  /hugging\s*face|huggingface|hf\.co|transformers\.js/i.test(text) ||
+  /hugging\s*face|huggingface|hf\.co|huggingface\.co|transformers\.js|\bhf\s+hub\b/i.test(text) ||
+  /\bhug\b/i.test(text) ||
+  (/\b[\w.-]+\/[\w.-]+\b/.test(text) && /\b(?:מודל|model|models)\b/i.test(text)) ||
+  /\b(llm|gemma|qwen|llama|mistral|mixtral|phi-?\d|deepseek|diffusion|stable[\s-]?diffusion|transformer|checkpoint|lora|gguf|instruct|text-generation|transformers)\b/i.test(
+    text,
+  ) ||
   /(?:מודל(?:י)?|datasets?)\s*(?:ai|שפה|nlp|llm)?/i.test(text) ||
   /מודל\s+ל(?:עברית|שפה|ocr|OCR|תמלול)/i.test(text) ||
   /(?:חפש|find|search).*(?:מודל|model)/i.test(text) ||
@@ -492,6 +550,118 @@ export const isGitHubQuery = (text: string): boolean =>
   /(?:פרויקט(?:ים)?).*(?:פופולרי|popular|trending|היום|השבוע)/i.test(text) ||
   (/^מצא\s+/i.test(text) &&
     /(?:פרויקט|webgpu|three|ollama|ai\b|github|גיטהב|משחק)/i.test(text));
+
+export const isMoviesQuery = (text: string): boolean =>
+  /(?:סרט(?:ים)?|סדרה|סדרות|film|movie|movies|cinema|נטפליקס|netflix|imdb|trailer|טריילר|ביקורות?|reviews?|rating|ציון|שחקן|שחקנית|במאי|director|actor|actress|cast|tv\s*show|series|עונה|season)/i.test(
+    text,
+  ) || /(?:מה\s+על|על\s+הסרט|about\s+the\s+movie)/i.test(text);
+
+export const isSeriesQuery = (text: string): boolean =>
+  /(?:סדרה|סדרות|tv\s*show|television|series|עונה|season|פרק|episode)/i.test(text);
+
+/** Short title-like query — used in panel search for bare movie names. */
+export const isLikelyMediaTitleQuery = (text: string): boolean => {
+  const q = text.trim();
+  if (q.length < 2 || q.length > 60) return false;
+  if (/\?/.test(q) || /^(?:מה|איך|למה|why|how|what)\s/i.test(q)) return false;
+  if (
+    /(?:מזג|weather|חדשות|news|bitcoin|מניה|stock|github|ארה"ב|בחירות|מחיר|price)/i.test(
+      q,
+    )
+  ) {
+    return false;
+  }
+  const words = q.split(/\s+/).filter(Boolean);
+  return words.length >= 1 && words.length <= 5;
+};
+
+export const buildMoviesSearchQuery = (query: string): string => {
+  let q = query.trim();
+  if (!q) return "";
+  q = q
+    .replace(/^(?:חפש|מצא|תמצא|search|find|watch|צפה)\s+/i, "")
+    .replace(/\b(?:סרט|סדרה|film|movie|the\s+movie|cinema|סרטים)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return q || query.trim();
+};
+
+export const isImagesQuery = (text: string): boolean =>
+  /(?:תמונ(?:ה|ות)|צילום|צילומים|photo|photos|image|images|picture|pictures|wallpaper|רקע\s*למסך)/i.test(
+    text,
+  );
+
+export const isVideoMediaQuery = (text: string): boolean =>
+  (/(?:וויד(?:יאו|או)|וידאו|video|videos|clip|קליפ|סרטון|footage)/i.test(text) &&
+    !isMoviesQuery(text)) ||
+  /חפש\s+(?:ווידאו|וידאו|video)/i.test(text) ||
+  /(?:peertube|internet\s*archive|ארכיון\s*(?:וידאו|טלוויזיה)?|archive\.org)/i.test(text);
+
+export const buildMediaSearchQuery = (query: string): string => {
+  let q = query.trim();
+  if (!q) return "";
+  q = q
+    .replace(/^(?:חפש|מצא|תמצא|search|find)\s+/i, "")
+    .replace(
+      /\b(?:תמונ(?:ה|ות)|צילום|photo|photos|image|images|video|videos|ווידיאו|וידאו|סרטון|wallpaper)\b/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  return q || query.trim();
+};
+
+const FINANCIAL_PRICE_QUERY =
+  /(?:ביטקוין|bitcoin|btc|ethereum|eth|מניה|מניות|דולר|יורו|נפט|זהב|סטוק|stock|crypto|מדד|s&p|nasdaq|נאסד"ק)/i;
+
+/** Grocery / supermarket price question — not stocks, crypto, or commodities. */
+export const isSupermarketPriceQuery = (text: string): boolean => {
+  if (FINANCIAL_PRICE_QUERY.test(text)) return false;
+  if (isCryptoQuery(text) || isMarketPriceQuery(text) || isCommodityPriceQuery(text)) return false;
+  return (
+    /(?:כמה\s+עולה|מחיר(?:ו|ים)?|מה\s+המחיר|עולה\s+(?:ה|ל)?|בכמה\s+עולה)/i.test(text) ||
+    /(?:price\s+of|how\s+much\s+(?:is|does|cost))/i.test(text) ||
+    (/(?:קילו|ק"ג|ק״ג|kg)\b/i.test(text) && /(?:עולה|מחיר|price)/i.test(text))
+  );
+};
+
+export const isPriceQuery = isSupermarketPriceQuery;
+
+export const isProductsQuery = (text: string): boolean =>
+  isSupermarketPriceQuery(text) ||
+  /(?:סופר|סופרמרקט|מוצר(?:ים)?|ברקוד|שופרסל|רמי\s*לוי|יוחננוף|ויקטורי|מכולת|קניות\s+בסופר)/i.test(
+    text,
+  ) ||
+  /(?:חלב|לחם|במבה|ביסלי|קוטג|יוגורט|שוקו|גבינה|ביצים|שמנת|חומרי\s+ניקוי|חיתול|שניצל|פסטה|אורז|סוכר|קפה|תה)/i.test(
+    text,
+  ) ||
+  /(?:תנובה|טרה|יוטבתה|שטראוס|אסם|עלית|סנו|האגיס|ניקול)/i.test(text) ||
+  /^\d{8,14}$/.test(text.trim());
+
+export const buildPriceSearchQuery = (query: string): string => {
+  let q = query.trim();
+  q = q
+    .replace(/^(?:כמה|מה|how\s+much)\s+/i, "")
+    .replace(
+      /(?:עולה|עולה\s+ה|עולה\s+ל|מחיר|מחירו|המחיר|price|cost\s+of|קילו|ק"ג|ק״ג|kg|בכמה)/gi,
+      " ",
+    )
+    .replace(/\b(?:של|את|the|a|an)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return q.length >= 2 ? q : buildProductSearchQuery(query);
+};
+
+export const buildProductSearchQuery = (query: string): string => {
+  let q = query.trim();
+  if (/^\d{8,14}$/.test(q)) return q;
+  q = q
+    .replace(/^(?:חפש|מצא|תמצא|מחיר|search|find|barcode)\s+/i, "")
+    .replace(/\b(?:סופר|סופרמרקט|מוצר|מחיר|ברקוד|product)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return q || query.trim();
+};
 
 export const isTechQuery = (text: string): boolean =>
   isGitHubQuery(text) ||
@@ -548,7 +718,11 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     if (isTechNewsQuery(query) && !explicitNews) intents.push("hackernews");
     else if (isHackerNewsQuery(query)) intents.push("hackernews");
   }
-  if (isYouTubeQuery(query)) intents.push("youtube");
+  if (shouldSearchYouTube(query)) intents.push("youtube");
+  if (isMoviesQuery(query)) intents.push("movies");
+  if (isImagesQuery(query)) intents.push("images");
+  if (isVideoMediaQuery(query)) intents.push("video");
+  if (isProductsQuery(query)) intents.push("products");
   if (isWorldTimeQuery(query)) intents.push("worldtime");
   if (isWeatherQuery(query)) intents.push("weather");
   if (isAirQualityQuery(query)) intents.push("airquality");
@@ -582,6 +756,12 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     intents.push("github");
   }
   if (hf) intents.push("huggingface");
+  else if (
+    (isTechQuery(query) && !isGitHubQuery(query)) ||
+    /\b(llm|gemma|qwen|llama|mistral|diffusion|transformer|checkpoint|lora|gguf|instruct)\b/i.test(query)
+  ) {
+    intents.push("huggingface");
+  }
 
   // Only explicit GitHub/HF questions skip Wikipedia; generic tech questions
   // (e.g. "מה קורה עם React") still benefit from encyclopedic context.
@@ -591,6 +771,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
       "worldtime", "weather", "airquality", "arxiv", "marine", "earthquake", "currency", "holiday", "government",
       "country", "distance", "places", "news", "aviation", "satellite", "spaceweather",
       "alerts", "disaster", "crypto", "commodity", "market", "hackernews", "ships", "spacex", "link",
+      "movies", "images", "video", "products",
     ].includes(i),
   );
 

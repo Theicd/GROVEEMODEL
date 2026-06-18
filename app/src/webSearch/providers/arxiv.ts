@@ -1,4 +1,5 @@
 import { fetchText } from "../fetchJson";
+import { topicalProviderQuery } from "../topicalEnrichment";
 import type { SearchSourceResult } from "../types";
 
 const decodeXml = (s: string): string =>
@@ -19,6 +20,13 @@ const extractArxivSearchTerms = (query: string): string => {
   if (/vision|ראייה/i.test(raw)) return "computer vision";
   if (/quantum|קוונט/i.test(raw)) return "quantum computing";
   if (/machine\s+learning|למידת\s+מכונה/i.test(raw)) return "machine learning";
+  if (/רובוט|robotics/i.test(raw)) return "robotics";
+  if (/גיימינג|gaming|esports/i.test(raw)) return "gaming";
+
+  const topical = topicalProviderQuery(raw);
+  if (topical && topical !== "technology trends news" && /[a-z]/i.test(topical)) {
+    return topical.slice(0, 120);
+  }
 
   const stripped = raw
     .replace(/(?:arxiv|ארxiv|מאמר(?:י|ים)?|paper|papers|preprint|חפש|search|find|על|about)/gi, " ")

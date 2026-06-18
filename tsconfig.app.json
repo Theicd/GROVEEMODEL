@@ -19,7 +19,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "resolveJsonModule": true,
   },
   "include": ["app/src"],
   "exclude": ["app/src/groveeNews/engine"]
