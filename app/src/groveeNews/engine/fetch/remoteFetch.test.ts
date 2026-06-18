@@ -29,4 +29,14 @@ describe("remoteFetch routing", () => {
     expect(attempts[0]).toContain("/api/fetch");
     expect(attempts.some((u) => u.includes("allorigins"))).toBe(false);
   });
+
+  it("skips public relays on GitHub Pages without configured proxy", () => {
+    const attempts = buildFetchAttempts("https://example.com/feed.xml", {
+      dev: false,
+      hostname: "theicd.github.io",
+      proxyUrl: "",
+    });
+    expect(attempts.some((u) => u.includes("allorigins"))).toBe(false);
+    expect(attempts.some((u) => u.includes("cors.lol"))).toBe(false);
+  });
 });

@@ -10,7 +10,7 @@ import { assignClustersAsync } from "../dedup/clusters";
 import { extractArticleFromUrl } from "../extract/readabilityExtract";
 import { enqueueArticleImageFetch } from "../media/imageFetchQueue";
 import { backfillMissingImages } from "../media/imageBackfill";
-import { fetchRemoteText, probeFetchBackend } from "../fetch/remoteFetch";
+import { fetchRemoteText, probeFetchBackend, isStaticWebHost, currentFetchContext } from "../fetch/remoteFetch";
 import { getCachedRssXml } from "../fetch/rssCache";
 import { parseRssXml } from "../rss/parser";
 import { rankRssHeadlinesForQuery, rssItemToSearchArticle, buildSearchTerms, sanitizeAiKeywords } from "../search/relevance";
@@ -241,6 +241,11 @@ async function fetchFeedItems(feed: CatalogFeed): Promise<RssItem[]> {
     } catch (err) {
       lastErr = err;
     }
+  }
+
+  const ctx = currentFetchContext();
+  if (isStaticWebHost() && !ctx.proxyUrl) {
+    throw lastErr instanceof Error ? lastErr : new Error("RSS cache miss on static host");
   }
 
   for (const url of urls) {

@@ -117,6 +117,10 @@ const buildPublicRelays = (): RelayFn[] => {
   if (custom) {
     const base = custom.replace(/\/?$/, "/");
     relays.push((target) => `${base}${encodeURIComponent(target)}`);
+    return relays;
+  }
+  if (isStaticWebHost()) {
+    return relays;
   }
   relays.push(
     (target) => `https://corsproxy.io/?${encodeURIComponent(target)}`,
@@ -199,6 +203,9 @@ async function fetchViaRelays(url: string, init?: RequestInit): Promise<Response
   };
   const signal = init?.signal;
   const relays = buildPublicRelays();
+  if (!relays.length) {
+    throw new Error(`No CORS proxy configured for static host (${url})`);
+  }
 
   const tryRelay = async (relay: RelayFn): Promise<Response> => {
     const relayUrl = relay(url);
@@ -207,6 +214,18 @@ async function fetchViaRelays(url: string, init?: RequestInit): Promise<Response
     const body = await bodyFromRelayResponse(relayUrl, r);
     return new Response(body, { status: 200, headers: { "Content-Type": "text/xml" } });
   };
+
+  if (isStaticWebHost()) {
+    let lastErr: unknown;
+    for (const relay of relays) {
+      try {
+        return await tryRelay(relay);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(`All CORS relays failed for ${url}`);
+  }
 
   const attempts = relays.map((relay) => tryRelay(relay));
   try {

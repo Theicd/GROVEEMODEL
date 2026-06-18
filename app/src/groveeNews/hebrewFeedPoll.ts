@@ -1,6 +1,6 @@
 import { resolveActiveFeeds, type CatalogFeed } from "./engine/feeds/feedRegistry";
 import { getCachedRssXml } from "./engine/fetch/rssCache";
-import { fetchRemoteText } from "./engine/fetch/remoteFetch";
+import { fetchRemoteText, isStaticWebHost, currentFetchContext } from "./engine/fetch/remoteFetch";
 import { parseRssXml } from "./engine/rss/parser";
 import { upsertRssItems } from "./engine/storage/db";
 import type { RssItem } from "./engine/types";
@@ -20,6 +20,11 @@ async function fetchFeedItems(feed: CatalogFeed): Promise<RssItem[]> {
     } catch (err) {
       lastErr = err;
     }
+  }
+
+  const ctx = currentFetchContext();
+  if (isStaticWebHost() && !ctx.proxyUrl) {
+    throw lastErr instanceof Error ? lastErr : new Error("RSS cache miss on static host");
   }
 
   for (const url of urls) {

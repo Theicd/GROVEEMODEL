@@ -11,6 +11,12 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.VITE_BASE = "./";
 execSync("npm run build", { stdio: "inherit", env: process.env, cwd: root });
 
+console.log("[build-pages-docs] building RSS cache for static hosting…");
+execSync("node --import tsx scripts/build-rss-cache.mjs --out=dist", {
+  stdio: "inherit",
+  cwd: root,
+});
+
 const dist = path.join(root, "dist");
 const docs = path.join(root, "docs");
 if (existsSync(docs)) rmSync(docs, { recursive: true, force: true });

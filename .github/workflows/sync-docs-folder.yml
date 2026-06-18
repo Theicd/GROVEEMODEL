@@ -26,6 +26,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: node --import tsx scripts/build-rss-cache.mjs --out=dist
 
       - name: Copy dist to docs/
         run: |

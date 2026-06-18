@@ -39,3 +39,14 @@ export async function getRssCacheAgeMs(): Promise<number | null> {
   const t = Date.parse(cache.generatedAt);
   return Number.isFinite(t) ? Date.now() - t : null;
 }
+
+export async function isRssCacheAvailable(): Promise<boolean> {
+  const cache = await loadRssCache();
+  return !!(cache && cache.okCount > 0);
+}
+
+export async function getRssCacheSummary(): Promise<{ okCount: number; feedCount: number } | null> {
+  const cache = await loadRssCache();
+  if (!cache) return null;
+  return { okCount: cache.okCount, feedCount: cache.feedCount };
+}

@@ -29,6 +29,16 @@ export function hasLocalFetchProxy(dev: boolean, hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
+/** Static hosts (GitHub Pages) have no local proxy — avoid hammering public CORS relays. */
+export function isStaticWebHost(): boolean {
+  if (typeof window === "undefined") return false;
+  const { hostname, port } = window.location;
+  if (hostname.endsWith("github.io")) return true;
+  if (import.meta.env.DEV) return false;
+  if (port === "5173" || port === "4173" || port === "5180") return false;
+  return hostname !== "localhost" && hostname !== "127.0.0.1";
+}
+
 export function currentFetchContext(): FetchRouteContext {
   const hostname = typeof window !== "undefined" ? window.location.hostname : "";
   return {
@@ -53,8 +63,11 @@ export function buildFetchAttempts(targetUrl: string, ctx: FetchRouteContext): s
     attempts.unshift(targetUrl);
   }
 
-  for (const relay of EXTERNAL_RELAYS) {
-    attempts.push(relay(targetUrl));
+  const staticHost = !ctx.dev && (ctx.hostname.endsWith("github.io") || isStaticWebHost());
+  if (!staticHost || ctx.proxyUrl) {
+    for (const relay of EXTERNAL_RELAYS) {
+      attempts.push(relay(targetUrl));
+    }
   }
 
   return [...new Set(attempts)];
@@ -68,7 +81,7 @@ function isSameOrigin(url: string): boolean {
   }
 }
 
-export type FetchBackend = "local-proxy" | "configured-proxy" | "browser-relays";
+export type FetchBackend = "local-proxy" | "configured-proxy" | "rss-cache" | "browser-relays";
 
 export type FetchProbeResult = {
   ok: boolean;
@@ -87,6 +100,19 @@ export async function probeFetchBackend(
   testUrl = "https://feeds.bbci.co.uk/news/rss.xml",
 ): Promise<FetchProbeResult> {
   const ctx = currentFetchContext();
+  if (isStaticWebHost() && !ctx.proxyUrl) {
+    const { isRssCacheAvailable, getRssCacheSummary } = await import("./rssCache");
+    if (await isRssCacheAvailable()) {
+      const summary = await getRssCacheSummary();
+      return {
+        ok: true,
+        mode: "rss-cache",
+        detail: summary
+          ? `Pre-built RSS cache (${summary.okCount}/${summary.feedCount} feeds)`
+          : "Pre-built RSS cache loaded",
+      };
+    }
+  }
   const mode = resolveFetchBackend(ctx);
   try {
     const xml = await fetchRemoteText(testUrl, 18_000);
@@ -102,7 +128,7 @@ export async function probeFetchBackend(
       return {
         ok: false,
         mode,
-        detail: `${msg} — use npm run dev at http://127.0.0.1:5190 for local proxy`,
+        detail: `${msg} — use npm run dev at http://127.0.0.1:5180 for local proxy`,
       };
     }
     return { ok: false, mode, detail: msg };
