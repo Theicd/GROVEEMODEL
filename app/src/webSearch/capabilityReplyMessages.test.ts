@@ -23,8 +23,9 @@ describe("buildCapabilityLiveReply", () => {
         }),
       ],
     );
-    expect(reply).toContain("61");
+    expect(reply).toMatch(/^61 מטוסים מעל ישראל/);
     expect(reply).toContain("Sources:");
+    expect(reply).not.toMatch(/לפי ADS-B חי לגבי/);
   });
 
   it("returns Starlink count from live catalog source", () => {
@@ -149,8 +150,29 @@ describe("buildCapabilityLiveReply", () => {
       ["aviation"],
       [src({ text: "ANSWER (AWACS): 0" })],
     );
-    expect(reply).toMatch(/AWACS|NATO|עולם חי/i);
+    expect(reply).toMatch(/^1 מטוסי AWACS/);
+    expect(reply).toMatch(/NATO02|heuristic|ADS-B/i);
+    expect(reply).not.toMatch(/ANSWER \(AWACS\)/);
     expect(reply).not.toMatch(/לא ניתן לספור AWACS/);
+  });
+
+  it("returns AWACS zero from ADS-B source text", () => {
+    clearLiveWorldSnapshotCache();
+    const reply = buildCapabilityLiveReply(
+      "כמה מטוסי AWACS פעילים כרגע?",
+      ["aviation"],
+      [
+        src({
+          text: [
+            "מקור: עולם חי / ADS-B (ישראל)",
+            'סה"כ 48 מטוסים במעקב · 5 צבאיים · 0 AWACS? · 0 תדלוק?',
+            "ANSWER (AWACS): 0 מטוסים מזוהים כ-AWACS במעקב עולם חי (זיהוי heuristic — לא כל AWACS משדר ADS-B).",
+          ].join("\n"),
+        }),
+      ],
+    );
+    expect(reply).toMatch(/^0 מטוסי AWACS/);
+    expect(reply).not.toMatch(/ANSWER \(AWACS\)/);
   });
 
   it("returns cross-source canned reply for storm + aircraft question", () => {

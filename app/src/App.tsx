@@ -151,8 +151,10 @@ import { ComposerVoiceMic } from "./ComposerVoiceMic";
 import { ChatUserMessage } from "./ChatUserMessage";
 import { ModelActivityPanel } from "./ModelActivityPanel";
 import { PresentationQaPanel } from "./PresentationQaPanel";
+import { BUILTIN_PRESENTATION_QUERY_COUNT } from "./userPresentationQueries";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
 import { SituationSettingsPanel } from "./SituationSettingsPanel";
+import { ApiKeysPanel } from "./apiKeys/ApiKeysPanel";
 import {
   DEFAULT_VISION_SETTINGS,
   mergeVisionSettings,
@@ -171,6 +173,10 @@ import { SearchProgressPanel } from "./SearchProgressPanel";
 import { ContextRing, type ContextUsage } from "./ContextRing";
 import { prepareChatContext } from "./chatResourceBudget";
 import {
+  defaultSystemPromptChars,
+  estimateLiveContextUsage,
+} from "./contextUsageEstimate";
+import {
   detectChatHardwareProfile,
   getProfileBudgets,
   listChatProfiles,
@@ -178,7 +184,7 @@ import {
   saveChatProfileOverride,
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
-import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
+import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, isNewsQuery, isCurrencyQuery, isEarthquakeQuery, isAviationQuery, isShipsQuery, isMarineInfraQuery, type SearchIntent, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
 import {
   startGroveeNewsBoot,
   NewsEnginePanel,
@@ -217,7 +223,9 @@ import {
   shouldUseSearchPlanner,
   type SearchPlan,
 } from "./webSearch/searchPlanner";
-import { registerGlobeLiveSnapshotListener } from "./liveWorld";
+import { registerGlobeLiveSnapshotListener, subscribeLiveWorldSnapshot, pingGlobeForLiveSnapshot, findGlobeIframe } from "./liveWorld";
+import { AISSTREAM_KEY_SAVED_EVENT } from "./apiKeys/apiKeyStore";
+import { refreshLivePanelPayload } from "./searchResults/panelSearch";
 import {
   fetchStartupContext,
   refreshLocalWeather,
@@ -238,10 +246,17 @@ import {
 import type { TimeWidgetData } from "./timeWidget/types";
 import { GamesPanel } from "./GamesPanel";
 import { GlobePanel } from "./GlobePanel";
+import { LiveMediaPanel } from "./liveMedia/LiveMediaPanel";
 import { buildGlobeCommand, shouldOpenGlobePanel } from "./realityGlobe/intents";
 import type { GlobeCommand } from "./realityGlobe/bridge";
 import {
+  buildGlobeCommandFromSearch,
+  shouldOpenGlobeForStructuredGeo,
+} from "./realityGlobe/searchGlobeBridge";
+import {
   buildGlobePlaceReply,
+  buildPlacesMapReply,
+  buildRouteMapReply,
   GLOBE_PRESENTATION_APPEND,
 } from "./realityGlobe/globePresentation";
 import {
@@ -263,6 +278,7 @@ import {
   type GameCategoryId,
   type OnlineGame,
 } from "./gameSearch";
+import { loadGamesSession, recordGamePlay, saveGamesSession } from "./localExperience/gamesStore";
 
 type Role = "user" | "assistant";
 
@@ -1036,6 +1052,7 @@ function App() {
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModalKey, setSettingsModalKey] = useState(0);
+  const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1081,15 +1098,19 @@ function App() {
     brief?: SearchBrief;
     active?: boolean;
   } | null>(null);
-  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [contextRefreshKey, setContextRefreshKey] = useState(0);
+  const measuredSystemPromptCharsRef = useRef(0);
+  const measuredWebContextCharsRef = useRef(0);
   const [gamesPanelOpen, setGamesPanelOpen] = useState(false);
   const [globePanelOpen, setGlobePanelOpen] = useState(false);
+  const [liveMediaPanelOpen, setLiveMediaPanelOpen] = useState(false);
   const [globeCommand, setGlobeCommand] = useState<GlobeCommand | null>(null);
   const [gamesPanelGames, setGamesPanelGames] = useState<OnlineGame[]>([]);
   const [gamesPanelTitle, setGamesPanelTitle] = useState("משחקים און־ליין");
   const [gamesPanelLoading, setGamesPanelLoading] = useState(false);
   const [gamesEmbedGame, setGamesEmbedGame] = useState<OnlineGame | null>(null);
   const [gamesPanelCategory, setGamesPanelCategory] = useState<GameCategoryId>("featured");
+  const [gamesPanelStartView, setGamesPanelStartView] = useState<"browse" | "recent" | "favorites">("browse");
   const [streamingGameCategoryPicker, setStreamingGameCategoryPicker] = useState(false);
   const [cameraMode, setCameraMode] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -1168,10 +1189,24 @@ function App() {
     void warmLiveWorldCache();
     void startGroveeNewsBoot();
     const warmId = window.setInterval(() => void warmLiveWorldCache(), 90_000);
+    const onAisKeySaved = () => {
+      void warmLiveWorldCache();
+      pingGlobeForLiveSnapshot();
+      findGlobeIframe()?.contentWindow?.postMessage({ source: "grovee", type: "refreshLiveData" }, "*");
+      setSearchResultsPayload((prev) => (prev ? refreshLivePanelPayload(prev) : prev));
+    };
+    window.addEventListener(AISSTREAM_KEY_SAVED_EVENT, onAisKeySaved);
     return () => {
       off();
       window.clearInterval(warmId);
+      window.removeEventListener(AISSTREAM_KEY_SAVED_EVENT, onAisKeySaved);
     };
+  }, []);
+
+  useEffect(() => {
+    return subscribeLiveWorldSnapshot(() => {
+      setSearchResultsPayload((prev) => (prev ? refreshLivePanelPayload(prev) : prev));
+    });
   }, []);
 
   const { status: newsEngineStatus } = useNewsEngineStatus();
@@ -1480,6 +1515,42 @@ function App() {
       return { role: m.role, content: m.content, images: images.length ? images : undefined };
     });
   }, []);
+
+  const contextUsage = useMemo((): ContextUsage | null => {
+    if (!isLoaded) return null;
+    const profileId = loadChatProfileOverride() ?? detectChatHardwareProfile();
+    const systemChars =
+      measuredSystemPromptCharsRef.current > 0
+        ? measuredSystemPromptCharsRef.current
+        : defaultSystemPromptChars(appSettings.gemma.systemPrompt, cameraMode);
+    const historyBase = cameraMode
+      ? buildCameraHistoryForWorker(cameraStore.messages)
+      : buildHistoryForWorker(messages);
+    const history =
+      isGenerating && assistantBuffer.trim()
+        ? [...historyBase, { role: "assistant" as const, content: assistantBuffer }]
+        : historyBase;
+    return estimateLiveContextUsage({
+      history,
+      draftPrompt: prompt,
+      systemPromptChars: systemChars,
+      webContextChars: isGenerating ? measuredWebContextCharsRef.current : 0,
+      imageCount: pendingAttachments.length + (cameraMode ? 1 : 0),
+      profileId,
+    });
+  }, [
+    isLoaded,
+    messages,
+    cameraStore.messages,
+    cameraMode,
+    prompt,
+    pendingAttachments.length,
+    contextRefreshKey,
+    appSettings.gemma.systemPrompt,
+    buildHistoryForWorker,
+    isGenerating,
+    assistantBuffer,
+  ]);
 
   const restoredImageBuffersFromMessage = useCallback((msg: ChatMessage): ArrayBuffer[] => {
     if (!msg.images?.length) return [];
@@ -2098,16 +2169,17 @@ function App() {
   }, []);
 
   const showSearchResultsPanel =
-    searchResultsOpen && !!searchResultsPayload && !gamesPanelOpen;
+    searchResultsOpen && !!searchResultsPayload && !gamesPanelOpen && !liveMediaPanelOpen;
+  const showLiveMediaPanel = liveMediaPanelOpen && !showSearchResultsPanel;
   const showArtifactPanel =
-    artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel;
-  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showSearchResultsPanel;
-  const showGlobePanel = globePanelOpen && !showSearchResultsPanel;
+    artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
+  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
+  const showGlobePanel = globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
   const showCameraSidePanel =
-    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel;
+    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
   const showCameraInline = cameraMode && !desktopLayout;
   const rightPanelOpen =
-    showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel || showSearchResultsPanel;
+    showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel || showSearchResultsPanel || showLiveMediaPanel;
 
   const closeSearchResultsPanel = useCallback(() => {
     setSearchResultsOpen(false);
@@ -2180,14 +2252,42 @@ function App() {
     setArtifactOpen(false);
     setGlobePanelOpen(false);
     setGamesPanelOpen(false);
+    setLiveMediaPanelOpen(false);
     setGamesEmbedGame(null);
+  }, []);
+
+  const openLiveMediaPanelFull = useCallback(() => {
+    setLiveMediaPanelOpen(true);
+    setSearchResultsOpen(false);
+    setSearchResultsPayload(null);
+    setArtifactOpen(false);
+    setGlobePanelOpen(false);
+    setGamesPanelOpen(false);
+    setGamesEmbedGame(null);
+  }, []);
+
+  const closeLiveMediaPanel = useCallback(() => {
+    setLiveMediaPanelOpen(false);
   }, []);
 
   const handlePlayGame = useCallback((game: OnlineGame) => {
     setGamesEmbedGame(game);
     setGamesPanelOpen(true);
     setArtifactOpen(false);
+    void recordGamePlay(game);
   }, []);
+
+  const handleGamesPanelUpdate = useCallback(
+    (games: OnlineGame[], title?: string, category?: GameCategoryId | null) => {
+      setGamesPanelGames(games);
+      if (title) setGamesPanelTitle(title);
+      if (category !== undefined) setGamesPanelCategory(category ?? "featured");
+      if (games.length > 0) {
+        void saveGamesSession(games, title ?? gamesPanelTitle, category ?? gamesPanelCategory);
+      }
+    },
+    [gamesPanelCategory, gamesPanelTitle],
+  );
 
   const closeGamesPanel = useCallback(() => {
     setGamesPanelOpen(false);
@@ -2198,6 +2298,7 @@ function App() {
     setGlobePanelOpen(true);
     setGamesPanelOpen(false);
     setArtifactOpen(false);
+    setLiveMediaPanelOpen(false);
     setGamesEmbedGame(null);
   }, []);
 
@@ -2209,19 +2310,39 @@ function App() {
     setGamesPanelOpen(true);
     setGlobePanelOpen(false);
     setArtifactOpen(false);
+    setLiveMediaPanelOpen(false);
     setGamesEmbedGame(null);
+    setGamesPanelStartView("browse");
     setGamesPanelCategory("featured");
     setGamesPanelLoading(true);
     try {
+      const cached = await loadGamesSession();
+      const offline = typeof navigator !== "undefined" && !navigator.onLine;
+      if (offline && cached?.games.length) {
+        setGamesPanelGames(cached.games);
+        setGamesPanelTitle(`${cached.title} (מקומי)`);
+        return;
+      }
       const result = await randomOnlineGames(20, "featured");
       setGamesPanelGames(result.games);
       setGamesPanelTitle(categoryLabelHe("featured"));
+      void saveGamesSession(result.games, categoryLabelHe("featured"), "featured");
     } finally {
       setGamesPanelLoading(false);
     }
   }, []);
 
+  const openGamesFavorites = useCallback(() => {
+    setGamesPanelOpen(true);
+    setGlobePanelOpen(false);
+    setArtifactOpen(false);
+    setLiveMediaPanelOpen(false);
+    setGamesEmbedGame(null);
+    setGamesPanelStartView("favorites");
+  }, []);
+
   const handleGameCategoryPick = useCallback(async (cat: GameCategoryId) => {
+    setGamesPanelStartView("browse");
     setGamesPanelCategory(cat);
     setGamesPanelOpen(true);
     setArtifactOpen(false);
@@ -2231,6 +2352,7 @@ function App() {
       const result = await randomOnlineGames(12, cat);
       setGamesPanelGames(result.games);
       setGamesPanelTitle(categoryLabelHe(cat));
+      void saveGamesSession(result.games, categoryLabelHe(cat), cat);
     } finally {
       setGamesPanelLoading(false);
     }
@@ -3189,7 +3311,8 @@ function App() {
       !wantsGameSearch &&
       !localTimeOnly &&
       needsWebSearch(trimmed || effectivePrompt);
-    let searchIntentsForGlobe: string[] = [];
+    let searchIntentsForGlobe: SearchIntent[] = [];
+    let lastSearchSources: SearchSourceResult[] = [];
 
     const deliverLiveCannedReply = (reply: string, ctx: string, title = "Live data · canned reply"): boolean => {
       const text = reply.trim();
@@ -3279,9 +3402,16 @@ function App() {
           },
         });
         searchIntentsForGlobe = searchResult.intents;
+        lastSearchSources = searchResult.sources;
         webContext = searchResult.contextText;
         const unifiedSearchPayload = buildUnifiedSearchPayload(effectivePrompt, searchResult.sources);
-        if (shouldOpenSearchResultsPanel(unifiedSearchPayload)) {
+        const placeOrRouteOnly =
+          (searchResult.intents.includes("places") || searchResult.intents.includes("distance")) &&
+          shouldOpenGlobeForStructuredGeo(effectivePrompt, searchResult.intents, searchResult.sources) &&
+          !unifiedSearchPayload.hits.some((h) =>
+            ["rss", "web", "youtube", "video", "image", "movie"].includes(h.kind),
+          );
+        if (shouldOpenSearchResultsPanel(unifiedSearchPayload) && !placeOrRouteOnly) {
           setSearchResultsPayload(unifiedSearchPayload);
           setSearchResultsOpen(true);
           setArtifactOpen(false);
@@ -3301,21 +3431,39 @@ function App() {
           effectivePrompt,
           searchResult.intents,
           searchResult.sources,
+          {
+            answerShape: searchPlan?.answerShape,
+          },
         );
-        const newsQueryTurn = searchResult.intents.includes("news");
-        const qaCannedOnlyMode =
-          qaChatBridge.hasPending() &&
-          !qaTurnForceLlmRef.current &&
-          !qaChatBridge.isForceLlmPending() &&
-          !newsQueryTurn;
+        if (
+          !marineLiveCannedReply &&
+          shouldDeliverStructuredLiveReply(
+            effectivePrompt,
+            searchResult.intents,
+            searchResult.sources,
+            null,
+          )
+        ) {
+          marineLiveCannedReply = buildCapabilityLiveReply(
+            effectivePrompt,
+            searchResult.intents,
+            searchResult.sources,
+            {
+              answerShape: searchPlan?.answerShape,
+            },
+          );
+        }
+        const newsQueryTurn = isNewsQuery(effectivePrompt);
+        const qaForceLlm = qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending();
         const shouldDeliverLive =
-          qaCannedOnlyMode &&
+          !qaForceLlm &&
           !!marineLiveCannedReply &&
           !cameraActive &&
           !hasAttachments &&
           !continueCode &&
           !documentTurn &&
           !wantsGameSearch &&
+          !newsQueryTurn &&
           (searchLiveOk || !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")) &&
           shouldDeliverStructuredLiveReply(
             effectivePrompt,
@@ -3330,9 +3478,8 @@ function App() {
           sourceLabels: searchResult.sources.map((s) => ({ provider: s.provider, label: s.label, ok: s.ok, hasText: !!s.text.trim(), error: s.error?.slice(0, 120) })),
           searchLiveOk,
           cannedReplyExists: !!marineLiveCannedReply,
-          qaCannedOnlyMode,
           shouldDeliverLive,
-          blockingFlags: { forceLlm: qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending(), cameraActive, hasAttachments, continueCode, documentTurn, wantsGameSearch },
+          blockingFlags: { forceLlm: qaForceLlm, cameraActive, hasAttachments, continueCode, documentTurn, wantsGameSearch },
           pendingTimeWidget: !!pendingTimeWidgetRef.current,
         });
         // #endregion
@@ -3418,22 +3565,46 @@ function App() {
 
     let globePlaceCannedReply: string | null = null;
     let globePlaceLabel = "";
+    const globeFromSearch = lastSearchSources.length
+      ? buildGlobeCommandFromSearch(trimmed || effectivePrompt, searchIntentsForGlobe, lastSearchSources)
+      : null;
     const openGlobe =
       !wantsGameSearch &&
       desktopLayout &&
-      shouldOpenGlobePanel(trimmed || effectivePrompt, searchIntentsForGlobe);
+      (globeFromSearch != null ||
+        shouldOpenGlobeForStructuredGeo(trimmed || effectivePrompt, searchIntentsForGlobe, lastSearchSources) ||
+        shouldOpenGlobePanel(trimmed || effectivePrompt, searchIntentsForGlobe));
     if (!openGlobe) {
       setGlobePanelOpen(false);
       setGlobeCommand(null);
     }
     if (openGlobe) {
-      const cmd = buildGlobeCommand(trimmed || effectivePrompt, searchIntentsForGlobe);
+      const cmd =
+        globeFromSearch ?? buildGlobeCommand(trimmed || effectivePrompt, searchIntentsForGlobe);
       if (cmd) {
         setGlobePanelOpen(true);
         setGlobeCommand(cmd);
         setArtifactOpen(false);
         setGamesPanelOpen(false);
-        if (cmd.type === "focusPlaceQuiet" && cmd.presentation !== false) {
+        setSearchResultsOpen(false);
+        if (cmd.type === "flyTo" && cmd.label) {
+          const places = lastSearchSources.find((s) => s.provider === "nominatim-places" && s.ok);
+          globePlaceLabel = cmd.label;
+          globePlaceCannedReply = buildPlacesMapReply(cmd.label, places?.url);
+        } else if (cmd.type === "drawRoute") {
+          const dist = lastSearchSources.find((s) => s.provider === "osrm-distance" && s.ok);
+          const lines = dist?.text.split("\n") ?? [];
+          const fromLine = lines.find((l) => l.startsWith("מ:"));
+          const toLine = lines.find((l) => l.startsWith("אל:"));
+          const kmLine = lines.find((l) => l.includes('ק"מ'));
+          const timeLine = lines.find((l) => l.startsWith("זמן"));
+          globePlaceCannedReply = buildRouteMapReply(
+            fromLine?.replace(/^מ:\s*/, "").split("(")[0]?.trim() ?? "מקור",
+            toLine?.replace(/^אל:\s*/, "").split("(")[0]?.trim() ?? "יעד",
+            kmLine?.match(/([\d.]+)\s*ק"מ/)?.[1],
+            timeLine?.replace("זמן נסיעה משוער:", "").trim(),
+          );
+        } else if (cmd.type === "focusPlaceQuiet" && cmd.presentation !== false) {
           globePlaceLabel = cmd.name;
           globePlaceCannedReply = buildGlobePlaceReply(cmd.name);
         }
@@ -3513,13 +3684,10 @@ function App() {
       }
     }
 
-    const skipCanned =
-      !qaChatBridge.hasPending() ||
-      qaTurnForceLlmRef.current ||
-      qaChatBridge.isForceLlmPending();
+    const qaForceLlm = qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending();
 
     const pureGameSearchTurn =
-      !skipCanned && wantsGameSearch && !cameraActive && !hasAttachments && !continueCode && !documentTurn;
+      !qaForceLlm && wantsGameSearch && !cameraActive && !hasAttachments && !continueCode && !documentTurn;
     if (pureGameSearchTurn && gameSearchCannedReply) {
       qaChatBridge.setReplySource("canned-game");
       assistantBufferRef.current = gameSearchCannedReply;
@@ -3530,7 +3698,7 @@ function App() {
     }
 
     const pureGlobePlaceTurn =
-      !skipCanned &&
+      !qaForceLlm &&
       !wantsGameSearch &&
       !cameraActive &&
       !hasAttachments &&
@@ -3553,7 +3721,7 @@ function App() {
     }
 
     const pureTimeWidgetTurn =
-      !skipCanned &&
+      !qaForceLlm &&
       !wantsGameSearch &&
       !cameraActive &&
       !hasAttachments &&
@@ -3566,7 +3734,7 @@ function App() {
       queryPreview: effectivePrompt.slice(0, 120),
       pureTimeWidgetTurn,
       pendingTimeWidget: !!pendingTimeWidgetRef.current,
-      skipCanned,
+      qaForceLlm,
       blockingFlags: { wantsGameSearch, cameraActive, hasAttachments, continueCode, documentTurn },
     });
     // #endregion
@@ -3586,17 +3754,84 @@ function App() {
       return;
     }
 
-    const pureCapabilityLiveTurn =
-      qaChatBridge.hasPending() &&
-      !qaTurnForceLlmRef.current &&
-      !qaChatBridge.isForceLlmPending() &&
-      !searchIntentsForGlobe.includes("news") &&
+    const structuredLiveTurn =
+      !qaForceLlm &&
+      !isNewsQuery(effectivePrompt) &&
       !wantsGameSearch &&
       !cameraActive &&
       !hasAttachments &&
       !continueCode &&
       !documentTurn &&
+      !!marineLiveCannedReply &&
+      shouldDeliverStructuredLiveReply(
+        effectivePrompt,
+        searchIntentsForGlobe,
+        lastSearchSources,
+        marineLiveCannedReply,
+      );
+    if (structuredLiveTurn && marineLiveCannedReply && !globePlaceCannedReply) {
+      if (deliverLiveCannedReply(marineLiveCannedReply, webContext)) return;
+    }
+
+    const pureCurrencyTurn =
+      !qaForceLlm &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      isCurrencyQuery(effectivePrompt) &&
       !!marineLiveCannedReply;
+    if (pureCurrencyTurn && marineLiveCannedReply) {
+      if (deliverLiveCannedReply(marineLiveCannedReply, webContext, "Frankfurter · canned reply")) return;
+    }
+
+    const pureEarthquakeTurn =
+      !qaForceLlm &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      isEarthquakeQuery(effectivePrompt) &&
+      lastSearchSources.some((s) => s.provider === "usgs-earthquake" && s.ok && s.text.trim()) &&
+      !!marineLiveCannedReply;
+    if (pureEarthquakeTurn && marineLiveCannedReply) {
+      if (deliverLiveCannedReply(marineLiveCannedReply, webContext, "USGS · canned reply")) return;
+    }
+
+    const pureAviationTurn =
+      !qaForceLlm &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      (isAviationQuery(effectivePrompt) || /כמה\s+מטוס/i.test(effectivePrompt)) &&
+      lastSearchSources.some((s) => s.provider === "adsb-aviation" && s.ok && s.text.trim()) &&
+      !!marineLiveCannedReply;
+    if (pureAviationTurn && marineLiveCannedReply) {
+      if (deliverLiveCannedReply(marineLiveCannedReply, webContext, "ADS-B · canned reply")) return;
+    }
+
+    const pureShipsTurn =
+      !qaForceLlm &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      isShipsQuery(effectivePrompt) &&
+      !isMarineInfraQuery(effectivePrompt) &&
+      lastSearchSources.some((s) => s.provider === "ais-ships" && s.ok && s.text.trim()) &&
+      !!marineLiveCannedReply;
+    if (pureShipsTurn && marineLiveCannedReply) {
+      if (deliverLiveCannedReply(marineLiveCannedReply, webContext, "AIS · canned reply")) return;
+    }
+
+    const pureCapabilityLiveTurn =
+      qaChatBridge.hasPending() &&
+      structuredLiveTurn;
     if (pureCapabilityLiveTurn && marineLiveCannedReply) {
       if (finishCannedLive(marineLiveCannedReply, webContext)) return;
     }
@@ -3923,6 +4158,9 @@ function App() {
     const historyForWorkerRaw = trimHistoryForContext(priorTurns, undefined, continueCode);
 
     const chatProfileId = loadChatProfileOverride() ?? detectChatHardwareProfile();
+    measuredSystemPromptCharsRef.current = systemPrompt.length;
+    measuredWebContextCharsRef.current = webContext.length;
+    setContextRefreshKey((k) => k + 1);
     const prepared = prepareChatContext({
       history: historyForWorkerRaw,
       webContext,
@@ -3934,13 +4172,6 @@ function App() {
       pinLastAssistant: continueCode,
       isSearchTurn: shouldRunWebSearch && !!webContext.trim(),
       isCodeTurn: wantsLongOutput || continueCode,
-    });
-    setContextUsage({
-      percent: prepared.staminaPercent,
-      usedChars: prepared.usedChars,
-      totalBudget: prepared.totalBudget,
-      profileLabel: getProfileBudgets(chatProfileId).labelHe,
-      breakdown: prepared.breakdown,
     });
     const historyForWorker = prepared.history;
     webContext = prepared.webContext;
@@ -4220,6 +4451,8 @@ function App() {
         cacheClearing={cacheClearing}
       />
 
+      <ApiKeysPanel open={apiKeysOpen} onClose={() => setApiKeysOpen(false)} />
+
       <ModelActivityPanel
         open={activityLogOpen}
         onClose={() => setActivityLogOpen(false)}
@@ -4381,6 +4614,20 @@ function App() {
                 </button>
                 <button
                   type="button"
+                  className={`sb-rail-btn sb-rail-btn--livemedia${showLiveMediaPanel ? " is-active" : ""}`}
+                  aria-label="TV LIVE / רדיו"
+                  title="פתח TV LIVE / רדיו"
+                  aria-pressed={showLiveMediaPanel}
+                  onClick={openLiveMediaPanelFull}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <path d="M8 21h8" />
+                    <path d="M12 19v2" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
                   className="sb-rail-btn sb-rail-btn--games"
                   aria-label="משחקים מומלצים"
                   title="פתח משחקים מומלצים"
@@ -4427,7 +4674,7 @@ function App() {
                     type="button"
                     className="sb-rail-btn sb-rail-btn--qa"
                     aria-label="בדיקות מצגת"
-                    title="בדיקת 39 שאלות מצגת — שליחה, סימון ודוח"
+                    title={`בדיקת ${BUILTIN_PRESENTATION_QUERY_COUNT} שאלות מצגת — עריכה, שליחה ודוח`}
                     onClick={() => setPresentationQaOpen(true)}
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -4471,6 +4718,17 @@ function App() {
                     <path d="M3 6h18" />
                   </svg>
                   <NewsEngineRailHint status={newsEngineStatus} />
+                </button>
+                <button
+                  type="button"
+                  className="sb-rail-btn sb-rail-btn--keys"
+                  aria-label="מפתחות API"
+                  title="מפתחות API — AISStream ועוד"
+                  onClick={() => setApiKeysOpen(true)}
+                >
+                  <span className="sb-rail-key-icon" aria-hidden="true">
+                    🔑
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -4540,6 +4798,21 @@ function App() {
                   </button>
                   <button
                     type="button"
+                    className={`sb-nav-item sb-nav-item--livemedia${showLiveMediaPanel ? " is-active" : ""}`}
+                    onClick={openLiveMediaPanelFull}
+                    title="פתח TV LIVE / רדיו"
+                    aria-label="TV LIVE / רדיו"
+                    aria-pressed={showLiveMediaPanel}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <rect x="2" y="5" width="20" height="14" rx="2" />
+                      <path d="M8 21h8" />
+                      <path d="M12 19v2" />
+                    </svg>
+                    <span>TV LIVE / רדיו</span>
+                  </button>
+                  <button
+                    type="button"
                     className="sb-nav-item sb-nav-item--games"
                     onClick={() => void openGamesPanelFull()}
                     title="פתח משחקים מומלצים"
@@ -4589,7 +4862,7 @@ function App() {
                       type="button"
                       className="sb-nav-item sb-nav-item--qa"
                       onClick={() => setPresentationQaOpen(true)}
-                      title="בדיקת 39 שאלות מצגת — שליחה, סימון ודוח"
+                      title={`בדיקת ${BUILTIN_PRESENTATION_QUERY_COUNT} שאלות מצגת — עריכה, שליחה ודוח`}
                       aria-label="בדיקות מצגת"
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -4696,6 +4969,15 @@ function App() {
                   <button
                     type="button"
                     className="sb-settings-btn"
+                    title="מפתחות API"
+                    aria-label="מפתחות API"
+                    onClick={() => setApiKeysOpen(true)}
+                  >
+                    🔑
+                  </button>
+                  <button
+                    type="button"
+                    className="sb-settings-btn"
                     title="הגדרות Gemma"
                     aria-label="פתח הגדרות"
                     onClick={() => {
@@ -4712,9 +4994,11 @@ function App() {
 
           {rightPanelOpen ? (
             <aside
-              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}`}
+              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}${showLiveMediaPanel ? " side-panel--livemedia" : ""}`}
               aria-label={
-                showSearchResultsPanel
+                showLiveMediaPanel
+                  ? "TV LIVE / רדיו"
+                  : showSearchResultsPanel
                   ? "תוצאות חיפוש"
                   : showArtifactPanel
                   ? "חלונית קוד"
@@ -4725,7 +5009,9 @@ function App() {
                       : "מצלמה חיה"
               }
             >
-              {showSearchResultsPanel && searchResultsPayload ? (
+              {showLiveMediaPanel ? (
+                <LiveMediaPanel uiLang="he" onClose={closeLiveMediaPanel} />
+              ) : showSearchResultsPanel && searchResultsPayload ? (
                 <SearchResultsPanel
                   payload={searchResultsPayload}
                   onClose={closeSearchResultsPanel}
@@ -4754,13 +5040,11 @@ function App() {
                   embedGame={gamesEmbedGame}
                   title={gamesPanelTitle}
                   initialCategory={gamesPanelCategory}
+                  startView={gamesPanelStartView}
                   onClose={closeGamesPanel}
                   onPlay={handlePlayGame}
                   onBackFromEmbed={() => setGamesEmbedGame(null)}
-                  onGamesUpdate={(g, t) => {
-                    setGamesPanelGames(g);
-                    if (t) setGamesPanelTitle(t);
-                  }}
+                  onGamesUpdate={handleGamesPanelUpdate}
                   onLoadingChange={setGamesPanelLoading}
                 />
               ) : (
@@ -4921,6 +5205,7 @@ function App() {
                                   <GameCategoryPicker
                                     activeCategory={msg.gameBrowseCategory}
                                     onPick={(cat) => void handleGameCategoryPick(cat)}
+                                    onOpenFavorites={openGamesFavorites}
                                   />
                                 ) : null}
                                 <MessageBody
@@ -4951,6 +5236,7 @@ function App() {
                           <GameCategoryPicker
                             activeCategory={gamesPanelCategory}
                             onPick={(cat) => void handleGameCategoryPick(cat)}
+                            onOpenFavorites={openGamesFavorites}
                           />
                         ) : null}
                         <MessageBody
@@ -4973,7 +5259,7 @@ function App() {
                 {showLanding ? <ChatLandingHeadline text={landingContent.headline} /> : null}
 
                 <div className="composer-modes">
-              {isLoaded && messages.length > 0 && contextUsage ? (
+              {isLoaded && contextUsage ? (
                 <ContextRing usage={contextUsage} />
               ) : null}
               {showCameraInline ? (

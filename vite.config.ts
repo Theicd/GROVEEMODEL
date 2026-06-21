@@ -3,8 +3,12 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { devRealityPlugin } from "./vite-plugins/devReality";
+import { aisStreamProxyPlugin } from "./vite-plugins/aisStreamProxy";
+import { tavilyProxyPlugin } from "./vite-plugins/tavilyProxy";
+import { scavioProxyPlugin } from "./vite-plugins/scavioProxy";
 import { fetchProxyPlugin } from "./vite/fetchProxyPlugin";
 import { translateProxyPlugin } from "./vite/translateProxyPlugin";
+import { liveMediaFavoritesSyncPlugin } from "./vite-plugins/liveMediaFavoritesSync";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoName = path.basename(__dirname);
@@ -30,8 +34,12 @@ export default defineConfig({
   plugins: [
     react(),
     devRealityPlugin(),
+    aisStreamProxyPlugin(),
+    tavilyProxyPlugin(),
+    scavioProxyPlugin(),
     fetchProxyPlugin(),
     translateProxyPlugin(),
+    liveMediaFavoritesSyncPlugin(),
     {
       name: "grovee-dev-banner",
       configureServer(server) {

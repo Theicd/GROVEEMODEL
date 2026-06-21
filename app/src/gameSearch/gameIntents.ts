@@ -1,9 +1,23 @@
 import type { GameCategoryId, ResolvedGameSearch } from "./types";
+import { extractUserIntentPrefix, isInlineTextTaskRequest, isTextCompositionRequest } from "../chatComposition";
 import { resolveGameSearch, extractDecadeRange, buildGamePanelTitle } from "./gameAliases";
 import { detectCategoryFromText, isCategoryOnlyText } from "./categoryKeywords";
 
-const GAME_SEARCH_RE =
-  /(?:^|\s)(?:שחק(?:י)?|play)\s+[^\s?!.]{2,}|(?:^|\s)(?:פש\s*)?משחק(?:ים)?|נשחק|רוצה\s+לשחק|want\s+to\s+play|\bbored\b|play\s+(?:a\s+)?game|let'?s\s+play|משעמם|kill\s+time|און\s*ליין|online\s+game|game\s+search|חפש.*משחק|מצא.*משחק|search\s+(?:for\s+)?(?:the\s+)?games?|משחקים?\s*מ+?ו?לצ|מ+?ו?לצים|המלצ(?:ה|ות).*משחק|recommended\s*games?|האם\s+יש.*משחק|אילו\s+משחקים|(?:שנות|משנות).*?(?:80|90|70|שמונ|תשע)|(?:80|90)s\b|קווסט|quest|הרפתק(?:ה|ות)|תציג.*משחק|הראה.*משחק|הצג.*משחק|show\s+games|קטגור(?:יה|יית).*משחק|משחקי\s+(?:מירוצ|ארקייד|קרב|ירי|אקשן|חיד|ספורט|רטרו)/i;
+export {
+  extractUserIntentPrefix,
+  isTextCompositionRequest,
+  isInlineTextTaskRequest,
+  isTextTransformRequest,
+  isPastedTextAnalysisRequest,
+  getIntentScanText,
+} from "../chatComposition";
+
+/** Game browse/play intent — scoped to instruction line, not quoted design docs. */
+const GAME_SEARCH_INTENT_RE =
+  /(?:^|\s)(?:שחק(?:י)?|play)\s+[^\s?!.]{2,}|^(?:פש\s*)?משחק(?:ים)?\s+\S|(?:^|\s)(?:פש\s*)?משחק(?:ים)?(?:\s*(?:$|[?!.]|\s+(?:און|online|מומלצ|ממולצ|ממגוון)))|נשחק|רוצה\s+לשחק|want\s+to\s+play|\bbored\b|play\s+(?:a\s+)?game|let'?s\s+play|משעמם|kill\s+time|און\s*ליין|online\s+game|game\s+search|חפש.*משחק|מצא.*משחק|search\s+(?:for\s+)?(?:the\s+)?games?|משחקים?\s*מ+?ו?לצ|מ+?ו?לצים|המלצ(?:ה|ות).*משחק|recommended\s*games?|האם\s+יש.*משחק|אילו\s+משחקים|(?:חפש|מצא|הראה|הצג|תציג|show|search|אילו\s+משחקים).*?(?:שנות|משנות).*?(?:80|90|70|שמונ|תשע)|(?:שנות|משנות).*?(?:80|90|70|שמונ|תשע).*?משחק|משחק(?:ים)?.*?(?:שנות|משנות).*?(?:80|90|70|שמונ|תשע)|תציג.*משחק|הראה.*משחק|הצג.*משחק|show\s+games|קטגור(?:יה|יית).*משחק|משחקי\s+(?:מירוצ|ארקייד|קרב|ירי|אקשן|חיד|ספורט|רטרו)/i;
+
+const GAME_SEARCH_WITH_VERB_RE =
+  /^(?:חפש|מצא|תן|תביא|הראה|הצג|show|find|search|משעמם|שחק|play)\b/i;
 
 const stripGameSearchPrefix = (text: string): string => {
   let t = text.trim();
@@ -43,13 +57,17 @@ const NOT_ARCHIVE_GAME_RE =
 
 export const isGameSearchRequest = (text: string): boolean => {
   const t = text.trim();
+  if (!t || isInlineTextTaskRequest(t)) return false;
   if (
     NOT_ARCHIVE_GAME_RE.test(t) &&
     !/(?:חפש|מצא|ארכיון|archive|internet\s+archive|און\s*ליין|online\s+game|משחקים?\s*מ+?ו?לצ)/i.test(t)
   ) {
     return false;
   }
-  return GAME_SEARCH_RE.test(t);
+  const intent = extractUserIntentPrefix(t);
+  if (GAME_SEARCH_INTENT_RE.test(intent)) return true;
+  if (GAME_SEARCH_WITH_VERB_RE.test(intent) && GAME_SEARCH_INTENT_RE.test(t)) return true;
+  return false;
 };
 
 export const detectGameCategory = (text: string): GameCategoryId | null => {
@@ -109,8 +127,16 @@ export const parseGameUserRequest = (text: string): ResolvedGameSearch => {
 /** @deprecated use parseGameUserRequest */
 export const extractGameQuery = (text: string): string => parseGameUserRequest(text).query;
 
-export const shouldOpenGamePanel = (text: string, chatTopic: string): boolean =>
-  isGameSearchRequest(text) || chatTopic === "bored_play";
+export const shouldOpenGamePanel = (text: string, chatTopic: string): boolean => {
+  if (isInlineTextTaskRequest(text)) return false;
+  if (isGameSearchRequest(text)) return true;
+  if (chatTopic !== "bored_play") return false;
+  const intent = extractUserIntentPrefix(text);
+  return (
+    GAME_SEARCH_INTENT_RE.test(intent) ||
+    /משעמם|נשחק|\bbored\b|רוצה\s+לשחק|play\s+(?:a\s+)?game|let'?s\s+play/i.test(intent)
+  );
+};
 
 export const buildGameSearchPanelTitle = (resolved: ResolvedGameSearch): string =>
   resolved.panelTitle;

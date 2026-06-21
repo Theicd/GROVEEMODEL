@@ -1,11 +1,13 @@
 import {
   isAviationQuery,
   isAirQualityQuery,
+  isCurrencyQuery,
   isEarthquakeQuery,
   isGitHubPopularQuery,
   isIssQuery,
   isMarineInfraQuery,
   isMarineQuery,
+  isMarketPriceQuery,
   isNewsQuery,
   isPriceQuery,
   isProductsQuery,
@@ -16,12 +18,17 @@ import {
   isWeatherQuery,
   isWorldOverviewQuery,
 } from "./intents";
+import { isInlineTextTaskRequest } from "../chatComposition";
 import { formatDataAgeForSource } from "./dataAge";
 import { formatProductPriceSummary, isCheapersalConfigured } from "./providers/cheapersalPrices";
 import { fallbackFromLiveWorldSnapshot } from "../liveWorld/snapshotFallback";
 import { issSearchResultFromLiveWorld } from "../liveWorld/issSnapshot";
 import { getCachedLiveWorldSnapshot } from "../liveWorld/snapshotStore";
-import { buildMilitaryAviationText } from "../liveWorld/militaryAviation";
+import {
+  buildMilitaryAviationText,
+  formatMilitaryAviationCannedReply,
+  isMilitaryAviationQuery,
+} from "../liveWorld/militaryAviation";
 import { buildMarineLiveReply } from "./marineReplyMessages";
 import { detectImpossiblePlace } from "./entityValidation";
 import { isCrossSourceQuery } from "./crossSourceIntents";
@@ -42,6 +49,8 @@ const PROVIDER_INTROS: Partial<Record<SearchSourceResult["provider"], string>> =
   "yahoo-finance": "לפי Yahoo Finance:",
   coingecko: "לפי CoinGecko:",
   searxng: "לפי SearXNG:",
+  tavily: "לפי Tavily:",
+  scavio: "לפי Scavio Google:",
   "usgs-earthquake": "לפי USGS (רעידות אדמה):",
   "open-meteo": "לפי Open-Meteo (מזג אוויר):",
   "open-meteo-marine": "לפי Open-Meteo Marine (גלים):",
@@ -111,9 +120,10 @@ const formatGenericSource = (source: SearchSourceResult): string => {
 
   if (source.provider === "frankfurter-fx") {
     const date = lines.find((l) => l.startsWith("תאריך:"))?.replace("תאריך:", "").trim();
-    const rate = lines.find((l) => /1 USD =/.test(l));
-    const lead = rate
-      ? `שער הדולר מול השקל — עדכון אחרון מ-${date ?? "?"}: ${rate.replace(/^•\s*/, "")}`
+    const rate = lines.find((l) => /1\s+USD\s*=/.test(l));
+    const rateText = rate?.replace(/^•\s*/, "").trim();
+    const lead = rateText
+      ? `שער הדולר מול השקל — עדכון אחרון מ-${date ?? "?"}: ${rateText}`
       : intro;
     return [
       lead,
@@ -202,6 +212,8 @@ const formatGenericSource = (source: SearchSourceResult): string => {
     const condition = lines.find((l) => l.startsWith("מצב:"));
     const humidity = lines.find((l) => l.startsWith("לחות:"));
     const wind = lines.find((l) => l.startsWith("רוח:"));
+    const forecastHeader = lines.find((l) => l.startsWith("תחזית"));
+    const forecastLines = lines.filter((l) => l.trim().startsWith("- "));
     const tempVal = temp?.match(/([\d.-]+)\s*°C/i)?.[1];
     const placeName = place?.replace("מיקום:", "").trim() ?? "";
     const conditionText = condition?.replace("מצב:", "").trim();
@@ -209,10 +221,10 @@ const formatGenericSource = (source: SearchSourceResult): string => {
       tempVal && placeName
         ? `כרגע ב${placeName}: ${tempVal}°C${conditionText ? `, ${conditionText}` : ""}`
         : temp ?? intro;
-    const extras = [humidity, wind].filter(Boolean) as string[];
+    const extras = [humidity, wind, forecastHeader, ...forecastLines.slice(0, 7)].filter(Boolean) as string[];
     return [
       lead,
-      ...extras.map((l) => `• ${l}`),
+      ...extras.map((l) => (l.startsWith("- ") || l.startsWith("תחזית") ? l : `• ${l}`)),
       `Sources: ${source.label}`,
       `מקור: ${source.label}.`,
     ].join("\n");
@@ -260,14 +272,37 @@ const formatGenericSource = (source: SearchSourceResult): string => {
   if (source.provider === "nominatim-places") {
     const first = lines.find((l) => /^\d+\./.test(l.trim()));
     const note = lines.find((l) => l.startsWith("הערה:"));
-    const lead = first
-      ? `תחנת הרכבת הקרובה לשדה התעופה: ${first.replace(/^\d+\.\s*/, "").split("\n")[0]?.trim()}`
+    const coords = source.geo?.lat != null ? `${source.geo.lat}, ${source.geo.lon}` : "";
+    const name = first?.replace(/^\d+\.\s*/, "").split("(")[0]?.trim() ?? "";
+    const lead = name
+      ? `המיקום הקרוב: ${name}${coords ? ` (${coords})` : ""}. המפה נפתחה מימין.`
       : intro;
     return [
       lead,
       note ?? "",
+      source.url ? `OpenStreetMap: ${source.url}` : "",
       `Sources: ${source.label}`,
-      `מקור: ${source.label}.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (source.provider === "osrm-distance") {
+    const fromLine = lines.find((l) => l.startsWith("מ:"));
+    const toLine = lines.find((l) => l.startsWith("אל:"));
+    const kmLine = lines.find((l) => l.includes('ק"מ'));
+    const timeLine = lines.find((l) => l.startsWith("זמן"));
+    const km = kmLine?.match(/([\d.]+)\s*ק"מ/)?.[1];
+    const driveTime = timeLine?.replace("זמן נסיעה משוער:", "").trim();
+    const from = fromLine?.replace(/^מ:\s*/, "").split("(")[0]?.trim() ?? "";
+    const to = toLine?.replace(/^אל:\s*/, "").split("(")[0]?.trim() ?? "";
+    return [
+      `מסלול: ${from} → ${to}.`,
+      km ? `מרחק: ${km} ק"מ.` : "",
+      driveTime ? `זמן נסיעה: ${driveTime}.` : "",
+      source.geo?.route?.length ? "המסלול מוצג על המפה מימין." : "",
+      source.url ? `OpenStreetMap: ${source.url}` : "",
+      `Sources: ${source.label}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -309,13 +344,23 @@ const formatGenericSource = (source: SearchSourceResult): string => {
 const parseAircraftCountLine = (text: string): { count: string; region: string } | null => {
   const countM =
     text.match(/מטוסים (?:בטווח|באוויר)[^:\n]*:\s*(\d+)/i) ??
+    text.match(/כל\s+המטוסים:\s*(\d+)/i) ??
     text.match(/סה[״"']?כ\s+(\d+)\s+מטוסים/i) ??
-    text.match(/כל\s+המטוסים:\s*(\d+)/i);
+    text.match(/ANSWER \(aircraft count\):\s*מטוסים בטווח:\s*(\d+)/i);
   if (!countM) return null;
   const regionM =
     text.match(/^אזור:\s*(.+)$/m) ??
-    text.match(/מקור:\s*עולם חי \/ ADS-B \((.+?)\)/i);
+    text.match(/מקור:\s*עולם חי \/ ADS-B \((.+)\)/i);
   return { count: countM[1], region: regionM?.[1]?.trim() ?? "האזור המבוקש" };
+};
+
+/** Strip radius / center suffixes from live-world region labels for user-facing Hebrew. */
+const normalizeAviationRegionLabel = (raw: string): string => {
+  const trimmed = raw.trim();
+  if (!trimmed) return "האזור המבוקש";
+  const withoutRadius = trimmed.replace(/\s*·\s*רדיוס\s+\d+\s*km/gi, "").trim();
+  const mainPlace = withoutRadius.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+  return mainPlace || withoutRadius || trimmed;
 };
 
 const buildEarthquakeLiveReply = (query: string, sources: SearchSourceResult[]): string | null => {
@@ -327,12 +372,28 @@ const buildEarthquakeLiveReply = (query: string, sources: SearchSourceResult[]):
   const quakes = lines.filter((l) => l.trim().startsWith("- M"));
   const header = lines.find((l) => /^סה"כ/i.test(l.trim()));
   const lead =
-    lines.find((l) => /^הרעידה/i.test(l.trim())) ??
-    lines.find((l) => /^הרעידה החזקה/i.test(l.trim()));
+    lines.find((l) => /^הרעידה האחרונה מעל M/i.test(l.trim())) ??
+    lines.find((l) => /^הרעידה האחרונה:/i.test(l.trim())) ??
+    lines.find((l) => /^הרעידה החזקה/i.test(l.trim())) ??
+    lines.find((l) => /^הרעידה/i.test(l.trim()));
 
   if (!quakes.length && /אין רעידות|לא נמצאו רעידות/i.test(eq.text)) {
     return [
       lines[0] ?? "אין רעידות אדמה מדווחות בתקופה האחרונה (USGS).",
+      `Sources: ${eq.label}`,
+      "מקור: USGS Earthquake Hazards Program.",
+    ].join("\n");
+  }
+
+  if (lead && /M[\d.]+/.test(lead)) {
+    const extras = [
+      header && !lead.includes(header) ? header : "",
+      quakes.length > 1 ? "רעידות נוספות:" : "",
+      ...quakes.slice(1, 4).map((q) => `• ${q.replace(/^-\s*/, "")}`),
+    ].filter(Boolean);
+    return [
+      lead.trim(),
+      ...extras,
       `Sources: ${eq.label}`,
       "מקור: USGS Earthquake Hazards Program.",
     ].join("\n");
@@ -343,7 +404,7 @@ const buildEarthquakeLiveReply = (query: string, sources: SearchSourceResult[]):
     lead ?? "",
     header ?? "",
     quakes.length ? "הגדולות:" : "",
-    ...quakes.slice(0, 6).map((q) => `• ${q.replace(/^\-\s*/, "")}`),
+    ...quakes.slice(0, 6).map((q) => `• ${q.replace(/^-\s*/, "")}`),
     `Sources: ${eq.label}`,
     "מקור: USGS Earthquake Hazards Program.",
   ]
@@ -402,45 +463,18 @@ const buildStarlinkLiveReply = (query: string, sources: SearchSourceResult[]): s
 };
 
 const buildMilitaryAviationLiveReply = (query: string, sources: SearchSourceResult[]): string | null => {
-  if (!/\bawacs\b|צבאי|military|תדלוק|tanker|מודיעין/i.test(query)) return null;
+  if (!isMilitaryAviationQuery(query)) return null;
 
   const snap = getCachedLiveWorldSnapshot(120_000);
   if (snap?.aviation?.items?.length) {
     const text = buildMilitaryAviationText(query, snap);
-    if (text) {
-      const answer = text.match(/ANSWER \(AWACS\):[^\n]+/)?.[0];
-      const awacsCount = text.match(/AWACS\?: (\d+)/)?.[1] ?? text.match(/מועמדים ל-AWACS[^:]*: (\d+)/)?.[1];
-      return [
-        "לפי עולם חי / ADS-B:",
-        answer ?? (awacsCount != null ? `מועמדים ל-AWACS: ${awacsCount}` : text.split("\n").slice(0, 4).join("\n")),
-        "Sources: תעופה (עולם חי / ADS-B)",
-        "מקור: עולם חי — זיהוי צבאי/AWACS heuristic כמו על הגלובוס.",
-      ].join("\n");
-    }
+    const canned = text ? formatMilitaryAviationCannedReply(query, text) : null;
+    if (canned) return canned;
   }
 
   const src = sources.find((s) => s.provider === "adsb-aviation" && s.ok && s.text.trim());
   if (!src) return null;
-  const answer = src.text.match(/ANSWER \(AWACS\):[^\n]+/)?.[0];
-  const milLine = src.text.match(/מועמדים ל-AWACS[^:]*: (\d+)/)?.[1]
-    ?? src.text.match(/מטוסים צבאיים \(heuristic\): (\d+)/)?.[1];
-  if (/\bawacs\b/i.test(query)) {
-    return [
-      "לפי ADS-B חי (זיהוי AWACS heuristic):",
-      answer ?? (milLine != null ? `מועמדים ל-AWACS: ${milLine}` : src.text.split("\n").slice(0, 3).join("\n")),
-      "Sources: תעופה (ADS-B)",
-      "מקור: ADS-B — heuristic כמו שכבת תעופה בעולם חי.",
-    ].join("\n");
-  }
-  if (/צבאי|military/i.test(query)) {
-    return [
-      "לפי ADS-B חי:",
-      src.text.split("\n").slice(0, 5).join("\n"),
-      "Sources: תעופה (ADS-B)",
-      "מקור: ADS-B.",
-    ].join("\n");
-  }
-  return null;
+  return formatMilitaryAviationCannedReply(query, src.text);
 };
 
 const buildAviationLiveReply = (
@@ -452,20 +486,22 @@ const buildAviationLiveReply = (
   if (!src) return null;
   const parsed = parseAircraftCountLine(src.text);
   if (!parsed) return null;
-  const intro = /כמה|how\s+many/i.test(query)
-    ? `לפי ADS-B חי לגבי ${parsed.region}:`
-    : `לפי ADS-B חי סביב ${parsed.region}:`;
+  const region = normalizeAviationRegionLabel(parsed.region);
+  const militaryCount = src.text.match(/(\d+)\s+צבאיים/i)?.[1];
+  const militaryNote =
+    militaryCount && parseInt(militaryCount, 10) > 0 ? ` · ${militaryCount} צבאיים` : "";
+  const lead = /כמה|how\s+many/i.test(query)
+    ? `${parsed.count} מטוסים מעל ${region} כרגע (ADS-B / עולם חי)${militaryNote}.`
+    : `מעל ${region}: ${parsed.count} מטוסים (ADS-B / עולם חי)${militaryNote}.`;
   const samples = src.text
     .split("\n")
     .filter((l) => /^\d+\.\s/.test(l.trim()))
     .slice(0, 3)
     .map((l) => `• ${l.trim().replace(/^\d+\.\s*/, "")}`);
   return [
-    intro,
-    `מטוסים בטווח: ${parsed.count}`,
-    ...(samples.length ? ["דוגמאות:", ...samples] : []),
-    "Sources: תעופה (ADS-B)",
-    "מקור: תעופה (ADS-B).",
+    lead,
+    ...(samples.length ? samples : []),
+    "Sources: תעופה (עולם חי / ADS-B)",
   ].join("\n");
 };
 
@@ -644,6 +680,28 @@ const buildProductsPriceReply = (
   return formatGenericSource({ ...prod, productHits: priced });
 };
 
+const buildCurrencyLiveReply = (
+  query: string,
+  intents: SearchIntent[],
+  sources: SearchSourceResult[],
+): string | null => {
+  if (!isCurrencyQuery(query) && !intents.includes("currency")) return null;
+  const fx = sources.find((s) => s.provider === "frankfurter-fx" && s.ok && s.text.trim());
+  if (!fx) return null;
+  return formatGenericSource(fx);
+};
+
+const buildMarketLiveReply = (
+  query: string,
+  intents: SearchIntent[],
+  sources: SearchSourceResult[],
+): string | null => {
+  if (!isMarketPriceQuery(query) && !intents.includes("market")) return null;
+  const market = sources.find((s) => s.provider === "yahoo-finance" && s.ok && s.text.trim());
+  if (!market) return null;
+  return formatGenericSource(market);
+};
+
 const pickPrimarySource = (
   query: string,
   intents: SearchIntent[],
@@ -732,8 +790,38 @@ export function shouldDeliverStructuredLiveReply(
   sources: SearchSourceResult[],
   cannedReply?: string | null,
 ): boolean {
-  if (intents.includes("news") || isNewsQuery(query)) return false;
-  if (cannedReply?.trim()) return true;
+  if (isInlineTextTaskRequest(query)) return false;
+  if (isEarthquakeQuery(query) && sources.some((s) => s.provider === "usgs-earthquake" && s.ok && s.text.trim())) {
+    return true;
+  }
+  if (
+    isCurrencyQuery(query) &&
+    sources.some((s) => s.provider === "frankfurter-fx" && s.ok && s.text.trim())
+  ) {
+    return true;
+  }
+  if (
+    isMarketPriceQuery(query) &&
+    sources.some((s) => s.provider === "yahoo-finance" && s.ok && s.text.trim())
+  ) {
+    return true;
+  }
+  if (
+    isShipsQuery(query) &&
+    !isMarineInfraQuery(query) &&
+    sources.some((s) => s.provider === "ais-ships" && s.ok && s.text.trim())
+  ) {
+    return true;
+  }
+  if (
+    (isAviationQuery(query) || isMilitaryAviationQuery(query) || /כמה\s+מטוס/i.test(query)) &&
+    sources.some((s) => s.provider === "adsb-aviation" && s.ok && s.text.trim())
+  ) {
+    return true;
+  }
+  if (cannedReply?.trim() && !isNewsQuery(query)) return true;
+  if (isNewsQuery(query)) return false;
+  if (intents.includes("news") && !cannedReply?.trim()) return false;
   if (!sources.some((s) => s.ok && s.text.trim())) return false;
   if (isWeatherQuery(query) || isAirQualityQuery(query) || isMarineQuery(query)) return true;
   if (isCrossSourceQuery(query) || isWorldOverviewQuery(query)) return true;
@@ -822,7 +910,7 @@ export function buildCapabilityLiveReply(
   options?: CapabilityLiveReplyOptions,
 ): string | null {
   const q = query.trim();
-  if (!q) return null;
+  if (!q || isInlineTextTaskRequest(q)) return null;
   // #region agent log
   agentDebugLog("H4,H5", "capabilityReplyMessages.ts:buildCapabilityLiveReply", "canned reply evaluation started", {
     queryPreview: q.slice(0, 120),
@@ -867,6 +955,12 @@ export function buildCapabilityLiveReply(
 
   const earthquake = buildEarthquakeLiveReply(q, sources);
   if (earthquake) return earthquake;
+
+  const currency = buildCurrencyLiveReply(q, intents, sources);
+  if (currency) return currency;
+
+  const market = buildMarketLiveReply(q, intents, sources);
+  if (market) return market;
 
   if (isWorldOverviewQuery(q)) {
     const overview = buildOverviewReply(sources);
@@ -917,7 +1011,7 @@ export function buildCapabilityLiveReply(
   return null;
 }
 
-/** Web fallback (SearXNG) failed or not configured — bypass LLM hallucination. */
+/** Web fallback (Tavily / SearXNG) failed or not configured — bypass LLM hallucination. */
 export function buildWebFallbackNoDataReply(
   query: string,
   sources: SearchSourceResult[],
@@ -926,13 +1020,27 @@ export function buildWebFallbackNoDataReply(
   if (!q) return null;
   if (sources.some((s) => s.ok && s.text.trim())) return null;
 
-  const searx = sources.find((s) => s.provider === "searxng");
-  if (!searx && sources.length > 0) return null;
+  const webAttempts = sources.filter(
+    (s) => s.provider === "searxng" || s.provider === "tavily" || s.provider === "scavio",
+  );
+  if (!webAttempts.length && sources.length > 0) return null;
 
-  const err = searx?.error ?? "";
-  const reason = err.includes("לא מוגדר")
-    ? "חיפוש web (SearXNG) לא מוגדר — הוסף VITE_SEARXNG_URL בקובץ .env והפעל מחדש."
-    : err.trim() || "חיפוש web נכשל (timeout / CORS / שרת לא זמין).";
+  const tavily = webAttempts.find((s) => s.provider === "tavily");
+  const scavio = webAttempts.find((s) => s.provider === "scavio");
+  const searx = webAttempts.find((s) => s.provider === "searxng");
+  const errParts: string[] = [];
+  if (tavily?.error) errParts.push(tavily.error.includes("לא מוגדר") ? "Tavily: הוסף מפתח 🔑" : tavily.error);
+  if (scavio?.error) errParts.push(scavio.error.includes("לא מוגדר") ? "Scavio: הוסף מפתח 🔑" : scavio.error);
+  if (searx?.error) {
+    errParts.push(
+      searx.error.includes("לא מוגדר")
+        ? "SearXNG: הגדר VITE_SEARXNG_URL ב-.env"
+        : searx.error,
+    );
+  }
+  const reason =
+    errParts.join(" · ") ||
+    "חיפוש web נכשל (timeout / CORS / שרת לא זמין).";
 
   return [
     `לא הצלחתי להביא מידע עדכני מהרשת לשאלה הזו.`,

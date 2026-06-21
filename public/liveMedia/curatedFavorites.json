@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
+  "updatedAt": 0,
+  "channels": [],
+  "radio": []
+}

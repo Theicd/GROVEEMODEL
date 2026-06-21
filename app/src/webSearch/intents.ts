@@ -1,4 +1,5 @@
 import type { SearchIntent } from "./types";
+import { getIntentScanText, isInlineTextTaskRequest } from "../chatComposition";
 import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
 import { isLocalContextTimeQuery } from "../startupContext/localTime";
 import { hasUrlInQuery, isGitHubRepoUrlInQuery } from "./urlExtract";
@@ -194,10 +195,33 @@ export const isHuggingFaceImageQuery = (text: string): boolean =>
     text,
   );
 
+/** Scope broad intent regexes to the instruction line when pasted payload is not a live lookup. */
+const scan = (text: string): string => getIntentScanText(text, { userRequestsSearch });
+
 export const isMusicQuery = (text: string): boolean =>
-  /(?:שיר(?:ים)?|מוזיקה|שירון|פלייליסט|playlist|song|songs|music|album|אלבום|קליפ|clip|artist|אמן|זמר(?:ה)?|band|להקה|מלודיה)/i.test(
-    text,
+  /(?:שיר(?:ים)?|מוזיקה|שירון|פלייליסט|playlist|song|songs|music|album|אלבום|קליפ|clip|artist|אמן|זמר(?:ה)?|band|להקה|מלודיה|\brock\b|\bjazz\b|\bclassical\b|\bpop\b|\bmetal\b|\bblues\b|country music)/i.test(
+    scan(text),
   );
+
+/** Live TV / internet radio — triggers local IPTV + Radio Browser search. */
+export const isLiveMediaQuery = (text: string): boolean => {
+  const q = scan(text);
+  return (
+    isMusicQuery(text) ||
+    /(?:רוק|ג(?:'|')(?:ל|לצ)|קול|רדיו|radio|טלוויזיה|טלויזיה|tv live|live tv|ערוץ|תחנה|שידור|iptv|stream|now\s*\d+|כאן\s*\d+)/i.test(q) ||
+    /(?:rock|jazz|classical|metal|blues|news channel|sport channel|comedy|entertainment|kids channel)/i.test(q) ||
+    /(?:קומדיה|בידור|ספורט|(?:ערוץ|טל(?:ו)?יזיה|tv).*ילדים|ילדים.*(?:ערוץ|tv|בטל)|ערוץ\s*\d+)/i.test(q)
+  );
+};
+
+/** Panel search queries live TV/radio only when the query looks media-related — not every SERP search. */
+export const shouldSearchLiveMedia = (text: string, panelSearch?: boolean): boolean => {
+  const q = text.trim();
+  if (q.length < 2) return false;
+  if (isLiveMediaQuery(q)) return true;
+  if (panelSearch && isMusicQuery(q)) return true;
+  return false;
+};
 
 /** Person / performer name without explicit «music» keyword — e.g. «שלמה ארצי». */
 export const isLikelyArtistQuery = (text: string): boolean => {
@@ -340,7 +364,7 @@ export const isStarlinkRegionalQuery = (text: string): boolean =>
  */
 export const needsWebSearch = (text: string): boolean => {
   const q = text.trim();
-  if (!q || isCasualConversation(q)) return false;
+  if (!q || isInlineTextTaskRequest(q) || isCasualConversation(q)) return false;
   if (hasUrlInQuery(q)) return true;
   if (userRequestsSearch(q)) return true;
   if (isWorldOverviewQuery(q)) return true;
@@ -402,7 +426,7 @@ export const isCountryQuery = (text: string): boolean =>
   );
 
 export const isHolidayQuery = (text: string): boolean =>
-  /(?:חג|חגים|holiday|holidays|public\s+holiday|bank\s+holiday|חג\s+ציבורי|האם\s+היום\s+חג)/i.test(text);
+  /(?:\bחג(?:ים)?\b|holiday|holidays|public\s+holiday|bank\s+holiday|חג\s+ציבורי|האם\s+היום\s+חג)/i.test(text);
 
 export const isGovernmentQuery = (text: string): boolean =>
   /(?:ראש\s+(?:ה)?(?:ממשלה|ממשלת|מדינה)|נשיא|prime\s+minister|president|head\s+of\s+(?:state|government)|מפלגה\s+בשלטון|cabinet|parliament|כנסת|ממשלה\s+נוכחית)/i.test(
@@ -424,8 +448,13 @@ export const isCurrencyQuery = (text: string): boolean => {
 };
 
 export const isDistanceQuery = (text: string): boolean =>
-  /(?:מרחק|distance|כמה\s+(?:ק"?מ|km|kilometers?)|קילומטר)/i.test(text) &&
-  /(?:בין|between|מ|from|ל|to)/i.test(text);
+  ((/(?:מרחק|distance|כמה\s+(?:ק"?מ|km|kilometers?)|קילומטר)/i.test(text) ||
+    /(?:איך\s+מגיע|how\s+to\s+get|ניווט|navigation|מסלול|route|דרך\s+ל)/i.test(text) ||
+    (/(?:על\s+המפה|on\s+the\s+map|תראה.*מפה)/i.test(text) &&
+      /(?:מ|מש|from).*(?:ל|אל|to)/i.test(text))) &&
+    /(?:בין|between|מ|from|מש|ל|to|אל|עד)/i.test(text)) ||
+  (/(?:איך\s+מגיע|how\s+to\s+get|מסלול|route)/i.test(text) &&
+    /(?:מ|מש|from).*(?:ל|אל|to)/i.test(text));
 
 export const isPlacesQuery = (text: string): boolean =>
   ((/(?:מצא|find|where\s+is|איפה|locate|search\s+for\s+(?:a|an|the)?)/i.test(text) &&
@@ -472,7 +501,8 @@ export const isNewsQuery = (text: string): boolean => {
 export const isAviationQuery = (text: string): boolean =>
   !isFlightStatusQuery(text) &&
   (/(?:מטוס|מטוסים|aircraft|airplane|plane|adsb|opensky|תעבורה\s+(?:ה)?אווירית|תנועה\s+(?:ה)?אווירית|טיסות\s+מעל)/i.test(text) ||
-    /\bawacs\b/i.test(text) ||
+    /\bawacs\b|אוואקס|א\.?ו\.?א\.?ק\.?ס/i.test(text) ||
+    /(?:מטוס(?:ים|י)?\s*(?:צבאיים|של\s+צבא)|מטוסי\s+תדלוק)/i.test(text) ||
     /(?:עומס\s+(?:ב)?(?:שמי|האוויר)|air\s+traffic|traffic\s+above|שמי\s+ישראל|israeli\s+airspace)/i.test(text) ||
     (/(?:בעולם|worldwide|global|ברחבי\s+העולם|around\s+the\s+world|in\s+the\s+air)/i.test(text) &&
       /(?:מטוס|aircraft|plane|adsb|תעופה|air|טיס|עומס|traffic)/i.test(text)) ||
@@ -508,28 +538,37 @@ export const isIsraelAlertsQuery = (text: string): boolean =>
   /(?:צבע\s+אדום|התרע(?:ה|ות)|פיקוד\s+העורף|oref|tzeva\s+adom|אזעק)/i.test(text);
 
 export const isDisasterQuery = (text: string): boolean =>
-  /(?:אסון|אסונות|gdacs|הוריקן|hurricane|tsunami|צונאמי|שריפ(?:ה|ות)|wildfire|סופ(?:ה|ות)\s+טרופי)/i.test(text);
+  /(?:אסון|אסונות|gdacs|הוריקן|hurricane|tsunami|צונאמי|שריפ(?:ה|ות)|wildfire|סופ(?:ה|ות)\s+טרופי|הצפה|שיטפון|flood|inundation)/i.test(
+    text,
+  );
 
 export const isWeatherQuery = (text: string): boolean =>
   /מזג\s*האוויר|מסג\s*האוויר|מז"?\s*א|טמפרטור|temperatur|weather|temperature|גשם|שלג|מעונן|לחות|מזג|מהירות\s+(?:ה)?רוח|wind\s+speed/i.test(text);
 
 /** Live air pollution — Open-Meteo Air Quality API. */
 export const isAirQualityQuery = (text: string): boolean =>
-  /(?:איכות\s+(?:ה)?אוויר|air\s+quality|זיהום\s+אוויר|pm2\.?5|pm10|\bus_aqi\b|\baqi\b)/i.test(text);
+  /(?:איכות\s+(?:ה)?אוויר|air\s+quality|זיהום\s+אוויר|pm2\.?5|pm10|\bus_aqi\b|\baqi\b)/i.test(scan(text));
 
-/** Academic preprints — arXiv Atom API. */
-export const isArxivQuery = (text: string): boolean =>
-  /\barxiv\b|ארxiv/i.test(text) ||
-  (/(?:מאמר(?:י|ים)?|paper|papers|preprint|publication)/i.test(text) &&
-    /(?:חפש|find|search|על|about|בנושא|on)/i.test(text)) ||
-  /(?:מאמר(?:י|ים)?\s+(?:על|about|בנושא)|scientific\s+paper)/i.test(text);
+export const isArxivQuery = (text: string): boolean => {
+  const q = scan(text);
+  return (
+    /\barxiv\b|ארxiv/i.test(q) ||
+    (/(?:מאמר(?:י|ים)?|paper|papers|preprint|publication)/i.test(q) &&
+      /(?:חפש|find|search|על|about|בנושא|on)/i.test(q)) ||
+    /(?:מאמר(?:י|ים)?\s+(?:על|about|בנושא)|scientific\s+paper)/i.test(q)
+  );
+};
 
 export const isMarineQuery = (text: string): boolean =>
   !isShipsQuery(text) &&
-  /גלים|wave|סערה|הurricane|typhoon|גובה\s*גל|סופה|שיא\s*גלים|marine\s+weather|ocean\s+wave/i.test(text);
+  /גלים|wave|הurricane|typhoon|גובה\s*גל|שיא\s*גלים|marine\s+weather|ocean\s+wave/i.test(scan(text));
 
 export const isEarthquakeQuery = (text: string): boolean =>
-  /רעיד(?:ת|ות)?\s*(?:ה)?אדמה|רעש\s*אדמה|earthquake|seismic|tsunami|רichter|סוללת\s*רעיד/i.test(text);
+  /רעיד(?:ת|ות)?\s*(?:ה)?אדמה|רעש\s*אדמה|earthquake|seismic|tsunami|רichter|ריכט|סולם\s*ריכט|סוללת\s*רעיד/i.test(
+    text,
+  ) ||
+  (/רעיד(?:ות|ה)/i.test(text) &&
+    /מעל|ריכט|richter|M\s*[\d.]+|סולם|ב-?\s*\d+\s*שעות/i.test(text));
 
 export const isHuggingFaceQuery = (text: string): boolean =>
   /hugging\s*face|huggingface|hf\.co|huggingface\.co|transformers\.js|\bhf\s+hub\b/i.test(text) ||
@@ -587,7 +626,7 @@ export const buildMoviesSearchQuery = (query: string): string => {
 };
 
 export const isImagesQuery = (text: string): boolean =>
-  /(?:תמונ(?:ה|ות)|צילום|צילומים|photo|photos|image|images|picture|pictures|wallpaper|רקע\s*למסך)/i.test(
+  /(?:תמונ(?:ה|ות)|צילום|צילומים|\bphotos?\b|\bimages?\b|\bpictures?\b|wallpaper|רקע\s*למסך)/i.test(
     text,
   );
 
@@ -627,16 +666,22 @@ export const isSupermarketPriceQuery = (text: string): boolean => {
 
 export const isPriceQuery = isSupermarketPriceQuery;
 
-export const isProductsQuery = (text: string): boolean =>
-  isSupermarketPriceQuery(text) ||
-  /(?:סופר|סופרמרקט|מוצר(?:ים)?|ברקוד|שופרסל|רמי\s*לוי|יוחננוף|ויקטורי|מכולת|קניות\s+בסופר)/i.test(
-    text,
-  ) ||
-  /(?:חלב|לחם|במבה|ביסלי|קוטג|יוגורט|שוקו|גבינה|ביצים|שמנת|חומרי\s+ניקוי|חיתול|שניצל|פסטה|אורז|סוכר|קפה|תה)/i.test(
-    text,
-  ) ||
-  /(?:תנובה|טרה|יוטבתה|שטראוס|אסם|עלית|סנו|האגיס|ניקול)/i.test(text) ||
-  /^\d{8,14}$/.test(text.trim());
+export const isProductsQuery = (text: string): boolean => {
+  const q = scan(text);
+  return (
+    !isEarthquakeQuery(text) &&
+    !isInlineTextTaskRequest(text) &&
+    (isSupermarketPriceQuery(text) ||
+      /(?:סופרמרקט|(?:^|\s)בסופר(?:\s|$|[?!.])|קניות\s+בסופר|(?:^|\s)(?:ה)?מוצר(?:ים)?(?:\s|$|[?!.,:])|ברקוד|שופרסל|רמי\s*לוי|יוחננוף|ויקטורי|מכולת)/i.test(
+        q,
+      ) ||
+      /(?:חלב|לחם|במבה|ביסלי|קוטג|יוגורט|שוקו|גבינה|ביצים|שמנת|חומרי\s+ניקוי|חיתול|שניצל|פסטה|אורז|סוכר|קפה|תה)/i.test(
+        q,
+      ) ||
+      /(?:תנובה|טרה|יוטבתה|שטראוס|אסם|עלית|סנו|האגיס|ניקול)/i.test(q) ||
+      /^\d{8,14}$/.test(text.trim()))
+  );
+};
 
 export const buildPriceSearchQuery = (query: string): string => {
   let q = query.trim();
@@ -670,6 +715,9 @@ export const isTechQuery = (text: string): boolean =>
   /מצלמ[ות]?|אבטחה|dashboard|דשבורד|monitoring|ניטור/i.test(text);
 
 export const classifySearchIntents = (query: string): SearchIntent[] => {
+  if (isInlineTextTaskRequest(query)) {
+    return [];
+  }
   if (hasUrlInQuery(query)) {
     return ["link"];
   }
@@ -680,8 +728,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     return ["news"];
   }
   if (isTopicalOverviewQuery(query)) {
-    if (isNewsQuery(query)) return ["news"];
-    return [];
+    return ["news"];
   }
   const intents: SearchIntent[] = [];
   if (isWorldOverviewQuery(query)) {
@@ -719,6 +766,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     else if (isHackerNewsQuery(query)) intents.push("hackernews");
   }
   if (shouldSearchYouTube(query)) intents.push("youtube");
+  if (isLiveMediaQuery(query)) intents.push("livemedia");
   if (isMoviesQuery(query)) intents.push("movies");
   if (isImagesQuery(query)) intents.push("images");
   if (isVideoMediaQuery(query)) intents.push("video");
@@ -790,12 +838,30 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
 
   if (isCrossSourceQuery(query)) {
     if (/^כמה\s+/i.test(query) && (isAviationQuery(query) || isShipsQuery(query))) {
-      return [...new Set(intents)];
+      return finalizeLiveSensorIntents(query, [...new Set(intents)]);
     }
-    return expandCrossSourceIntents(query, intents);
+    return finalizeLiveSensorIntents(query, expandCrossSourceIntents(query, intents));
   }
 
-  return [...new Set(intents)];
+  return finalizeLiveSensorIntents(query, [...new Set(intents)]);
+};
+
+/** USGS/GDACS sensor queries also fetch RSS headlines on the same topic. */
+const finalizeLiveSensorIntents = (query: string, intents: SearchIntent[]): SearchIntent[] => {
+  const out = [...intents];
+  if (out.includes("earthquake")) {
+    if (!out.includes("news")) out.push("news");
+    if (
+      !out.includes("disaster") &&
+      /מעל\s*[4-9]|M[5-9]\b|חזק|significant|major|צונאמ|ריכט|richter/i.test(query)
+    ) {
+      out.push("disaster");
+    }
+  }
+  if (out.includes("disaster") && !out.includes("news")) {
+    out.push("news");
+  }
+  return [...new Set(out)];
 };
 
 export const isGitHubPopularQuery = (text: string): boolean =>
