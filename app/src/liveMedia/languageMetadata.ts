@@ -49,7 +49,7 @@ const NAME_LANG_HINTS: { code: string; re: RegExp }[] = [
   { code: "rus", re: /\b(russian|рос|rt\s|russia\s*1|ntv\s)\b/i },
   { code: "fra", re: /\b(french|france\s*24|tf1|canal\+|arte)\b/i },
   { code: "deu", re: /\b(german|deutsch|zdf|ard\s|rtl\s*de)\b/i },
-  { code: "spa", re: /\b(spanish|español|telefe|caracol)\b/i },
+  { code: "spa", re: /\b(spanish|español|espanol|castellano|telemundo|univision|telefe|caracol|televisa|rtve|antena\s*3|movistar|azteca|tudn)\b/i },
   { code: "tur", re: /\b(turkish|türk|trt\s|show\s*turk)\b/i },
 ];
 

@@ -1,3 +1,4 @@
+import { channelHasEnglish, channelHasHebrew, radioHasEnglish, radioHasHebrew } from "./heEnCatalogFilter";
 import type { Channel, RadioStation, StreamStatus } from "./types";
 const STATUS_RANK: Record<StreamStatus, number> = {
   working: 0,
@@ -48,6 +49,9 @@ export function languageMatches(channelLang: string | undefined, filterCode: str
 
 export function channelLanguageMatches(channel: Channel, filterCode: string): boolean {
   if (!filterCode) return true;
+  const code = normCode(filterCode);
+  if (code === "heb" || code === "he") return channelHasHebrew(channel);
+  if (code === "eng" || code === "en") return channelHasEnglish(channel);
   const langs = channel.languages?.length ? channel.languages : channel.language ? [channel.language] : [];
   if (!langs.length) return false;
   return langs.some((l) => languageMatches(l, filterCode));
@@ -55,6 +59,9 @@ export function channelLanguageMatches(channel: Channel, filterCode: string): bo
 
 export function radioLanguageMatches(station: RadioStation, filterCode: string): boolean {
   if (!filterCode) return true;
+  const code = normCode(filterCode);
+  if (code === "heb" || code === "he") return radioHasHebrew(station);
+  if (code === "eng" || code === "en") return radioHasEnglish(station);
   const langs = station.languages?.length ? station.languages : station.language ? [station.language] : [];
   if (!langs.length) return false;
   return langs.some((l) => languageMatches(l, filterCode));

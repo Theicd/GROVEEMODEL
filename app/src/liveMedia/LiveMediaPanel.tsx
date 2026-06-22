@@ -15,7 +15,8 @@ import {
   toggleRadioFavorite,
 } from "./catalogStore";
 import type { Channel, RadioStation } from "./types";
-import { collectLanguageCounts, languageDisplayLabel } from "./languageMetadata";
+import { languageDisplayLabel } from "./languageMetadata";
+import { channelHasEnglish, channelHasHebrew, radioHasEnglish, radioHasHebrew } from "./heEnCatalogFilter";
 import type { LiveMediaUserPrefs } from "./userPrefs";
 import { listRadioForPanel, listTvChannelsForPanel, searchLiveMediaChannels, searchLiveMediaRadio } from "./search";
 import { subscribeLiveMediaSummary } from "./runtimeState";
@@ -216,24 +217,34 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
     [refreshLibrary],
   );
 
-  const languageCounts = useMemo(() => collectLanguageCounts(channels, radio), [channels, radio]);
-
   const languageOptions = useMemo(() => {
-    return [...languageCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 24)
-      .map(([code, count]) => ({
-        code,
-        label: languageDisplayLabel(code, rtl),
-        count,
-      }));
-  }, [languageCounts, rtl]);
+    const hebTv = channels.filter(
+      (c) => (c.type === "tv" || c.type === "youtube") && channelHasHebrew(c),
+    ).length;
+    const engTv = channels.filter(
+      (c) => (c.type === "tv" || c.type === "youtube") && channelHasEnglish(c),
+    ).length;
+    const hebRadio = radio.filter((r) => radioHasHebrew(r)).length;
+    const engRadio = radio.filter((r) => radioHasEnglish(r)).length;
+    const opts = [
+      { code: "heb", label: languageDisplayLabel("heb", rtl), count: hebTv + hebRadio },
+      { code: "eng", label: languageDisplayLabel("eng", rtl), count: engTv + engRadio },
+    ];
+    return opts.filter((o) => o.count > 0);
+  }, [channels, radio, rtl]);
+
+  const browsableCategories = useMemo(
+    () => LIVE_MEDIA_CATEGORIES.filter((c) => c.id !== "news"),
+    [],
+  );
 
   const categoryCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const c of channels) {
       if (c.type !== "tv" && c.type !== "youtube") continue;
-      map.set(c.category || "general", (map.get(c.category || "general") ?? 0) + 1);
+      const cat = c.category || "general";
+      if (cat === "news") continue;
+      map.set(cat, (map.get(cat) ?? 0) + 1);
     }
     return map;
   }, [channels]);
@@ -336,7 +347,7 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
               }}
             >
               <option value="">{L.all}</option>
-              {LIVE_MEDIA_CATEGORIES.map((c) => (
+              {browsableCategories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {rtl ? c.nameHe : c.name} ({categoryCounts.get(c.id) ?? 0})
                 </option>
@@ -346,7 +357,7 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
           {view !== "favorites" ? (
             <select className="lm-select" value={country} onChange={(e) => setCountry(e.target.value)}>
               <option value="">{L.all}</option>
-              {LIVE_MEDIA_COUNTRIES.map((c) => (
+              {LIVE_MEDIA_COUNTRIES.filter((c) => (countryCounts.get(c.code) ?? 0) > 0).map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.flag} {rtl ? c.nameHe : c.name} ({countryCounts.get(c.code) ?? 0})
                 </option>
@@ -374,7 +385,7 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
             <section>
               <h3>{L.categories}</h3>
               <div className="lm-chips">
-                {LIVE_MEDIA_CATEGORIES.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0).map((c) => (
+                {browsableCategories.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0).map((c) => (
                   <button
                     key={c.id}
                     type="button"

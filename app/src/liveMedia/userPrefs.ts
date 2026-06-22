@@ -1,6 +1,7 @@
 import { dbGetUserPrefs, dbPutUserPrefs } from "./indexeddb";
 import type { Channel, RadioStation } from "./types";
 import { collectDefaultBlacklistIds } from "./defaultBlacklist";
+import { channelPassesHeEnCatalog, radioPassesHeEnCatalog } from "./heEnCatalogFilter";
 
 export const PREFS_LOCAL_KEY = "grovee-live-media-user-prefs-v1";
 
@@ -12,6 +13,8 @@ export type LiveMediaUserPrefs = {
   blacklistRadioIds: string[];
   /** One-time seed of default blacklist patterns. */
   defaultBlacklistApplied?: boolean;
+  /** Increment when default blacklist rules expand (e.g. Spanish filter v2). */
+  defaultBlacklistVersion?: number;
   updatedAt: number;
 };
 
@@ -116,6 +119,7 @@ export function importUserPrefsJson(raw: string): LiveMediaUserPrefs {
     blacklistChannelIds: [...new Set(parsed.blacklistChannelIds ?? [])],
     blacklistRadioIds: [...new Set(parsed.blacklistRadioIds ?? [])],
     defaultBlacklistApplied: parsed.defaultBlacklistApplied,
+    defaultBlacklistVersion: parsed.defaultBlacklistVersion,
     updatedAt: Date.now(),
   };
 }
@@ -136,12 +140,19 @@ export function favoriteRadioSet(prefs: LiveMediaUserPrefs): Set<string> {
   return new Set(prefs.favoriteRadioIds);
 }
 
+export const DEFAULT_BLACKLIST_VERSION = 3;
+
+function resolvedBlacklistVersion(prefs: LiveMediaUserPrefs): number {
+  if (prefs.defaultBlacklistVersion != null) return prefs.defaultBlacklistVersion;
+  return prefs.defaultBlacklistApplied ? 1 : 0;
+}
+
 export async function applyDefaultBlacklistOnce(
   channels: Channel[],
   radio: RadioStation[],
   prefs: LiveMediaUserPrefs,
 ): Promise<LiveMediaUserPrefs> {
-  if (prefs.defaultBlacklistApplied) return prefs;
+  if (resolvedBlacklistVersion(prefs) >= DEFAULT_BLACKLIST_VERSION) return prefs;
   const favTv = favoriteChannelSet(prefs);
   const favRadio = favoriteRadioSet(prefs);
   const { channelIds, radioIds } = collectDefaultBlacklistIds(channels, radio);
@@ -154,6 +165,7 @@ export async function applyDefaultBlacklistOnce(
       ...new Set([...prefs.blacklistRadioIds, ...radioIds.filter((id) => !favRadio.has(id))]),
     ],
     defaultBlacklistApplied: true,
+    defaultBlacklistVersion: DEFAULT_BLACKLIST_VERSION,
     updatedAt: Date.now(),
   };
   await saveUserPrefs(next);
@@ -173,13 +185,21 @@ export function applyPrefsToRadio(radio: RadioStation[], prefs: LiveMediaUserPre
 export function visibleChannels(channels: Channel[], prefs: LiveMediaUserPrefs): Channel[] {
   const blocked = blacklistChannelSet(prefs);
   const fav = favoriteChannelSet(prefs);
-  return channels.filter((c) => !blocked.has(c.id) || fav.has(c.id));
+  return channels.filter((c) => {
+    if (blocked.has(c.id) && !fav.has(c.id)) return false;
+    if (!fav.has(c.id) && !channelPassesHeEnCatalog(c)) return false;
+    return true;
+  });
 }
 
 export function visibleRadio(radio: RadioStation[], prefs: LiveMediaUserPrefs): RadioStation[] {
   const blocked = blacklistRadioSet(prefs);
   const fav = favoriteRadioSet(prefs);
-  return radio.filter((r) => !blocked.has(r.id) || fav.has(r.id));
+  return radio.filter((r) => {
+    if (blocked.has(r.id) && !fav.has(r.id)) return false;
+    if (!fav.has(r.id) && !radioPassesHeEnCatalog(r)) return false;
+    return true;
+  });
 }
 
 export async function setChannelFavorite(channelId: string, favorite: boolean): Promise<LiveMediaUserPrefs> {
