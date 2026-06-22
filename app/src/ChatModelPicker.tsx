@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import {
   GEMMA_RACK_ID,
   getRackModelById,
+  isSelectableInPicker,
   modalityIcon,
-  pickableRackModels,
+  pickerRackModels,
   rackEntryTagLabel,
   setSelectedModelId,
   type ModelModality,
@@ -17,10 +18,18 @@ import {
   sortImageRackEntries,
 } from "./modelRack/modelRackDisplay";
 
+type DownloadState = {
+  downloadingId: string | null;
+  progressPct: number;
+  progressLabel: string;
+};
+
 type Props = {
   rack: RackModelEntry[];
   selectedId: string;
   onSelect: (id: string) => void;
+  onDownloadLocalText: (entry: RackModelEntry) => void;
+  downloadState: DownloadState;
   disabled?: boolean;
 };
 
@@ -40,14 +49,22 @@ function sortGroupItems(modality: ModelModality, items: RackModelEntry[]): RackM
   return items;
 }
 
-export function ChatModelPicker({ rack, selectedId, onSelect, disabled }: Props) {
-  const pickable = pickableRackModels(rack);
+export function ChatModelPicker({
+  rack,
+  selectedId,
+  onSelect,
+  onDownloadLocalText,
+  downloadState,
+  disabled,
+}: Props) {
+  const pickerItems = pickerRackModels(rack);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number; minWidth: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
 
-  const selected = getRackModelById(selectedId, pickable) ?? getRackModelById(GEMMA_RACK_ID, pickable)!;
+  const selected =
+    getRackModelById(selectedId, pickerItems) ?? getRackModelById(GEMMA_RACK_ID, pickerItems)!;
 
   const updatePosition = useCallback(() => {
     const el = triggerRef.current;
@@ -65,7 +82,7 @@ export function ChatModelPicker({ rack, selectedId, onSelect, disabled }: Props)
   useLayoutEffect(() => {
     if (!open) return;
     updatePosition();
-  }, [open, pickable.length, updatePosition]);
+  }, [open, pickerItems.length, updatePosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -94,11 +111,13 @@ export function ChatModelPicker({ rack, selectedId, onSelect, disabled }: Props)
     modality,
     items: sortGroupItems(
       modality,
-      pickable.filter((r) => r.modality === modality),
+      pickerItems.filter((r) => r.modality === modality),
     ),
   })).filter((g) => g.items.length > 0);
 
   const pick = (id: string) => {
+    const entry = getRackModelById(id, pickerItems);
+    if (!entry || !isSelectableInPicker(entry)) return;
     setSelectedModelId(id);
     onSelect(id);
     setOpen(false);
@@ -110,36 +129,63 @@ export function ChatModelPicker({ rack, selectedId, onSelect, disabled }: Props)
     const hint = rackPickerHint(row);
     const tag = rackEntryTagLabel(row);
     const isImage = row.modality === "image";
+    const isLocalText = row.adapter === "hf-local-text";
+    const isDownloading = downloadState.downloadingId === row.id;
+    const canSelect = isSelectableInPicker(row);
+    const showDownload = isLocalText && row.status === "not_downloaded" && !isDownloading;
+    const downloadPct = isDownloading ? downloadState.progressPct : 0;
 
     return (
-      <button
+      <div
         key={row.id}
-        type="button"
-        role="option"
-        aria-selected={isActive}
-        className={`chat-model-picker-item${isActive ? " is-active" : ""}${isImage ? " chat-model-picker-item--image" : ""}`}
-        onClick={() => pick(row.id)}
-        title={hint ?? rackPickerTitle(row)}
+        className={`chat-model-picker-item-wrap${isActive ? " is-active" : ""}${isImage ? " chat-model-picker-item-wrap--image" : ""}`}
       >
-        {badge ? (
-          <span
-            className="chat-model-picker-badge"
-            style={{ "--badge-accent": badge.accent } as React.CSSProperties}
-            aria-hidden="true"
+        <button
+          type="button"
+          role="option"
+          aria-selected={isActive}
+          className={`chat-model-picker-item${isActive ? " is-active" : ""}${isImage ? " chat-model-picker-item--image" : ""}${!canSelect ? " chat-model-picker-item--disabled" : ""}`}
+          onClick={() => pick(row.id)}
+          disabled={!canSelect}
+          title={hint ?? rackPickerTitle(row)}
+        >
+          {badge ? (
+            <span
+              className="chat-model-picker-badge"
+              style={{ "--badge-accent": badge.accent } as React.CSSProperties}
+              aria-hidden="true"
+            >
+              {badge.badge}
+            </span>
+          ) : (
+            <span className="chat-model-picker-item-icon" aria-hidden="true">
+              {modalityIcon(row.modality)}
+            </span>
+          )}
+          <span className="chat-model-picker-item-body">
+            <span className="chat-model-picker-item-name">{rackPickerTitle(row)}</span>
+            {hint ? <span className="chat-model-picker-item-sub">{hint}</span> : null}
+            {isDownloading ? (
+              <span className="chat-model-picker-item-sub">
+                {downloadState.progressLabel || "מוריד…"} {downloadPct > 0 ? `${downloadPct}%` : ""}
+              </span>
+            ) : null}
+          </span>
+          {tag ? <span className="chat-model-picker-item-tag">{tag}</span> : null}
+        </button>
+        {showDownload ? (
+          <button
+            type="button"
+            className="chat-model-picker-download-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDownloadLocalText(row);
+            }}
           >
-            {badge.badge}
-          </span>
-        ) : (
-          <span className="chat-model-picker-item-icon" aria-hidden="true">
-            {modalityIcon(row.modality)}
-          </span>
-        )}
-        <span className="chat-model-picker-item-body">
-          <span className="chat-model-picker-item-name">{rackPickerTitle(row)}</span>
-          {hint ? <span className="chat-model-picker-item-sub">{hint}</span> : null}
-        </span>
-        {tag ? <span className="chat-model-picker-item-tag">{tag}</span> : null}
-      </button>
+            ⬇ הורדה
+          </button>
+        ) : null}
+      </div>
     );
   };
 

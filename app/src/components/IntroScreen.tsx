@@ -3,6 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GroveeHudCanvas } from "../GroveeHudCanvas";
 import { formatBytes } from "../storageReport";
 import { GEMMA_ESTIMATED_BYTES } from "../introProgressFormat";
+import {
+  SMOLLM_ESTIMATED_BYTES,
+  startupChoiceLabelHe,
+  type StartupModelChoice,
+} from "../startupModelProfile";
 import { stageAtLeast } from "../introCinematicLines";
 import { useIntroCinematicSequence } from "../hooks/useIntroCinematicSequence";
 import { useIntroTypewriter } from "../hooks/useIntroTypewriter";
@@ -28,6 +33,10 @@ type IntroScreenProps = {
   onRetryWasm: () => void;
   onOpenInfo: () => void;
   onClearCache: () => void;
+  onContinueWithoutChat?: () => void;
+  /** Resolved startup target (Gemma vs SmolLM) shown on landing + loading copy. */
+  startupTarget?: StartupModelChoice;
+  recommendedReasonHe?: string;
 };
 
 const STANDBY = "> STANDBY";
@@ -48,6 +57,9 @@ export function IntroScreen({
   onRetryWasm,
   onOpenInfo,
   onClearCache,
+  onContinueWithoutChat,
+  startupTarget = "gemma",
+  recommendedReasonHe,
 }: IntroScreenProps) {
   const [webgpu, setWebgpu] = useState(false);
   const [consoleLines, setConsoleLines] = useState<string[]>([STANDBY]);
@@ -90,7 +102,11 @@ export function IntroScreen({
     }
   }, [phase]);
 
-  const ringLabel = compilePulse ? "INIT" : "GEMMA";
+  const ringLabel = compilePulse ? "INIT" : startupTarget === "local-text" ? "SMOL" : "GEMMA";
+  const modelLabel = startupChoiceLabelHe(startupTarget);
+  const estimatedBytes =
+    startupTarget === "local-text" ? SMOLLM_ESTIMATED_BYTES : GEMMA_ESTIMATED_BYTES;
+  const landingSubtitle = startupTarget === "local-text" ? "SMOLLM2 360M" : "GEMMA 4 E2B";
 
   return (
     <div
@@ -130,8 +146,18 @@ export function IntroScreen({
                   className={`hal-float__line hal-landing__subtitle${stageAtLeast(stage, "subtitle") ? " hal-float__line--in" : ""}`}
                   dir="ltr"
                 >
-                  GEMMA 4 E2B
+                  {landingSubtitle}
                 </p>
+
+                {recommendedReasonHe ? (
+                  <p
+                    className={`hal-warn hal-warn--float hal-float__line${stageAtLeast(stage, "subtitle") ? " hal-float__line--in" : ""}`}
+                    dir="rtl"
+                    style={{ marginTop: 8, fontSize: "0.9rem" }}
+                  >
+                    מומלץ: {modelLabel} — {recommendedReasonHe}
+                  </p>
+                ) : null}
 
                 <div
                   className={`hal-landing__command-row${stageAtLeast(stage, "typewriter") ? " hal-landing__command-row--in" : ""}`}
@@ -170,7 +196,7 @@ export function IntroScreen({
 
               <div className="hal-loading-dock__summary">
                 <p className="hal-loading-dock__title" dir="rtl">
-                  {compilePulse ? "מאתחל מודל בדפדפן…" : "מוריד Gemma 4 E2B"}
+                  {compilePulse ? "מאתחל מודל בדפדפן…" : `מוריד ${modelLabel}`}
                 </p>
                 <div
                   className={`hal-loading-dock__bar${indeterminate || compilePulse ? " hal-loading-dock__bar--pulse" : ""}`}
@@ -187,7 +213,7 @@ export function IntroScreen({
                 <p className="hal-loading-dock__meta" dir="ltr" data-testid="download-bytes">
                   {loadingByteLine ||
                     (compilePulse
-                      ? `${formatBytes(GEMMA_ESTIMATED_BYTES)} · INIT ONNX / WebGPU`
+                      ? `${formatBytes(estimatedBytes)} · INIT ONNX / WebGPU`
                       : status && status !== "Not loaded"
                         ? status
                         : "מכין הורדה…")}
@@ -232,6 +258,7 @@ export function IntroScreen({
         onRetryWasm={onRetryWasm}
         onOpenInfo={onOpenInfo}
         onClearCache={onClearCache}
+        onContinueWithoutChat={onContinueWithoutChat}
       />
     </div>
   );

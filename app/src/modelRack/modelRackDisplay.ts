@@ -1,3 +1,4 @@
+import { SMOLLM_RACK_ID } from "./localTextModels";
 import { GEMMA_RACK_ID, type RackModelEntry } from "./modelRack";
 
 export type ImageModelMeta = {
@@ -36,6 +37,7 @@ export function pollinationsDisplayName(model: string): string {
 
 export function rackPickerTitle(entry: RackModelEntry): string {
   if (entry.id === GEMMA_RACK_ID) return "Gemma 4 E2B";
+  if (entry.id === SMOLLM_RACK_ID) return "SmolLM2 360M";
   if (entry.adapter === "pollinations" && entry.pollinationsModel) {
     return pollinationsDisplayName(entry.pollinationsModel);
   }
@@ -44,6 +46,11 @@ export function rackPickerTitle(entry: RackModelEntry): string {
 
 export function rackPickerHint(entry: RackModelEntry): string | null {
   if (entry.id === GEMMA_RACK_ID) return "שיחה מקומית";
+  if (entry.id === SMOLLM_RACK_ID) {
+    if (entry.status === "ready") return "מודל קל · שיחה טקסט";
+    if (entry.status === "downloading") return "מוריד…";
+    return "לחץ הורדה לפני שיחה";
+  }
   if (entry.adapter === "pollinations" && entry.pollinationsModel) {
     return IMAGE_META[entry.pollinationsModel]?.hint ?? "יצירת תמונה";
   }

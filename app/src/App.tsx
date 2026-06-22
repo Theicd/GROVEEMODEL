@@ -226,16 +226,58 @@ import { getHfToken, setHfToken } from "./webSearch/hf/hfModelSettings";
 import { verifyHfToken } from "./webSearch/hf/verifyHfToken";
 import { ChatModelPicker } from "./ChatModelPicker";
 import {
+  readLocalTextReadyIds,
+  SMOLLM_HF_MODEL_ID,
+  SMOLLM_RACK_ID,
+  applyLocalTextDownloadStates,
+} from "./modelRack/localTextModels";
+import {
+  localTextToUiLanguage,
+  prepareLocalTextTurnForModel,
+} from "./modelRack/localTextTranslate";
+import {
+  downloadLocalTextModel,
+  generateLocalTextChat,
+  abortLocalTextGeneration,
+  terminateLocalTextWorker,
+} from "./modelRack/localTextModelRuntime";
+import {
+  DEFAULT_LOCAL_TEXT_SETTINGS,
+  mergeLocalTextSettings,
+  type LocalTextInferenceBackend,
+  type LocalTextModelSettings,
+} from "./modelRack/localTextModelSettings";
+import {
+  resolveStartupModelChoice,
+  startupChoiceLabelHe,
+  type StartupModelChoice,
+  type StartupModelPreference,
+  type StartupModelRecommendation,
+} from "./startupModelProfile";
+import {
+  buildCapabilitiesOnlyFallbackMessage,
+  CAPABILITIES_ONLY_BANNER_HE,
+  pickCapabilitiesDefaultRackId,
+  type ChatModelAvailability,
+} from "./capabilitiesOnlyMode";
+import {
   GEMMA_RACK_ID,
   getRackModelById,
   getSelectedModelId,
   loadModelRack,
   pickableRackModels,
+  isSelectableInPicker,
   summarizeRackCounts,
   setSelectedModelId as persistSelectedModelId,
   type RackModelEntry,
 } from "./modelRack/modelRack";
-import { executeRackModel, rackModelRunsInChat } from "./modelRack/modelExecution";
+import { executeRackModel, isLocalTextChatModel, rackModelRunsInChat } from "./modelRack/modelExecution";
+import { getChatUiLanguage } from "./ui/useUiLanguage";
+import { runTextChatTurnPrelude } from "./chatTurnPrelude";
+import {
+  buildLocalTextSystemPrompt,
+  localTextMaxNewTokens,
+} from "./localTextSystemPrompt";
 import { refreshCloudModelRack } from "./modelRack/modelRackScan";
 import {
   buildSearchPlannerUserPrompt,
@@ -468,6 +510,8 @@ type AppSettings = {
   hfRemoteHost: string;
   inferenceBackend: InferenceBackendPreference;
   gemma: TunableModelSettings;
+  localText: LocalTextModelSettings;
+  startupModel: StartupModelPreference;
   vision: VisionBehaviorSettings;
 };
 
@@ -494,6 +538,8 @@ const defaultAppSettings = (): AppSettings => ({
   hfRemoteHost: "",
   inferenceBackend: normalizeInferenceBackend(undefined),
   gemma: { ...defaultGemmaSettings },
+  localText: { ...DEFAULT_LOCAL_TEXT_SETTINGS },
+  startupModel: "auto",
   vision: { ...DEFAULT_VISION_SETTINGS },
 });
 
@@ -526,6 +572,13 @@ const loadSettings = (): AppSettings => {
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
       inferenceBackend,
       gemma,
+      localText: mergeLocalTextSettings(parsed.localText),
+      startupModel:
+        parsed.startupModel === "gemma" ||
+        parsed.startupModel === "local-text" ||
+        parsed.startupModel === "auto"
+          ? parsed.startupModel
+          : "auto",
       vision: mergeVisionSettings(parsed.vision),
     };
     const shouldPersist =
@@ -795,7 +848,7 @@ function SettingsModal({
   cacheClearing: boolean;
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
-  const [settingsTab, setSettingsTab] = useState<"gemma" | "vision">("gemma");
+  const [settingsTab, setSettingsTab] = useState<"gemma" | "localText" | "vision">("gemma");
   const [hfTokenDraft, setHfTokenDraft] = useState(() => getHfToken() ?? "");
   const [hfTokenStatus, setHfTokenStatus] = useState<string | null>(null);
   const [hfTokenChecking, setHfTokenChecking] = useState(false);
@@ -812,6 +865,23 @@ function SettingsModal({
   const patchVision = (partial: Partial<VisionBehaviorSettings>) => {
     setDraft((d) => ({ ...d, vision: { ...d.vision, ...partial } }));
   };
+
+  const setLocalTextBackend = (inferenceBackend: LocalTextInferenceBackend) => {
+    setDraft((d) => ({ ...d, localText: { ...d.localText, inferenceBackend } }));
+  };
+
+  const settingsHeadline =
+    settingsTab === "localText"
+      ? { title: "הגדרות SmolLM", sub: "SmolLM2 360M · מקומי בדפדפן" }
+      : settingsTab === "vision"
+        ? { title: "הגדרות מצלמה", sub: "עיניים ואסיטואציות" }
+        : { title: "הגדרות Gemma", sub: "GEMMA 4 E2B · מקומי בדפדפן" };
+
+  const localTextBackendOptions: { id: LocalTextInferenceBackend; label: string; hint: string }[] = [
+    { id: "auto", label: "Auto", hint: "WebGPU אם אפשר; נופל ל-WASM בשגיאה" },
+    { id: "wasm", label: "WASM", hint: "מעבד — יציב לשיחות ארוכות" },
+    { id: "webgpu", label: "WebGPU", hint: "GPU — מהיר; עלול להיכשל אחרי זמן" },
+  ];
 
   const backendOptions: { id: InferenceBackendPreference; label: string; hint: string }[] = [
     { id: "auto", label: "Auto", hint: "WebGPU אם אפשר; נופל ל-WASM בשגיאה" },
@@ -832,10 +902,10 @@ function SettingsModal({
       <div className="settings-panel modal-box">
         <div className="settings-head">
           <div className="settings-head-brand">
-            <span className="settings-head-badge">G</span>
+            <span className="settings-head-badge">{settingsTab === "localText" ? "S" : "G"}</span>
             <div>
-              <h2 id="settings-title">הגדרות Gemma</h2>
-              <p className="settings-head-sub">GEMMA 4 E2B · מקומי בדפדפן</p>
+              <h2 id="settings-title">{settingsHeadline.title}</h2>
+              <p className="settings-head-sub">{settingsHeadline.sub}</p>
             </div>
           </div>
           <button type="button" className="icon-close settings-close" onClick={onClose} aria-label="סגור">
@@ -856,6 +926,15 @@ function SettingsModal({
           <button
             type="button"
             role="tab"
+            aria-selected={settingsTab === "localText"}
+            className={`settings-tab ${settingsTab === "localText" ? "active" : ""}`}
+            onClick={() => setSettingsTab("localText")}
+          >
+            SmolLM
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={settingsTab === "vision"}
             className={`settings-tab ${settingsTab === "vision" ? "active" : ""}`}
             onClick={() => setSettingsTab("vision")}
@@ -868,8 +947,227 @@ function SettingsModal({
           <SituationSettingsPanel vision={draft.vision} onVisionChange={patchVision} />
         ) : null}
 
+        {settingsTab === "localText" ? (
+        <>
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            מנוע חישוב
+          </h3>
+          <div className="settings-backend-pills" role="radiogroup" aria-label="מנוע חישוב SmolLM">
+            {localTextBackendOptions.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={draft.localText.inferenceBackend === opt.id}
+                className={`settings-backend-pill ${draft.localText.inferenceBackend === opt.id ? "active" : ""}`}
+                onClick={() => setLocalTextBackend(opt.id)}
+              >
+                <span className="settings-backend-pill-label">{opt.label}</span>
+                <span className="settings-backend-pill-hint">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            פרמטרי המודל
+          </h3>
+          <div className="settings-grid">
+            <label className="settings-field">
+              <span className="settings-field-label">טמפרטורה</span>
+              <input
+                type="number"
+                step={0.05}
+                min={0}
+                max={2}
+                value={draft.localText.temperature}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, temperature: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">מקסימום טוקנים (שיחה)</span>
+              <input
+                type="number"
+                min={32}
+                max={1024}
+                value={draft.localText.maxNewTokens}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, maxNewTokens: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">מקסימום טוקנים (חיפוש)</span>
+              <input
+                type="number"
+                min={64}
+                max={1024}
+                value={draft.localText.maxNewTokensSearch}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, maxNewTokensSearch: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">Top P</span>
+              <input
+                type="number"
+                step={0.05}
+                min={0}
+                max={1}
+                value={draft.localText.topP}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, topP: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">טוקנים (ברכה קצרה)</span>
+              <input
+                type="number"
+                min={16}
+                max={256}
+                value={draft.localText.maxNewTokensGreeting}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, maxNewTokensGreeting: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <label className="settings-field settings-field--full">
+            <span className="settings-field-label">הנחיה ראשית (System prompt)</span>
+            <textarea
+              rows={5}
+              className="settings-prompt-area"
+              value={draft.localText.systemPrompt}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  localText: { ...d.localText, systemPrompt: e.target.value },
+                }))
+              }
+              dir="ltr"
+            />
+          </label>
+        </section>
+
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            אורך שיחה והקשר
+          </h3>
+          <p className="settings-danger-note" style={{ marginBottom: 12 }}>
+            SmolLM קטן — הקטנת היסטוריה והקשר חיפוש משפרת יציבות. ממשק עברית מתורגם לאנגלית לפני המודל.
+          </p>
+          <div className="settings-grid">
+            <label className="settings-field">
+              <span className="settings-field-label">תורות היסטוריה</span>
+              <input
+                type="number"
+                min={2}
+                max={24}
+                value={draft.localText.historyTurns}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, historyTurns: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label">תווים מהחיפוש (web brief)</span>
+              <input
+                type="number"
+                min={200}
+                max={2000}
+                step={50}
+                value={draft.localText.webBriefChars}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    localText: { ...d.localText, webBriefChars: Number(e.target.value) },
+                  }))
+                }
+              />
+            </label>
+          </div>
+        </section>
+
+        <section className="settings-card settings-card--danger">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot settings-card-dot--warn" aria-hidden="true" />
+            איפוס worker
+          </h3>
+          <p className="settings-danger-note">
+            מנתק את SmolLM מהזיכרון — ייטען מחדש לפי מנוע החישוב בהרצה הבאה. לא מוחק את הקבצים שהורדו (
+            {SMOLLM_HF_MODEL_ID}).
+          </p>
+          <button
+            type="button"
+            className="settings-btn-danger"
+            onClick={() => terminateLocalTextWorker()}
+          >
+            איפוס worker SmolLM
+          </button>
+        </section>
+        </>
+        ) : null}
+
         {settingsTab === "gemma" ? (
         <>
+        <section className="settings-card">
+          <h3 className="settings-card-title">
+            <span className="settings-card-dot" aria-hidden="true" />
+            מודל בפתיחה
+          </h3>
+          <p className="settings-danger-note" style={{ marginBottom: 12 }}>
+            אוטומטי: מובייל / זיכרון נמוך / ללא WebGPU → SmolLM (~220MB). מחשב חזק → Gemma (~3.9GB).
+          </p>
+          <div className="settings-backend-pills" role="radiogroup" aria-label="מודל בפתיחה">
+            {(
+              [
+                { id: "auto" as const, label: "אוטומטי", hint: "לפי זיהוי מכשיר" },
+                { id: "gemma" as const, label: "Gemma 4 E2B", hint: "תמיד המודל הגדול" },
+                { id: "local-text" as const, label: "SmolLM2", hint: "תמיד המודל הקטן" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={draft.startupModel === opt.id}
+                className={`settings-backend-pill ${draft.startupModel === opt.id ? "active" : ""}`}
+                onClick={() => setDraft((d) => ({ ...d, startupModel: opt.id }))}
+              >
+                <span className="settings-backend-pill-label">{opt.label}</span>
+                <span className="settings-backend-pill-hint">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="settings-card">
           <h3 className="settings-card-title">
             <span className="settings-card-dot" aria-hidden="true" />
@@ -1125,6 +1423,9 @@ function App() {
   const [settingsModalKey, setSettingsModalKey] = useState(0);
   const [modelRack, setModelRack] = useState<RackModelEntry[]>(() => loadModelRack());
   const [selectedRackModelId, setSelectedRackModelId] = useState(() => getSelectedModelId());
+  const [localTextDownloadingId, setLocalTextDownloadingId] = useState<string | null>(null);
+  const [localTextDownloadPct, setLocalTextDownloadPct] = useState(0);
+  const [localTextDownloadLabel, setLocalTextDownloadLabel] = useState("");
   const modelRackRef = useRef(modelRack);
   modelRackRef.current = modelRack;
   const selectedRackModelRef = useRef(selectedRackModelId);
@@ -1133,6 +1434,15 @@ function App() {
   const [pluginsHubTab, setPluginsHubTab] = useState<PluginsHubTab>("plugins");
   const pluginHealth = usePluginHealthPoll(true);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isGemmaLoaded, setIsGemmaLoaded] = useState(false);
+  const [bootTarget, setBootTarget] = useState<StartupModelChoice>("gemma");
+  const [chatModelAvailability, setChatModelAvailability] =
+    useState<ChatModelAvailability>("gemma");
+  const [capabilitiesFailureReason, setCapabilitiesFailureReason] = useState<string | null>(
+    null,
+  );
+  const [startupRecommendation, setStartupRecommendation] =
+    useState<StartupModelRecommendation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const focusComposerInput = useCallback(() => {
@@ -1324,6 +1634,8 @@ function App() {
   const isLoadingRef = useRef(isLoading);
   const isGeneratingRef = useRef(isGenerating);
   const isLoadedRef = useRef(isLoaded);
+  const isGemmaLoadedRef = useRef(isGemmaLoaded);
+  const chatModelAvailabilityRef = useRef(chatModelAvailability);
   const activityLogRef = useRef<ModelActivityEntry[]>([]);
   const qaForceLlmRef = useRef(QA_FORCE_LLM_DEFAULT);
   const qaTurnForceLlmRef = useRef(false);
@@ -1355,6 +1667,14 @@ function App() {
   useEffect(() => {
     isLoadedRef.current = isLoaded;
   }, [isLoaded]);
+
+  useEffect(() => {
+    isGemmaLoadedRef.current = isGemmaLoaded;
+  }, [isGemmaLoaded]);
+
+  useEffect(() => {
+    chatModelAvailabilityRef.current = chatModelAvailability;
+  }, [chatModelAvailability]);
   useEffect(() => {
     activityLogRef.current = activityLog;
   }, [activityLog]);
@@ -1531,6 +1851,20 @@ function App() {
   }, []);
 
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
+
+  useEffect(() => {
+    if (phase !== "start") return;
+    let cancelled = false;
+    void (async () => {
+      const rec = await resolveStartupModelChoice(appSettingsRef.current.startupModel);
+      if (cancelled) return;
+      setStartupRecommendation(rec);
+      setBootTarget(rec.choice);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
   const showLanding = phase === "ready" && displayMessages.length === 0 && !assistantBuffer;
   const landingContent = useLandingContent();
   const loadingByteLine = useMemo(() => {
@@ -2000,7 +2334,7 @@ function App() {
       stopCameraMode();
       return;
     }
-    if ((!isLoaded && !QA_VISION_MODE) || isGenerating) return;
+    if ((!isGemmaLoaded && !QA_VISION_MODE) || isGenerating) return;
     setCameraError(null);
     const support = checkBrowserVisionSupport();
     if (!support.ok) {
@@ -2017,7 +2351,7 @@ function App() {
       setCameraMode(false);
       setCameraStream(null);
     }
-  }, [cameraMode, isGenerating, isLoaded, stopCameraMode]);
+  }, [cameraMode, isGenerating, isGemmaLoaded, stopCameraMode]);
 
   useEffect(() => {
     if (!QA_VISION_MODE || cameraModeRef.current) return;
@@ -2031,7 +2365,7 @@ function App() {
 
   const startVisionPipeline = useCallback(
     async (video: HTMLVideoElement) => {
-      if (!cameraStream || (!isLoaded && !QA_VISION_MODE) || cameraBootingRef.current || cameraLoopRef.current) return;
+      if (!cameraStream || (!isGemmaLoaded && !QA_VISION_MODE) || cameraBootingRef.current || cameraLoopRef.current) return;
       cameraBootingRef.current = true;
       try {
         await attachStreamToVideo(video, cameraStream);
@@ -2259,7 +2593,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (!cameraMode || !cameraStream || (!isLoaded && !QA_VISION_MODE)) return;
+    if (!cameraMode || !cameraStream || (!isGemmaLoaded && !QA_VISION_MODE)) return;
     const video = cameraVideoRef.current;
     if (!video || cameraLoopRef.current || cameraBootingRef.current) return;
     void startVisionPipeline(video);
@@ -2409,6 +2743,41 @@ function App() {
     persistSelectedModelId(id);
   }, []);
 
+  const handleDownloadLocalText = useCallback(
+    async (entry: RackModelEntry) => {
+      if (!entry.hfModelId || localTextDownloadingId) return;
+      setLocalTextDownloadingId(entry.id);
+      setLocalTextDownloadPct(0);
+      setLocalTextDownloadLabel("מתחיל הורדה…");
+      try {
+        await downloadLocalTextModel(
+          entry.id,
+          entry.hfModelId,
+          (p) => {
+            setLocalTextDownloadPct(p.pct);
+            setLocalTextDownloadLabel(p.message);
+          },
+          appSettingsRef.current.localText.inferenceBackend,
+        );
+        setModelRack(loadModelRack());
+        setStatus(`${entry.label} מוכן לשיחה`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setStatus(`שגיאת הורדה: ${msg}`);
+      } finally {
+        setLocalTextDownloadingId(null);
+        setLocalTextDownloadPct(0);
+        setLocalTextDownloadLabel("");
+      }
+    },
+    [localTextDownloadingId],
+  );
+
+  const pickerModelRack = useMemo(
+    () => applyLocalTextDownloadStates(modelRack, localTextDownloadingId),
+    [modelRack, localTextDownloadingId],
+  );
+
   const handleRackUpdated = useCallback((_rack?: RackModelEntry[]) => {
     setModelRack(loadModelRack());
   }, []);
@@ -2424,8 +2793,11 @@ function App() {
         });
         if (cancelled) return;
         setModelRack(rack);
-        const pickable = pickableRackModels(rack);
-        if (!pickable.some((r) => r.id === selectedRackModelRef.current)) {
+        if (
+          !rack.some(
+            (r) => r.id === selectedRackModelRef.current && isSelectableInPicker(r),
+          )
+        ) {
           persistSelectedModelId(GEMMA_RACK_ID);
           setSelectedRackModelId(GEMMA_RACK_ID);
         }
@@ -2824,6 +3196,7 @@ function App() {
   const stopGeneration = useCallback(() => {
     if (!isGenerating) return;
     workerRef.current?.postMessage({ type: "abort" });
+    abortLocalTextGeneration();
     setStatus("עוצר…");
   }, [isGenerating]);
 
@@ -3013,6 +3386,9 @@ function App() {
         }
       } else if (msg.type === "loaded") {
         setWorkerBootError(null);
+        setIsGemmaLoaded(true);
+        setChatModelAvailability("gemma");
+        setCapabilitiesFailureReason(null);
         setIsLoaded(true);
         setIsLoading(false);
         setProgress(100);
@@ -3093,6 +3469,10 @@ function App() {
             setWorkerBootError(null);
             setStatus("WebGPU לא זמין — ממשיך ב-WASM (CPU)…");
             loadModel({ forceWasm: true });
+            return;
+          }
+          if (isLoadingRef.current) {
+            enterCapabilitiesOnlyModeRef.current(errText);
             return;
           }
           if (isWebGpuInferenceError(errText)) {
@@ -3264,8 +3644,110 @@ function App() {
     });
   }, [isLoaded, isGenerating]);
 
+  const enterCapabilitiesOnlyModeRef = useRef<(failureReason?: string) => void>(() => {});
+
+  const enterCapabilitiesOnlyMode = useCallback((failureReason?: string) => {
+    setChatModelAvailability("none");
+    setCapabilitiesFailureReason(failureReason?.trim() || null);
+    setWorkerBootError(null);
+    setIsLoading(false);
+    setIsGemmaLoaded(false);
+    setProgress(0);
+    setLocalTextDownloadingId(null);
+    setLocalTextDownloadPct(0);
+    setLocalTextDownloadLabel("");
+    terminateLocalTextWorker();
+    const rack = loadModelRack();
+    setModelRack(rack);
+    const defaultId = pickCapabilitiesDefaultRackId(rack);
+    if (defaultId) {
+      setSelectedRackModelId(defaultId);
+      persistSelectedModelId(defaultId);
+    }
+    setIsLoaded(true);
+    setStatus("מצב יכולות — אין מודל שיחה");
+  }, []);
+
+  useEffect(() => {
+    enterCapabilitiesOnlyModeRef.current = enterCapabilitiesOnlyMode;
+  }, [enterCapabilitiesOnlyMode]);
+
+  const loadLocalTextBoot = async () => {
+    setWorkerBootError(null);
+    setIsLoading(true);
+    setIsLoaded(false);
+    setBootTarget("local-text");
+    setStatus("טוען SmolLM2…");
+    setProgress(0);
+    setLoadingPhase("download");
+    setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
+    setLoadingTipIndex(0);
+    loadingFileRef.current = "";
+    setLoadingFile("");
+    setSelectedRackModelId(SMOLLM_RACK_ID);
+    persistSelectedModelId(SMOLLM_RACK_ID);
+
+    const lt = appSettingsRef.current.localText;
+    const alreadyReady = readLocalTextReadyIds().includes(SMOLLM_RACK_ID);
+
+    try {
+      if (!alreadyReady) {
+        await downloadLocalTextModel(
+          SMOLLM_RACK_ID,
+          SMOLLM_HF_MODEL_ID,
+          (p) => {
+            setLocalTextDownloadPct(p.pct);
+            setLocalTextDownloadLabel(p.message);
+            setProgress(p.pct);
+            if (p.message) {
+              loadingFileRef.current = p.message;
+              setLoadingFile(p.message);
+            }
+            setLoadingBytes({
+              loaded: p.loaded,
+              total: p.total,
+              speedBps: 0,
+            });
+          },
+          lt.inferenceBackend,
+        );
+      } else {
+        setProgress(100);
+        setStatus("SmolLM כבר מותקן — מכין…");
+      }
+      setModelRack(loadModelRack());
+      setWorkerBootError(null);
+      setChatModelAvailability("local-text");
+      setCapabilitiesFailureReason(null);
+      setIsLoaded(true);
+      setIsLoading(false);
+      setProgress(100);
+      setStatus("SmolLM מוכן לשיחה");
+      setLocalTextDownloadingId(null);
+      setLocalTextDownloadPct(0);
+      setLocalTextDownloadLabel("");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      enterCapabilitiesOnlyMode(msg);
+    }
+  };
+
+  const startIntroLoad = () => {
+    void (async () => {
+      const rec = await resolveStartupModelChoice(appSettingsRef.current.startupModel);
+      setStartupRecommendation(rec);
+      setBootTarget(rec.choice);
+      if (rec.choice === "local-text") {
+        await loadLocalTextBoot();
+      } else {
+        loadModel();
+      }
+    })();
+  };
+
   const loadModel = (opts?: { forceWasm?: boolean; persistWasm?: boolean }) => {
     if (!workerRef.current) return;
+    setBootTarget("gemma");
     if (!opts?.forceWasm) wasmBootRetryRef.current = false;
     setWorkerBootError(null);
     setIsLoading(true);
@@ -3393,6 +3875,9 @@ function App() {
       const after = await estimateUsage();
       setProgress(0);
       setIsLoaded(false);
+      setIsGemmaLoaded(false);
+      setChatModelAvailability("gemma");
+      setCapabilitiesFailureReason(null);
       setIsLoading(false);
       setAssistantBuffer("");
       assistantBufferRef.current = "";
@@ -3422,6 +3907,7 @@ function App() {
     const normalized: AppSettings = {
       ...s,
       inferenceBackend: normalizeInferenceBackend(s.inferenceBackend),
+      localText: mergeLocalTextSettings(s.localText),
     };
     setAppSettings((prev) => {
       if (
@@ -3433,6 +3919,9 @@ function App() {
           setIsLoading(false);
           setStatus("הגדרות השתנו — לחץ «התחל» כדי לטעון מחדש");
         });
+      }
+      if (JSON.stringify(normalized.localText) !== JSON.stringify(prev.localText)) {
+        terminateLocalTextWorker();
       }
       return normalized;
     });
@@ -4457,6 +4946,280 @@ function App() {
     qaChatBridge.setReplySource("model");
   };
 
+  const runCapabilitiesOnlyTurn = async (
+    trimmed: string,
+    priorChatMessages: ChatMessage[],
+    effectivePrompt: string,
+    chatTopic: ChatTopic,
+  ) => {
+    isGeneratingRef.current = true;
+    setIsGenerating(true);
+    setAssistantBuffer("");
+    assistantBufferRef.current = "";
+    setStatus("מחפש…");
+
+    const priorTurns = buildHistoryForWorker(priorChatMessages).filter(
+      (t) => t.role === "user" || t.role === "assistant",
+    );
+
+    const deliverCanned = (
+      reply: string,
+      webContext: string,
+      replySource: string,
+      activityTitle?: string,
+    ) => {
+      qaChatBridge.setWebContext(webContext);
+      qaChatBridge.setReplySource(replySource);
+      assistantBufferRef.current = reply;
+      setAssistantBuffer(reply);
+      setStatus("Ready");
+      if (activityTitle) {
+        pushActivity({
+          direction: "system",
+          kind: "web_search",
+          title: activityTitle,
+          detail: reply.slice(0, 1200),
+        });
+      }
+      finalizeAssistantReply(false);
+    };
+
+    try {
+      const preludeOutcome = await runTextChatTurnPrelude(
+        {
+          trimmed,
+          effectivePrompt,
+          priorTurns,
+          chatTopic,
+          startupContext,
+          desktopLayout,
+        },
+        {
+          setStatus,
+          setStreamingSearchSources,
+          setSearchResultsPayload,
+          setSearchResultsOpen,
+          setArtifactOpen,
+          setGlobePanelOpen,
+          setGlobeCommand,
+          setGamesPanelOpen,
+          setGamesPanelGames,
+          setGamesPanelTitle,
+          setGamesPanelCategory,
+          setGamesEmbedGame,
+          setStreamingGameCategoryPicker,
+          pushActivity,
+          resolveSearchPlan: resolveSearchPlanForQuery,
+          qaForceLlm: () => qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending(),
+          qaHasPending: () => qaChatBridge.hasPending(),
+          pendingWebSearchRef,
+          pendingTimeWidgetRef,
+          pendingGameCategoryPickerRef,
+          pendingGameBrowseCategoryRef,
+          deliverCanned,
+        },
+      );
+
+      if (preludeOutcome.action === "canned") {
+        qaChatBridge.notifyTurnComplete(assistantBufferRef.current);
+        return;
+      }
+
+      const fallback = buildCapabilitiesOnlyFallbackMessage(
+        capabilitiesFailureReason ?? undefined,
+      );
+      qaChatBridge.setWebContext(preludeOutcome.ctx.webContext);
+      qaChatBridge.setReplySource("capabilities-only");
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: fallback },
+      ]);
+      setStatus("Ready");
+      qaChatBridge.notifyTurnComplete(fallback);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatus(msg);
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: `⚠️ ${msg}` },
+      ]);
+      qaChatBridge.notifyTurnFailed(msg);
+    } finally {
+      isGeneratingRef.current = false;
+      setIsGenerating(false);
+      focusComposerInput();
+    }
+  };
+
+  const runLocalTextTurn = async (trimmed: string, priorChatMessages: ChatMessage[]) => {
+    const rack = applyLocalTextDownloadStates(modelRackRef.current, localTextDownloadingId);
+    const model =
+      getRackModelById(selectedRackModelRef.current, rack) ??
+      getRackModelById(GEMMA_RACK_ID, rack)!;
+
+    if (!model.hfModelId || model.status !== "ready") {
+      setStatus("הורד את המודל מהבורר לפני שיחה");
+      return;
+    }
+
+    isGeneratingRef.current = true;
+    setIsGenerating(true);
+    setAssistantBuffer("");
+    assistantBufferRef.current = "";
+    streamTokenCountRef.current = 0;
+    setStreamTokenCount(0);
+    setStatus(`שיחה עם ${model.label}…`);
+
+    const effectivePrompt = trimmed;
+    const priorTurns = buildHistoryForWorker(priorChatMessages)
+      .filter((t) => t.role === "user" || t.role === "assistant");
+    const chatTopic = classifyChatTopic(trimmed);
+    const uiLang = getChatUiLanguage();
+    const bridgeHe = uiLang === "he";
+
+    const deliverCanned = (
+      reply: string,
+      webContext: string,
+      replySource: string,
+      activityTitle?: string,
+    ) => {
+      qaChatBridge.setWebContext(webContext);
+      qaChatBridge.setReplySource(replySource);
+      assistantBufferRef.current = reply;
+      setAssistantBuffer(reply);
+      setStatus("Ready");
+      if (activityTitle) {
+        pushActivity({
+          direction: "system",
+          kind: "web_search",
+          title: activityTitle,
+          detail: reply.slice(0, 1200),
+        });
+      }
+      finalizeAssistantReply(false);
+    };
+
+    try {
+      const preludeOutcome = await runTextChatTurnPrelude(
+        {
+          trimmed,
+          effectivePrompt,
+          priorTurns,
+          chatTopic,
+          startupContext,
+          desktopLayout,
+        },
+        {
+          setStatus,
+          setStreamingSearchSources,
+          setSearchResultsPayload,
+          setSearchResultsOpen,
+          setArtifactOpen,
+          setGlobePanelOpen,
+          setGlobeCommand,
+          setGamesPanelOpen,
+          setGamesPanelGames,
+          setGamesPanelTitle,
+          setGamesPanelCategory,
+          setGamesEmbedGame,
+          setStreamingGameCategoryPicker,
+          pushActivity,
+          resolveSearchPlan: resolveSearchPlanForQuery,
+          qaForceLlm: () => qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending(),
+          qaHasPending: () => qaChatBridge.hasPending(),
+          pendingWebSearchRef,
+          pendingTimeWidgetRef,
+          pendingGameCategoryPickerRef,
+          pendingGameBrowseCategoryRef,
+          deliverCanned,
+        },
+      );
+
+      if (preludeOutcome.action === "canned") {
+        qaChatBridge.notifyTurnComplete(assistantBufferRef.current);
+        return;
+      }
+
+      const { ctx: preludeCtx } = preludeOutcome;
+      const statusSuffix = `${preludeCtx.searchHint}${preludeCtx.gameSearchHint}`;
+      setStatus(`שיחה עם ${model.label}…${statusSuffix}`);
+
+      const lt = appSettingsRef.current.localText;
+      const history = priorTurns
+        .slice(-lt.historyTurns)
+        .map((t) => ({ role: t.role, content: t.content }));
+
+      const baseSystem = buildLocalTextSystemPrompt({
+        uiLang,
+        prelude: preludeCtx,
+        pendingWebSearch: pendingWebSearchRef.current,
+        startupContext,
+        webContext: preludeCtx.webContext,
+        settings: lt,
+      });
+
+      if (bridgeHe) setStatus("מתרגם מעברית לאנגלית…");
+      const prepared = await prepareLocalTextTurnForModel(trimmed, history, uiLang, baseSystem);
+      setStatus(`שיחה עם ${model.label}…${statusSuffix}`);
+
+      let modelReply = "";
+      const maxTokens = localTextMaxNewTokens(preludeCtx, lt);
+      const reply = await generateLocalTextChat({
+        modelId: model.hfModelId,
+        systemPrompt: prepared.systemPrompt,
+        history: prepared.history,
+        prompt: prepared.prompt,
+        maxNewTokens: maxTokens,
+        temperature: preludeCtx.greeting ? Math.min(lt.temperature, 0.55) : lt.temperature,
+        topP: lt.topP,
+        backend: lt.inferenceBackend,
+        onToken: (text) => {
+          modelReply += text;
+          if (!bridgeHe) {
+            assistantBufferRef.current += text;
+            setAssistantBuffer((prev) => prev + text);
+          }
+        },
+        onStatus: setStatus,
+      });
+
+      const rawEnglish = (reply.trim() || modelReply.trim() || assistantBufferRef.current.trim() || "").trim();
+      if (bridgeHe) setStatus("מתרגם תשובה לעברית…");
+      const content =
+        (await localTextToUiLanguage(rawEnglish, uiLang)).trim() || rawEnglish || "…";
+
+      qaChatBridge.setWebContext(preludeCtx.webContext);
+      qaChatBridge.setReplySource("local-text");
+      assistantBufferRef.current = content;
+      setAssistantBuffer(content);
+      finalizeAssistantReply(false);
+      qaChatBridge.notifyTurnComplete(content);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatus(msg);
+      const partial = assistantBufferRef.current.trim();
+      if (partial) {
+        const shown = bridgeHe ? await localTextToUiLanguage(partial, uiLang).catch(() => partial) : partial;
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: shown },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: `⚠️ ${msg}` },
+        ]);
+      }
+      qaChatBridge.notifyTurnFailed(msg);
+    } finally {
+      isGeneratingRef.current = false;
+      setIsGenerating(false);
+      setAssistantBuffer("");
+      assistantBufferRef.current = "";
+      focusComposerInput();
+    }
+  };
+
   const runRackModelTurn = async (trimmed: string, effectivePrompt: string) => {
     const rack = modelRackRef.current;
     const model =
@@ -4495,17 +5258,6 @@ function App() {
 
   const sendPrompt = async (e?: FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
-    const rack = modelRackRef.current;
-    const activeRackModel =
-      getRackModelById(selectedRackModelRef.current, rack) ??
-      getRackModelById(GEMMA_RACK_ID, rack)!;
-    const usesExternalRack =
-      rackModelRunsInChat(activeRackModel) && !cameraModeRef.current;
-
-    if (!usesExternalRack && (!workerRef.current || !isLoadedRef.current)) {
-      qaChatBridge.notifyTurnFailed("model not loaded");
-      return;
-    }
     if (isGeneratingRef.current) {
       setStatus("עדיין עונה — המתן לסיום או לחץ עצור");
       qaChatBridge.notifyTurnFailed("busy");
@@ -4516,6 +5268,32 @@ function App() {
     const hasAttachments = attachmentSnapshot.length > 0;
     if (!trimmed && !hasAttachments) {
       qaChatBridge.notifyTurnFailed("empty prompt");
+      return;
+    }
+
+    const activeRackModel =
+      getRackModelById(
+        selectedRackModelRef.current,
+        applyLocalTextDownloadStates(modelRackRef.current, localTextDownloadingId),
+      ) ?? getRackModelById(GEMMA_RACK_ID, modelRackRef.current)!;
+    const usesLocalText =
+      isLocalTextChatModel(activeRackModel) && !cameraModeRef.current;
+    const usesExternalRack =
+      rackModelRunsInChat(activeRackModel) && !cameraModeRef.current;
+
+    if (usesLocalText && activeRackModel.status === "ready") {
+      if (hasAttachments || cameraModeRef.current) {
+        setStatus("SmolLM תומך רק בטקסט");
+        qaChatBridge.notifyTurnFailed("attachments not supported");
+        return;
+      }
+    } else if (
+      !usesExternalRack &&
+      !isGemmaLoadedRef.current &&
+      chatModelAvailabilityRef.current !== "none"
+    ) {
+      setStatus("טען את Gemma מדף הפתיחה או בחר SmolLM");
+      qaChatBridge.notifyTurnFailed("gemma not loaded");
       return;
     }
 
@@ -4601,6 +5379,36 @@ function App() {
     setPendingAttachments([]);
     setAttachError(null);
     focusComposerInput();
+
+    const needsCapabilitiesPath =
+      !usesExternalRack &&
+      !cameraModeRef.current &&
+      (chatModelAvailabilityRef.current === "none" ||
+        (usesLocalText && activeRackModel.status !== "ready") ||
+        (!usesLocalText && !isGemmaLoadedRef.current));
+
+    if (needsCapabilitiesPath) {
+      if (hasAttachments) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              "ללא מודל שיחה לא ניתן לנתח קבצים. בחר מודל תמונה בבורר ליצירה, או נסה חיפוש משחקים/חדשות.",
+          },
+        ]);
+        qaChatBridge.notifyTurnFailed("no chat model attachments");
+        return;
+      }
+      await runCapabilitiesOnlyTurn(trimmed, priorMessages, effectivePrompt, chatTopic);
+      return;
+    }
+
+    if (usesLocalText) {
+      await runLocalTextTurn(trimmed, priorMessages);
+      return;
+    }
     if (usesExternalRack) {
       await runRackModelTurn(trimmed, effectivePrompt);
       return;
@@ -4737,7 +5545,18 @@ function App() {
 
   return (
     <main className="app">
-      {workerBootError ? (
+      {chatModelAvailability === "none" ? (
+        <div className="worker-boot-banner capabilities-only-banner" role="status">
+          {CAPABILITIES_ONLY_BANNER_HE}
+          {capabilitiesFailureReason ? (
+            <span style={{ display: "block", marginTop: 6, opacity: 0.85 }}>
+              סיבה: {capabilitiesFailureReason}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {workerBootError && phase !== "ready" ? (
         <div className="worker-boot-banner" role="alert">
           <strong>שגיאה:</strong> {workerBootError}
           {isWebGpuInferenceError(workerBootError) ? (
@@ -4779,7 +5598,7 @@ function App() {
         onTabChange={setPluginsHubTab}
         healthSnapshot={pluginHealth}
         newsEngineStatus={newsEngineStatus}
-        gemmaReady={isLoaded}
+        gemmaReady={isGemmaLoaded}
         gemmaLoading={isLoading}
         gemmaLoadPct={downloadProgressPercent(
           loadingBytes.loaded,
@@ -4874,14 +5693,17 @@ function App() {
           loadingByteLine={loadingByteLine}
           loadingFile={loadingFile}
           loadingTip={loadingTip}
-          showWasmRetry={isWebGpuInferenceError(workerBootError ?? "")}
+          showWasmRetry={bootTarget === "gemma" && isWebGpuInferenceError(workerBootError ?? "")}
           cacheClearing={cacheClearing}
           isLoading={isLoading}
           isGenerating={isGenerating}
-          onLoad={() => loadModel()}
+          onLoad={() => startIntroLoad()}
           onRetryWasm={retryWasmLoad}
           onOpenInfo={() => setInfoModalOpen(true)}
           onClearCache={() => void clearModelCache()}
+          onContinueWithoutChat={() => enterCapabilitiesOnlyMode()}
+          startupTarget={bootTarget}
+          recommendedReasonHe={startupRecommendation?.reasonHe}
         />
       )}
 
@@ -5237,9 +6059,15 @@ function App() {
             <header className="chat-header">
               {!cameraMode ? (
                 <ChatModelPicker
-                  rack={modelRack}
+                  rack={pickerModelRack}
                   selectedId={selectedRackModelId}
                   onSelect={handleRackModelSelect}
+                  onDownloadLocalText={(entry) => void handleDownloadLocalText(entry)}
+                  downloadState={{
+                    downloadingId: localTextDownloadingId,
+                    progressPct: localTextDownloadPct,
+                    progressLabel: localTextDownloadLabel,
+                  }}
                   disabled={isGenerating}
                 />
               ) : (
@@ -5522,7 +6350,7 @@ function App() {
                   thinkingDisabled={isGenerating}
                   cameraMode={cameraMode}
                   onCameraToggle={() => void toggleCameraMode()}
-                  cameraDisabled={isGenerating || (!isLoaded && !QA_VISION_MODE)}
+                  cameraDisabled={isGenerating || (!isGemmaLoaded && !QA_VISION_MODE)}
                 />
                 <textarea
                   ref={textareaRef}

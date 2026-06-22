@@ -1959,6 +1959,37 @@ body {
   color: #ffc107;
 }
 
+.chat-model-picker-item-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-model-picker-item-wrap.is-active .chat-model-picker-item {
+  background: rgba(16, 163, 127, 0.12);
+}
+
+.chat-model-picker-item--disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.chat-model-picker-download-btn {
+  margin: 0 10px 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.1);
+  color: #7dd3fc;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.chat-model-picker-download-btn:hover {
+  background: rgba(56, 189, 248, 0.18);
+}
+
 .chat-model-picker-item-hint {
   font-size: 0.68rem;
   color: #f59e0b;

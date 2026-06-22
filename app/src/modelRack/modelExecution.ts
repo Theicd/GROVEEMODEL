@@ -242,5 +242,9 @@ export function rackModelNeedsGemma(model: RackModelEntry): boolean {
 }
 
 export function rackModelRunsInChat(model: RackModelEntry): boolean {
-  return model.adapter !== "gemma-local";
+  return model.adapter !== "gemma-local" && model.adapter !== "hf-local-text";
+}
+
+export function isLocalTextChatModel(model: RackModelEntry): boolean {
+  return model.adapter === "hf-local-text";
 }

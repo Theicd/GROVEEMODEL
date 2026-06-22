@@ -12,12 +12,14 @@ import {
   summarizeRackCounts,
   upsertFreeRackModel,
 } from "./modelRack";
+import { SMOLLM_RACK_ID } from "./localTextModels";
 import { pollinationsEntry } from "./pollinationsScan";
 
 describe("modelRack", () => {
-  it("includes built-in Gemma and default cloud fallbacks before first health check", () => {
+  it("includes built-in Gemma and downloadable SmolLM in picker rack", () => {
     const rack = loadModelRack();
     expect(rack.some((r) => r.id === GEMMA_RACK_ID && r.source === "builtin")).toBe(true);
+    expect(rack.some((r) => r.id === SMOLLM_RACK_ID && r.adapter === "hf-local-text")).toBe(true);
     expect(rack.some((r) => r.id === "pollinations-flux" && r.source === "cloud-scan")).toBe(true);
     expect(rack.some((r) => r.id === "sd-turbo-local")).toBe(false);
   });
@@ -47,9 +49,12 @@ describe("modelRack", () => {
   });
 
   it("tags entries for picker UI", () => {
-    expect(rackEntryTagLabel({ source: "builtin" } as never)).toBe("מובנה");
+    expect(rackEntryTagLabel({ source: "builtin", adapter: "gemma-local" } as never)).toBe("מובנה");
+    expect(rackEntryTagLabel({ adapter: "hf-local-text", status: "not_downloaded" } as never)).toBe(
+      "לא הורד",
+    );
+    expect(rackEntryTagLabel({ adapter: "hf-local-text", status: "ready" } as never)).toBe("מוכן");
     expect(rackEntryTagLabel({ source: "cloud-scan" } as never)).toBeNull();
-    expect(rackEntryTagLabel({ source: "hf-scan" } as never)).toBeNull();
   });
 
   it("classifies hub pipelines into rack modalities", () => {

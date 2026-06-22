@@ -15,6 +15,7 @@ type IntroMarqueeFooterProps = {
   onRetryWasm: () => void;
   onOpenInfo: () => void;
   onClearCache: () => void;
+  onContinueWithoutChat?: () => void;
 };
 
 export function IntroMarqueeFooter({
@@ -31,6 +32,7 @@ export function IntroMarqueeFooter({
   onRetryWasm,
   onOpenInfo,
   onClearCache,
+  onContinueWithoutChat,
 }: IntroMarqueeFooterProps) {
   const isStart = phase === "start";
   const { current, typedText, chipIn, phase: carouselPhase, showCursor } =
@@ -113,29 +115,43 @@ export function IntroMarqueeFooter({
             </div>
           ) : null}
 
-          {isStart ? (
+          {(isStart || phase === "loading") && (onContinueWithoutChat || isStart) ? (
             <div className="lcars-footer__links">
-              {showWasmRetry ? (
+              {onContinueWithoutChat ? (
                 <button
                   type="button"
                   className="lcars-link"
-                  onClick={onRetryWasm}
-                  disabled={isLoading || isGenerating}
+                  onClick={onContinueWithoutChat}
+                  disabled={isGenerating}
                 >
-                  WASM
+                  בלי מודל שיחה
                 </button>
               ) : null}
-              <button type="button" className="lcars-link" onClick={onOpenInfo}>
-                מידע
-              </button>
-              <button
-                type="button"
-                className="lcars-link lcars-link--muted"
-                onClick={() => void onClearCache()}
-                disabled={isGenerating || isLoading || cacheClearing}
-              >
-                {cacheClearing ? "מנקה…" : "מטמון"}
-              </button>
+              {isStart ? (
+                <>
+                  {showWasmRetry ? (
+                    <button
+                      type="button"
+                      className="lcars-link"
+                      onClick={onRetryWasm}
+                      disabled={isLoading || isGenerating}
+                    >
+                      WASM
+                    </button>
+                  ) : null}
+                  <button type="button" className="lcars-link" onClick={onOpenInfo}>
+                    מידע
+                  </button>
+                  <button
+                    type="button"
+                    className="lcars-link lcars-link--muted"
+                    onClick={() => void onClearCache()}
+                    disabled={isGenerating || isLoading || cacheClearing}
+                  >
+                    {cacheClearing ? "מנקה…" : "מטמון"}
+                  </button>
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>

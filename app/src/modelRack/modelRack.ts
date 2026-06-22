@@ -4,6 +4,7 @@ export type ModelModality = "text" | "image" | "code" | "video" | "audio" | "vis
 
 export type ModelAdapter =
   | "gemma-local"
+  | "hf-local-text"
   | "pollinations"
   | "sd-turbo-local"
   | "hf-chat"
@@ -11,7 +12,7 @@ export type ModelAdapter =
   | "hf-inference"
   | "hf-gradio-space";
 
-export type RackModelStatus = "ready" | "token_required" | "unavailable";
+export type RackModelStatus = "ready" | "token_required" | "unavailable" | "not_downloaded" | "downloading";
 
 export type RackModelSource = "builtin" | "hf-scan" | "cloud-scan" | "hf-space";
 
@@ -59,6 +60,14 @@ const BUILTIN_MODELS: RackModelEntry[] = [
 ];
 
 import { pollinationsDisplayName } from "./modelRackDisplay";
+import {
+  applyLocalTextDownloadStates,
+  getDownloadableTextBuiltins,
+  isPickerRackEntry,
+  isSelectableInPicker,
+} from "./localTextModels";
+
+export { SMOLLM_RACK_ID, SMOLLM_HF_MODEL_ID, SMOLLM_CHAT_SYSTEM } from "./localTextModels";
 
 const CORE_POLLINATIONS = ["flux", "turbo", "sdxl"] as const;
 
@@ -133,6 +142,12 @@ export function pickableRackModels(rack: RackModelEntry[]): RackModelEntry[] {
   return rack.filter(isPickableRackEntry);
 }
 
+export function pickerRackModels(rack: RackModelEntry[]): RackModelEntry[] {
+  return rack.filter(isPickerRackEntry);
+}
+
+export { isSelectableInPicker } from "./localTextModels";
+
 export function summarizeRackCounts(rack: RackModelEntry[]): RackCountSummary {
   const pickable = pickableRackModels(rack);
   return {
@@ -145,7 +160,12 @@ export function summarizeRackCounts(rack: RackModelEntry[]): RackCountSummary {
 }
 
 export function rackEntryTagLabel(entry: RackModelEntry): string | null {
-  if (entry.source === "builtin") return "מובנה";
+  if (entry.source === "builtin" && entry.adapter === "gemma-local") return "מובנה";
+  if (entry.adapter === "hf-local-text") {
+    if (entry.status === "ready") return "מוכן";
+    if (entry.status === "downloading") return "מוריד…";
+    return "לא הורד";
+  }
   return null;
 }
 
@@ -187,6 +207,9 @@ function ensureCloudFallbacks(byId: Map<string, RackModelEntry>, scanned: RackMo
 export function mergeWithBuiltinRack(scanned: RackModelEntry[]): RackModelEntry[] {
   const byId = new Map<string, RackModelEntry>();
   for (const b of BUILTIN_MODELS) byId.set(b.id, { ...b });
+  for (const d of getDownloadableTextBuiltins()) {
+    if (!byId.has(d.id)) byId.set(d.id, { ...d });
+  }
 
   const sortedScanned = sanitizeStoredScanned(scanned).sort((a, b) => b.addedAt - a.addedAt);
   for (const row of sortedScanned) {
@@ -196,12 +219,12 @@ export function mergeWithBuiltinRack(scanned: RackModelEntry[]): RackModelEntry[
 
   ensureCloudFallbacks(byId, sortedScanned);
 
-  const builtins = BUILTIN_MODELS.map((b) => byId.get(b.id)!);
-  const extras = [...byId.values()].filter(
-    (r) => r.source !== "builtin" && !BUILTIN_MODELS.some((b) => b.id === r.id),
-  );
+  const builtins = [...BUILTIN_MODELS, ...getDownloadableTextBuiltins()].map((b) => byId.get(b.id)!);
+  const builtinIds = new Set(builtins.map((b) => b.id));
+  const extras = [...byId.values()].filter((r) => !builtinIds.has(r.id));
   extras.sort((a, b) => b.addedAt - a.addedAt);
-  return pickableRackModels([...builtins, ...extras]);
+  const merged = [...builtins, ...extras];
+  return applyLocalTextDownloadStates(merged.filter(isPickerRackEntry));
 }
 
 export function loadModelRack(): RackModelEntry[] {
@@ -245,7 +268,10 @@ export function upsertFreeRackModel(entry: RackModelEntry): RackModelEntry[] {
 export function getSelectedModelId(): string {
   const rack = loadModelRack();
   const stored = readStorage<string>(SELECTED_MODEL_STORAGE_KEY);
-  if (stored && rack.some((r) => r.id === stored)) return stored;
+  if (stored) {
+    const entry = rack.find((r) => r.id === stored);
+    if (entry && isSelectableInPicker(entry)) return stored;
+  }
   return GEMMA_RACK_ID;
 }
 
