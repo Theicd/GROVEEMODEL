@@ -11,8 +11,7 @@ import { extractArticleFromUrl } from "../extract/readabilityExtract";
 import { enqueueArticleImageFetch } from "../media/imageFetchQueue";
 import { backfillMissingImages } from "../media/imageBackfill";
 import { fetchRemoteText, probeFetchBackend, isStaticWebHost, currentFetchContext } from "../fetch/remoteFetch";
-import { getCachedRssXml } from "../fetch/rssCache";
-import { parseRssXml } from "../rss/parser";
+import { fetchFeedItems as fetchFeedXml } from "../fetch/rssFeedFetch";
 import { rankRssHeadlinesForQuery, rssItemToSearchArticle, buildSearchTerms, sanitizeAiKeywords } from "../search/relevance";
 import { getEngineLibraryStats } from "./engineStats";
 import { isDeepReadEnabled } from "./deepReadGate";
@@ -227,40 +226,7 @@ export function getEngineStatus(): EngineStatus {
 }
 
 async function fetchFeedItems(feed: CatalogFeed): Promise<RssItem[]> {
-  const urls = [feed.url, ...(feed.fallbackUrls ?? [])];
-  let lastErr: unknown;
-
-  const cached = await getCachedRssXml(urls);
-  if (cached) {
-    try {
-      return parseRssXml(cached, {
-        source: feed.label,
-        sourceKey: feed.key,
-        category: feed.category,
-      });
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-
-  const ctx = currentFetchContext();
-  if (isStaticWebHost() && !ctx.proxyUrl) {
-    throw lastErr instanceof Error ? lastErr : new Error("RSS cache miss on static host");
-  }
-
-  for (const url of urls) {
-    try {
-      const xml = await fetchRemoteText(url);
-      return parseRssXml(xml, {
-        source: feed.label,
-        sourceKey: feed.key,
-        category: feed.category,
-      });
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error("Feed fetch failed");
+  return fetchFeedXml(feed, "live-first");
 }
 
 function setFeedStatus(
@@ -307,13 +273,14 @@ export async function pollAllFeeds(): Promise<void> {
       const prev = status.feedStatuses.find((s) => s.key === f.key);
       return prev ?? { key: f.key, label: f.label, state: "pending" as const };
     });
+    const sessionStart = Date.now();
 
     for (let i = 0; i < feeds.length; i += FEED_BATCH) {
       const chunk = feeds.slice(i, i + FEED_BATCH);
       const results = await Promise.allSettled(
         chunk.map(async (feed) => {
           const items = await fetchFeedItems(feed);
-          const added = await upsertRssItems(items);
+          const added = await upsertRssItems(items, { fetchedAt: sessionStart, live: true });
           return { feed, items, added };
         }),
       );

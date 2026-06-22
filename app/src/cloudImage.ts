@@ -11,6 +11,22 @@
 
 export type PollinationsModelId = "flux" | "turbo" | "sdxl";
 
+/** Models to probe on Pollinations cloud (image.pollinations.ai). */
+export const POLLINATIONS_MODEL_CANDIDATES: ReadonlyArray<string> = [
+  "flux",
+  "turbo",
+  "sdxl",
+  "flux-pro",
+  "flux-realism",
+  "flux-anime",
+  "flux-3d",
+  "pixart",
+  "playground",
+  "dreamshaper",
+  "anything",
+  "deliberate",
+];
+
 export const IMAGE_MODEL_OPTIONS: ReadonlyArray<{ id: PollinationsModelId; label: string }> = [
   { id: "flux", label: "FLUX (balanced)" },
   { id: "turbo", label: "Turbo (faster)" },
@@ -45,7 +61,7 @@ export function buildPollinationsUrl(options: BuildPollinationsUrlOptions): stri
   const prompt = (options.prompt ?? "").trim();
   if (!prompt) throw new Error("buildPollinationsUrl: prompt is required");
 
-  const model = normalizePollinationsModel(options.model);
+  const model = (options.model ?? "").trim() || DEFAULT_MODEL;
   const width = Number.isFinite(options.width) && (options.width as number) > 0 ? Math.floor(options.width as number) : DEFAULT_WIDTH;
   const height = Number.isFinite(options.height) && (options.height as number) > 0 ? Math.floor(options.height as number) : DEFAULT_HEIGHT;
   const noLogo = options.noLogo === false ? false : true;

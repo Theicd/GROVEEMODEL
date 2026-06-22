@@ -1,9 +1,5 @@
 import { Txt2ImgWorkerClient } from "web-txt2img";
 
-/**
- * Public type used by the load/generate adapters so tests can run without `web-txt2img`.
- * Keep aligned with `web-txt2img/dist/types.d.ts` `LoadProgress`.
- */
 export type LoadProgressLike = {
   phase?: string;
   message?: string;
@@ -16,11 +12,6 @@ export type GenProgressLike = {
   pct?: number;
 };
 
-/**
- * Subset of `Txt2ImgWorkerClient` we actually call. Keeps tests honest about the contract:
- * - `load(model, options, onProgress)` — options is structured-clone safe (NO functions),
- *   onProgress is the third arg and stays on the main thread.
- */
 export interface ImageWorkerClientLike {
   detect(): Promise<{ webgpu?: boolean; wasm?: boolean; shaderF16?: boolean }>;
   load(
@@ -38,14 +29,13 @@ export interface ImageWorkerClientLike {
 let client: ImageWorkerClientLike | null = null;
 let loadPromise: Promise<boolean> | null = null;
 
+export const SD_TURBO_UNAVAILABLE_MSG =
+  "SD-Turbo מקומי דורש web-txt2img — בחר FLUX (Pollinations) או התקן את החבילה";
+
 export function getSdTurboSizeNote(): string {
   return "~2.3 GB download · 512×512 · WebGPU recommended (WASM fallback may be slow)";
 }
 
-/**
- * Test seam: tests can replace the client with a mock. In production we lazily
- * build the real `Txt2ImgWorkerClient.createDefault()`.
- */
 let clientFactory: () => ImageWorkerClientLike = () =>
   Txt2ImgWorkerClient.createDefault() as unknown as ImageWorkerClientLike;
 
@@ -60,7 +50,6 @@ function getClient(): ImageWorkerClientLike {
   return client;
 }
 
-/** web-txt2img reports webgpu=true when the API exists, not when an adapter is available. */
 async function hasWebGpuAdapter(): Promise<boolean> {
   try {
     if (typeof navigator === "undefined" || !navigator.gpu?.requestAdapter) return false;
@@ -71,18 +60,10 @@ async function hasWebGpuAdapter(): Promise<boolean> {
   }
 }
 
-/**
- * Build the load options that get postMessage'd to the worker. MUST be JSON-serializable
- * (no functions / no AbortSignal). Exported for tests.
- */
 export function buildLoadOptions(useWebGpuFirst: boolean): { backendPreference: ("webgpu" | "wasm")[] } {
   return { backendPreference: useWebGpuFirst ? ["webgpu", "wasm"] : ["wasm"] };
 }
 
-/**
- * Build the generate params. MUST be JSON-serializable (no functions / no AbortSignal).
- * Exported for tests.
- */
 export function buildGenerateParams(prompt: string): {
   model: "sd-turbo";
   prompt: string;
@@ -94,18 +75,10 @@ export function buildGenerateParams(prompt: string): {
 
 export type SdTurboBackendPref = "auto" | "webgpu" | "wasm";
 
-/**
- * Loader signature. Exported so App can pass `forceBackend: "wasm"` for the
- * documented retry path when WebGPU dies mid-init (the
- * `Cannot read properties of undefined (reading 'destroy')` /
- * `A valid external Instance reference no longer exists` family of errors,
- * very common with multiple ONNX sessions sharing one GPU adapter).
- */
 export interface EnsureSdTurboLoadedOptions {
   forceBackend?: SdTurboBackendPref;
 }
 
-/** Ensures SD-Turbo weights are cached locally. Safe to call multiple times. */
 export async function ensureSdTurboLoaded(
   onStatus: (s: string) => void,
   options: EnsureSdTurboLoadedOptions = {},
@@ -117,7 +90,7 @@ export async function ensureSdTurboLoaded(
     const c = getClient();
     const cap = await c.detect();
     if (!cap.wasm) {
-      onStatus("Local image: no WASM backend");
+      onStatus(`Local image: ${SD_TURBO_UNAVAILABLE_MSG}`);
       return false;
     }
     const adapterOk = forceBackend === "wasm" ? false : await hasWebGpuAdapter();
@@ -141,7 +114,7 @@ export async function ensureSdTurboLoaded(
     }
     const reason =
       res && typeof res === "object" && "message" in res ? String((res as { message?: string }).message) : "";
-    onStatus(`Local image failed: ${reason || "load error"}`);
+    onStatus(`Local image failed: ${reason || SD_TURBO_UNAVAILABLE_MSG}`);
     loadPromise = null;
     return false;
   })();
@@ -151,11 +124,6 @@ export async function ensureSdTurboLoaded(
   return ok;
 }
 
-/**
- * Heuristic for the GPU-state errors that show up under memory pressure when
- * multiple ONNX sessions share one adapter. Used by App to decide whether to
- * retry SD-Turbo on WASM after a WebGPU failure.
- */
 export function isWebGpuStateError(message: string | null | undefined): boolean {
   if (!message) return false;
   return /reading\s+'destroy'|external Instance|GPU device was lost|Aborted\(.*\)/i.test(message);
@@ -166,7 +134,7 @@ export async function generateSdTurboPng(
   onStatus: (s: string) => void,
 ): Promise<{ ok: true; objectUrl: string } | { ok: false; message: string }> {
   const ready = await ensureSdTurboLoaded(onStatus);
-  if (!ready) return { ok: false, message: "SD-Turbo not loaded" };
+  if (!ready) return { ok: false, message: SD_TURBO_UNAVAILABLE_MSG };
 
   onStatus("Local image: generating…");
   const c = getClient();
@@ -187,7 +155,7 @@ export async function generateSdTurboPng(
     const errText =
       msg && typeof msg === "object" && "message" in msg
         ? String((msg as { message?: string }).message)
-        : "generation failed";
+        : SD_TURBO_UNAVAILABLE_MSG;
     return { ok: false, message: errText };
   } catch (e) {
     void abort();
@@ -201,7 +169,7 @@ export function revokeImageUrl(url: string | null) {
     try {
       URL.revokeObjectURL(url);
     } catch {
-      // ignore
+      /* ignore */
     }
   }
 }

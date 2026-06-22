@@ -25,5 +25,10 @@ export {
   detectCategoryFromText,
   categoryLabelHe,
   formatCategoryListForPrompt,
+  extractUserIntentPrefix,
+  isTextCompositionRequest,
+  isInlineTextTaskRequest,
+  isTextTransformRequest,
+  getIntentScanText,
 } from "./gameIntents";
 export { buildGameSearchFoundReply, buildGameSearchNotFoundReply } from "./gameReplyMessages";

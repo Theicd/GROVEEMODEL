@@ -4,6 +4,7 @@ import {
   extractNewsTopicTerms,
   isBroadNewsOverviewQuery,
   isExplicitNewsTopicSearch,
+  isSensorNewsQuery,
   isSpecificNewsTopicQuery,
   normalizeNewsEngineQuery,
 } from "./newsQueryNormalize";
@@ -12,6 +13,21 @@ describe("normalizeNewsEngineQuery", () => {
   it("maps Hebrew space news query to English", () => {
     expect(normalizeNewsEngineQuery("חפש חדשות על חלל")).toBe("space");
     expect(normalizeNewsEngineQuery("חדשות על חלל")).toBe("space");
+  });
+
+  it("maps earthquake sensor queries to RSS search terms", () => {
+    expect(normalizeNewsEngineQuery("רעידות אדמה אחרונות")).toBe("earthquake");
+    expect(normalizeNewsEngineQuery("האם היו רעידות מעל 5?")).toBe("earthquake");
+  });
+
+  it("maps flood and disaster sensor queries to RSS search terms", () => {
+    expect(normalizeNewsEngineQuery("הצפה בטורקיה")).toBe("flood");
+    expect(normalizeNewsEngineQuery("הוריקן באירופה")).toBe("disaster");
+  });
+
+  it("marks sensor queries without strict Hebrew topic filter", () => {
+    expect(isSensorNewsQuery("רעידות אדמה")).toBe(true);
+    expect(isSpecificNewsTopicQuery("רעידות אדמה אחרונות")).toBe(false);
   });
 
   it("maps London from Hebrew", () => {

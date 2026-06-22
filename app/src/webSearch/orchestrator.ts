@@ -10,9 +10,14 @@ import {
   isMoviesQuery,
   isLikelyMediaTitleQuery,
   isProductsQuery,
+  isIsraelCinemaNowQuery,
+  shouldSearchLiveMedia,
   sanitizeSearchQuery,
   stripSearchVerb,
 } from "./intents";
+import { isOpenWebTopicQuery } from "./openWebTopicDetect";
+import { needsOpenWebEnrichment } from "./openWebTopics";
+import { buildWebTopicSearchPlan } from "./webTopicQueryPlan";
 import { fetchCurrencySearch } from "./providers/frankfurter";
 import { fetchDistanceSearch } from "./providers/distance";
 import { fetchEarthquakeSearch } from "./providers/usgsEarthquake";
@@ -40,7 +45,10 @@ import { fetchCommoditySearch, fetchMarketQuoteSearch } from "./providers/market
 import { fetchHackerNewsSearch } from "./providers/hackerNews";
 import { fetchSpaceXLaunchSearch } from "./providers/spacexLaunch";
 import { fetchUnsupportedSource } from "./providers/unsupported";
-import { fetchSearxngSearch } from "./providers/searxng";
+import { fetchSearxngSearch, isSearxngConfigured } from "./providers/searxng";
+import { fetchOpenSerpSearch, isOpenSerpConfigured } from "./providers/openserp";
+import { fetchTavilySearch, isTavilyConfigured } from "./providers/tavily";
+import { fetchScavioSearch, isScavioConfigured } from "./providers/scavio";
 import { fetchAirQualitySearch } from "./providers/openMeteoAirQuality";
 import { fetchArxivSearch } from "./providers/arxiv";
 import { fetchUrlContextSearch } from "./providers/urlContext";
@@ -53,6 +61,7 @@ import { fetchPeerTubeVideosSearch } from "./providers/peertubeMedia";
 import { fetchInternetArchiveMediaSearch } from "./providers/internetArchiveMedia";
 import { fetchInvidiousVideosSearch } from "./providers/invidiousMedia";
 import { fetchIsraeliProductsSearch } from "./providers/israeliProducts";
+import { fetchLiveMediaSearch } from "./providers/liveMediaSearch";
 import { applySnapshotFallbacks } from "../liveWorld/snapshotFallback";
 import { pingGlobeForLiveSnapshot } from "../liveWorld/bridge";
 import { buildCapabilityLiveReply, buildWebFallbackNoDataReply } from "./capabilityReplyMessages";
@@ -120,12 +129,61 @@ const cached = (
 const mergeIntents = (a: SearchIntent[], b: SearchIntent[]): SearchIntent[] =>
   [...new Set([...a, ...b])];
 
+const WEB_MERGE_PROVIDERS = new Set<SearchSourceResult["provider"]>([
+  "tavily",
+  "scavio",
+  "searxng",
+  "openserp",
+]);
+
+const dedupeWebHitsByUrl = (hits: NonNullable<SearchSourceResult["webHits"]>) => {
+  const byUrl = new Map<string, (typeof hits)[number]>();
+  for (const hit of hits) {
+    const key = hit.url.trim().toLowerCase();
+    if (!key) continue;
+    const prev = byUrl.get(key);
+    if (!prev || (hit.snippet?.length ?? 0) > (prev.snippet?.length ?? 0)) {
+      byUrl.set(key, hit);
+    }
+  }
+  return [...byUrl.values()];
+};
+
+/** Merge web hits from parallel engine queries — keep best snippets per URL. */
+const mergeWebProviderSources = (
+  prev: SearchSourceResult,
+  next: SearchSourceResult,
+): SearchSourceResult => {
+  const webHits = dedupeWebHitsByUrl([...(prev.webHits ?? []), ...(next.webHits ?? [])]);
+  const textBlocks = [prev.text, next.text]
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t, i, arr) => arr.indexOf(t) === i);
+  return {
+    ...prev,
+    ok: prev.ok || next.ok,
+    text: textBlocks.join("\n"),
+    webHits: webHits.length ? webHits : prev.webHits ?? next.webHits,
+    mediaHits: [...(prev.mediaHits ?? []), ...(next.mediaHits ?? [])],
+    error: prev.ok ? prev.error : next.ok ? undefined : next.error ?? prev.error,
+    latencyMs: Math.max(prev.latencyMs, next.latencyMs),
+  };
+};
+
 const dedupeSources = (sources: SearchSourceResult[]): SearchSourceResult[] => {
   const byProvider = new Map<string, SearchSourceResult>();
   for (const s of sources) {
     const key = s.provider === "grovee-news" ? `${s.provider}:${s.label}` : s.provider;
     const prev = byProvider.get(key);
-    if (!prev || (s.ok && !prev.ok)) byProvider.set(key, s);
+    if (!prev) {
+      byProvider.set(key, s);
+      continue;
+    }
+    if (WEB_MERGE_PROVIDERS.has(s.provider)) {
+      byProvider.set(key, mergeWebProviderSources(prev, s));
+    } else if (s.ok && !prev.ok) {
+      byProvider.set(key, s);
+    }
   }
   return [...byProvider.values()];
 };
@@ -301,6 +359,9 @@ const buildTasksForQuery = (
   if (intents.includes("youtube")) {
     pushYouTubeTasks(tasks, q, options);
   }
+  if (intents.includes("livemedia")) {
+    tasks.push(trackTask(cached("live-tv", q, () => fetchLiveMediaSearch(q, { panelSearch: options?.panelSearch })), options));
+  }
   if (intents.includes("wikipedia")) {
     const wikiQ = stripSearchVerb(q);
     tasks.push(trackTask(cached("wikipedia-en", wikiQ, () => fetchWikipediaSearch(wikiQ, "en")), options));
@@ -313,30 +374,41 @@ const buildTasksForQuery = (
   }
 
   if (options?.panelSearch) {
+    const openWebTopic = isOpenWebTopicQuery(q);
     const wikiQ = stripSearchVerb(q) || q;
-    if (!intents.includes("wikipedia")) {
+    if (!intents.includes("wikipedia") && !openWebTopic) {
       tasks.push(trackTask(cached("wikipedia-en", wikiQ, () => fetchWikipediaSearch(wikiQ, "en")), options));
       tasks.push(trackTask(cached("wikipedia-he", wikiQ, () => fetchWikipediaSearch(wikiQ, "he")), options));
     }
-    if (!intents.includes("github")) {
+    if (!intents.includes("github") && !openWebTopic) {
       tasks.push(trackTask(cached("github", q, () => fetchGitHubSearch(q)), options));
     }
-    if (!intents.includes("movies") && (isMoviesQuery(q) || isLikelyMediaTitleQuery(q))) {
+    if (
+      !openWebTopic &&
+      !intents.includes("movies") &&
+      (isMoviesQuery(q) || isLikelyMediaTitleQuery(q)) &&
+      !isIsraelCinemaNowQuery(q)
+    ) {
       tasks.push(trackTask(cached("movie-catalog", q, () => fetchMovieCatalogSearch(q)), options));
     }
-    if (!intents.includes("images")) {
+    if (!intents.includes("images") && !openWebTopic) {
       tasks.push(trackTask(cached("pixabay-images", q, () => fetchPixabayImagesSearch(q)), options));
     }
-    if (!intents.includes("video")) {
+    if (!intents.includes("video") && !openWebTopic) {
       tasks.push(trackTask(cached("pixabay-videos", q, () => fetchPixabayVideosSearch(q)), options));
     }
-    pushFederatedVideoTasks(tasks, q, options);
-    if (!intents.includes("products") && isProductsQuery(q)) {
+    if (!openWebTopic) {
+      pushFederatedVideoTasks(tasks, q, options);
+    }
+    if (!intents.includes("products") && isProductsQuery(q) && !openWebTopic) {
       tasks.push(trackTask(cached("israeli-products", q, () => fetchIsraeliProductsSearch(q)), options));
     }
-    if (!intents.includes("huggingface")) {
+    if (!intents.includes("huggingface") && !openWebTopic) {
       tasks.push(trackTask(cached("huggingface-models", q, () => fetchHuggingFaceModelsSearch(q)), options));
       tasks.push(trackTask(cached("huggingface-datasets", q, () => fetchHuggingFaceDatasetsSearch(q)), options));
+    }
+    if (!intents.includes("livemedia") && shouldSearchLiveMedia(q, true) && !openWebTopic) {
+      tasks.push(trackTask(cached("live-tv", q, () => fetchLiveMediaSearch(q, { panelSearch: true })), options));
     }
   }
 
@@ -353,9 +425,26 @@ const runSingleQuerySearch = async (
   let tasks = buildTasksForQuery(q, mergedIntents, options);
 
   const wantWeb = shouldAllowWebFallback(tasks.length, options?.plan, q);
+  const webQ = q;
 
   if (wantWeb) {
-    tasks.push(trackTask(cached("searxng", q, () => fetchSearxngSearch(q)), options));
+    if (isOpenSerpConfigured()) {
+      tasks.push(
+        trackTask(
+          cached("openserp", webQ, () => fetchOpenSerpSearch(webQ)),
+          options,
+        ),
+      );
+    }
+    if (isTavilyConfigured()) {
+      tasks.push(trackTask(cached("tavily", webQ, () => fetchTavilySearch(webQ)), options));
+    }
+    if (isScavioConfigured()) {
+      tasks.push(trackTask(cached("scavio", webQ, () => fetchScavioSearch(webQ)), options));
+    }
+    if (isSearxngConfigured()) {
+      tasks.push(trackTask(cached("searxng", webQ, () => fetchSearxngSearch(webQ)), options));
+    }
   }
 
   let settled = tasks.length ? await Promise.all(tasks) : [];
@@ -370,14 +459,18 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
   const route = routeQuery(q, options?.plan);
   const intents = route.intents;
   const panelMode = options?.panelSearch === true;
+  const openWebPlan = buildWebTopicSearchPlan(q);
   const effectiveRoute = panelMode
     ? {
         ...route,
         useWebFallback: true,
-        blendNewsWithWeb: true,
+        blendNewsWithWeb: openWebPlan ? false : true,
+        queries: openWebPlan ? openWebPlan.engineQueries : route.queries,
         answerShape: route.answerShape === "short_fact" ? ("overview" as const) : route.answerShape,
       }
-    : route;
+    : openWebPlan
+      ? { ...route, queries: openWebPlan.engineQueries, blendNewsWithWeb: false }
+      : route;
   // #region agent log
   agentDebugLog("H1", "orchestrator.ts:runWebSearch", "route selected", { queryPreview: q.slice(0, 120), route: { intents, queries: effectiveRoute.queries, answerShape: effectiveRoute.answerShape, useWebFallback: effectiveRoute.useWebFallback, blendNewsWithWeb: effectiveRoute.blendNewsWithWeb } });
   // #endregion
@@ -430,7 +523,15 @@ export const runWebSearch = async (query: string, options?: WebSearchOptions): P
 
   const brief = buildSearchBrief(settled, mergedIntents, q, undefined, effectiveRoute.answerShape);
   const briefMax =
-    isCrossSourceQuery(q) ? 1400 : mergedIntents.includes("news") ? (isStaticWebHost() ? 2200 : 1800) : 900;
+    needsOpenWebEnrichment(q)
+      ? 1800
+      : isCrossSourceQuery(q)
+        ? 1400
+        : mergedIntents.includes("news")
+          ? isStaticWebHost()
+            ? 2200
+            : 1800
+          : 900;
   const okContext = formatSearchBriefContext(
     brief,
     q,

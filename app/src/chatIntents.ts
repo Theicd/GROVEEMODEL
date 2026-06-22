@@ -391,7 +391,7 @@ export type ChatTopic =
 const DESIGN_RE =
   /עיצוב|כסא|כיסא|חומר|מינימל|אווירה|חדר|ריהוט|סגנון|design|chair|material|minimal|room decor|interior/i;
 const BORED_PLAY_RE =
-  /משעמם|משחק|נשחק|\bbored\b|play a game|let'?s play|מה אתה מציע|מה להציע|kill time|entertain/i;
+  /משעמם|נשחק|רוצה\s+לשחק|\bbored\b|play a game|let'?s play|מה אתה מציע|מה להציע|kill time|entertain/i;
 
 export const classifyChatTopic = (text: string): ChatTopic => {
   const t = text.trim();

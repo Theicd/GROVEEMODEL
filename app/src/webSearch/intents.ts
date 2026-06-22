@@ -4,6 +4,13 @@ import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceInten
 import { isLocalContextTimeQuery } from "../startupContext/localTime";
 import { hasUrlInQuery, isGitHubRepoUrlInQuery } from "./urlExtract";
 import {
+  isEuroFootballNotCurrency,
+  isIsraelCinemaNowQuery,
+  isOpenWebTopicQuery,
+} from "./openWebTopicDetect";
+
+export { isIsraelCinemaNowQuery } from "./openWebTopicDetect";
+import {
   isGeneralNewsDigestQuery,
   isIsraelNewsQuery,
   isWorldHeadlineQuery,
@@ -134,7 +141,6 @@ export const isStaticFactualQuery = (text: string): boolean => {
   const q = text.trim();
   if (!q) return false;
   if (isCountryQuery(q) && !hasLiveTemporalSignal(q)) return true;
-  if (isDistanceQuery(q) && !/(?:מצא|find|חפש|search)/i.test(q)) return true;
   if (/^(?:מה\s+(?:ה)?(?:ביר(?:ה|ת)|מטבע)|what\s+(?:is\s+)?(?:the\s+)?(?:capital|currency|population))/i.test(q)) {
     return true;
   }
@@ -181,6 +187,12 @@ export const isCommodityPriceQuery = (text: string): boolean =>
 /** Live stock / equity / index prices. */
 export const isMarketPriceQuery = (text: string): boolean => {
   if (isCommodityPriceQuery(text)) return false;
+  const stockRef =
+    /(?:מנ(?:י(?:ה|ית|ות)?|stock)|NVIDIA|AAPL|TSLA|NVDA|אפל\b)/i.test(text);
+  const weeklyMove =
+    /(?:בכמה\s+אחוז|אחוז(?:ים)?|percent|%).*(?:על(?:ת(?:ה)?|ה)|ירד(?:ה)?|שינוי)/i.test(text) ||
+    /(?:על(?:ת(?:ה)?|ה)|ירד(?:ה)?|שינוי).*(?:שבוע|week|7\s+days)/i.test(text);
+  if (stockRef && weeklyMove) return true;
   return (
     /(?:מחיר|price|quote|שער|נסחר|מצב|איך\s+עומד).*(?:מנ(?:י(?:ה|ית|ות)?|stock)|NVIDIA|AAPL|TSLA|NVDA|אפל\b)/i.test(text) ||
     /(?:מחיר|price)\s+(?:של|of)?\s*(?:ה)?(?:מנ(?:י(?:ה|ית))?)/i.test(text) ||
@@ -189,6 +201,10 @@ export const isMarketPriceQuery = (text: string): boolean => {
     /(?:מה\s+)?(?:מצב|ערך)\s+(?:של\s+)?(?:מדד\s+)?(?:s&p|sp\s*500|nasdaq|dow)/i.test(text)
   );
 };
+
+export const isWeeklyMarketChangeQuery = (text: string): boolean =>
+  /(?:שבוע(?:\s+האחרון)?|past\s+week|last\s+week|7\s+days|בשבוע)/i.test(text) &&
+  /(?:מנ(?:י(?:ה|ית|ות)?|stock)|AAPL|אפל\b|NVDA|TSLA|nasdaq|s&p|מדד)/i.test(text);
 
 export const isHuggingFaceImageQuery = (text: string): boolean =>
   /(?:מודel(?:י|ים)?|מודל(?:י|ים)?).{0,12}תמונה|תמונה.{0,12}(?:מודel|מודל)|image\s+model|text-?to-?image|stable\s*diffusion|sdxl|flux|diffusion|יצירת\s+תמונה|דיפוז|תמונה\s+פופולר/i.test(
@@ -367,11 +383,13 @@ export const needsWebSearch = (text: string): boolean => {
   if (!q || isInlineTextTaskRequest(q) || isCasualConversation(q)) return false;
   if (hasUrlInQuery(q)) return true;
   if (userRequestsSearch(q)) return true;
+  if (isOpenWebTopicQuery(q)) return true;
   if (isWorldOverviewQuery(q)) return true;
   if (isCrossSourceQuery(q)) return true;
   if (/\bawacs\b/i.test(q)) return true;
 
   if (isGovernmentQuery(q)) return true;
+  if (isPlacesQuery(q) || isDistanceQuery(q)) return true;
   if (isCommodityPriceQuery(q) || isMarketPriceQuery(q) || isRedditQuery(q)) return true;
   if (isProductsQuery(q)) return true;
   if (shouldSearchYouTube(q) || isMusicQuery(q)) return true;
@@ -434,6 +452,7 @@ export const isGovernmentQuery = (text: string): boolean =>
   );
 
 export const isCurrencyQuery = (text: string): boolean => {
+  if (isEuroFootballNotCurrency(text)) return false;
   // "מה המטבע של ברזיל" → country info, not FX rate
   if (/מטבע\s+(?:של|of)\s+/i.test(text) && !/(?:שער|יחס|המר|exchange|rate|convert|קונה|buy|\bUSD\b|\bBRL\b|\bEUR\b)/i.test(text)) {
     return false;
@@ -443,7 +462,7 @@ export const isCurrencyQuery = (text: string): boolean => {
   }
   return (
     /(?:\bUSD\b|\bEUR\b|\bILS\b|\bGBP\b|\bBRL\b|דולר|יורו|שקל|ברזילאי|real)/i.test(text) &&
-    /(?:ל|to|→|->|שער|rate|exchange|יחס|המר|קונה|buy|דולר|dollar)/i.test(text)
+    /(?:ל|to|→|->|שער|rate|exchange|יחס|המר|קונה|buy|דולר|dollar|שווים|worth)/i.test(text)
   );
 };
 
@@ -752,6 +771,10 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
     intents.push("commodity");
     return intents;
   }
+  if (isOpenWebTopicQuery(query)) {
+    if (isNewsQuery(query)) intents.push("news");
+    return [...new Set(intents)];
+  }
   if (isMarketPriceQuery(query)) {
     intents.push("market");
     return intents;
@@ -767,7 +790,7 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   }
   if (shouldSearchYouTube(query)) intents.push("youtube");
   if (isLiveMediaQuery(query)) intents.push("livemedia");
-  if (isMoviesQuery(query)) intents.push("movies");
+  if (isMoviesQuery(query) && !isIsraelCinemaNowQuery(query)) intents.push("movies");
   if (isImagesQuery(query)) intents.push("images");
   if (isVideoMediaQuery(query)) intents.push("video");
   if (isProductsQuery(query)) intents.push("products");

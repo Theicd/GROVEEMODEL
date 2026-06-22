@@ -18,10 +18,8 @@ type PipedSearchItem = {
 type PipedSearchResponse = { items?: PipedSearchItem[] };
 
 const DEFAULT_PIPED = [
-  "https://pipedapi.adminforge.de",
   "https://api.piped.projectsegfau.lt",
   "https://pipedapi.in.projectsegfau.lt",
-  "https://pipedapi.kavin.rocks",
 ];
 
 const getPipedInstances = (): string[] => {

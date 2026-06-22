@@ -5,13 +5,11 @@ import { formatPopularityLabel } from "./gameSearch/gameAliases";
 
 
 type Props = {
-
   game: OnlineGame;
-
   compact?: boolean;
-
   onPlay: (game: OnlineGame) => void;
-
+  isFavorite?: boolean;
+  onToggleFavorite?: (game: OnlineGame) => void;
 };
 
 
@@ -28,7 +26,7 @@ function ratingStars(rating: number | null | undefined): string | null {
 
 
 
-export function GameCard({ game, compact, onPlay }: Props) {
+export function GameCard({ game, compact, onPlay, isFavorite, onToggleFavorite }: Props) {
 
   const stars = ratingStars(game.rating);
 
@@ -91,7 +89,20 @@ export function GameCard({ game, compact, onPlay }: Props) {
         <span className="game-card-badge">{platformLabel.toUpperCase()}</span>
 
         {game.curated ? <span className="game-card-curated">TOP</span> : null}
-
+        {onToggleFavorite ? (
+          <button
+            type="button"
+            className={`game-card-fav${isFavorite ? " is-active" : ""}`}
+            aria-label={isFavorite ? "הסר ממועדפים" : "הוסף למועדפים"}
+            title={isFavorite ? "הסר ממועדפים" : "הוסף למועדפים"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(game);
+            }}
+          >
+            {isFavorite ? "★" : "☆"}
+          </button>
+        ) : null}
       </div>
 
       <div className="game-card-body">

@@ -31,7 +31,10 @@ export const CONNECTED_SEARCH_PROVIDERS: SearchProviderInfo[] = [
   { id: "wikidata-gov", icon: "🏛", labelHe: "Wikidata — ממשל וראשי מדינה", examplesHe: ["מי ראש הממשלה של בריטניה?"] },
   { id: "grovee-news", icon: "📰", labelHe: "חדשות GROVEE NEWS — מאגר מקומי + Topics", examplesHe: ["כותרות עולם", "חדשות ישראל", "חדשות AI"], tier: "news" },
   { id: "url-context", icon: "🔗", labelHe: "קישור — GitHub / HF / arXiv / Wikipedia", examplesHe: ["https://github.com/org/repo"], tier: "structured" },
-  { id: "searxng", icon: "🌐", labelHe: "SearXNG — חיפוש web (fallback בלבד)", examplesHe: ["מה קורה בעולם הרובוטיקה?"], tier: "web_fallback" },
+  { id: "openserp", icon: "🔎", labelHe: "OpenSERP — חיפוש web מקומי (Plugin)", examplesHe: ["חפש באינטרנט על WebGPU", "מה קורה ברובוטיקה?"], tier: "web_fallback" },
+  { id: "searxng", icon: "🌐", labelHe: "SearXNG — חיפוש web (fallback)", examplesHe: ["מה קורה בעולם הרובוטיקה?"], tier: "web_fallback" },
+  { id: "tavily", icon: "🔍", labelHe: "Tavily — חיפוש אתרים כללי", examplesHe: ["מידע על נושא X", "אתרים על AI"], tier: "web_fallback" },
+  { id: "scavio", icon: "🌐", labelHe: "Scavio — Google Search API", examplesHe: ["חיפוש Google על נושא", "אתרים בחדשות"], tier: "web_fallback" },
 ];
 
 export const LIVE_WORLD_LAYERS_HE =

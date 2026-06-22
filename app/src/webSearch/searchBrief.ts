@@ -8,17 +8,23 @@ import type {
 } from "./types";
 import { buildDataAgeLines } from "./dataAge";
 import { LIVE_WORLD_LAYERS_HE } from "./searchProviders";
-import {
-  buildCrossSourceCorrelationLines,
+import { buildCrossSourceCorrelationLines,
   extractCrossSourceMetrics,
   shouldBuildCrossSourceCorrelation,
 } from "./crossSourceCorrelation";
+import { needsOpenWebEnrichment } from "./openWebTopics";
+import {
+  extractCinemaMoviesFromSources,
+  parseCinemaMoviesFromText,
+} from "./cinemaIlExtract";
+import { isIsraelCinemaNowQuery } from "./openWebTopicDetect";
 
 export type { SearchBrief, SearchBriefLink };
 
 const MAX_FACTS = 8;
 const MAX_LINKS = 6;
 const MAX_FACT_LEN = 120;
+const CINEMA_LISTING_FACT_MAX = 320;
 
 /** Per-provider fact caps before rerank — keeps brief focused. */
 const PROVIDER_FACT_CAPS: Partial<Record<SearchProviderId, number>> = {
@@ -36,6 +42,8 @@ const PROVIDER_FACT_CAPS: Partial<Record<SearchProviderId, number>> = {
   arxiv: 4,
   "url-context": 6,
   searxng: 4,
+  tavily: 5,
+  scavio: 5,
   "world-time": 4,
 };
 
@@ -108,9 +116,9 @@ const formatWikipedia = (text: string): string[] => {
 const formatShips = (text: string): string[] => {
   const lines = text.split("\n").filter(Boolean);
   const priority = lines.filter((l) =>
-    /^(אזור:|ספינות בטווח:|תשתיות ימיות|הערה:)/i.test(l.trim()),
+    /^(אזור:|ANSWER \(ships live\)|דיווח AIS|ספינות בטווח:|סימוני מסלול|הערה:|עודכן:)/i.test(l.trim()),
   );
-  const items = lines.filter((l) => /^\d+\./.test(l.trim())).slice(0, 6);
+  const items = lines.filter((l) => /^\d+\./.test(l.trim())).slice(0, 4);
   const picked = [...priority, ...items].slice(0, 8);
   return picked.map((l) => truncate(l.trim()));
 };
@@ -169,6 +177,9 @@ const factProvider = (fact: string): SearchProviderId | null => {
   if (/wikipedia/i.test(label)) return label.includes("he") ? "wikipedia-he" : "wikipedia-en";
   if (/wikidata|ממשל/i.test(label)) return "wikidata-gov";
   if (/חדשות|news|grovee/i.test(label)) return "grovee-news";
+  if (/tavily/i.test(label)) return "tavily";
+  if (/scavio/i.test(label)) return "scavio";
+  if (/searxng|web search|חיפוש/i.test(label)) return "searxng";
   return null;
 };
 
@@ -196,6 +207,21 @@ const scoreFact = (
   if (/רוח|wind/i.test(query) && /רוח|wind/i.test(fact)) score += 40;
   if (/pm2|aqi|איכות/i.test(query) && /AQI|PM2/i.test(fact)) score += 40;
   if (intents.includes("news") && /חדשות|news|grovee/i.test(fact)) score += 40;
+  if (
+    needsOpenWebEnrichment(query) &&
+    (provider === "tavily" || provider === "searxng" || provider === "scavio")
+  ) {
+    score += 150;
+  }
+  if (isIsraelCinemaNowQuery(query) && /ANSWER \(now showing\)|סרט בקולנוע:/i.test(fact)) {
+    score += 300;
+  }
+  if (isIsraelCinemaNowQuery(query) && /edb\.co\.il|סרטים ישראלים/i.test(fact)) {
+    score -= 80;
+  }
+  if (isIsraelCinemaNowQuery(query) && /HOT CINEMA רשת|עמוד הבית|יום הקולנוע הישראלי/i.test(fact)) {
+    score -= 120;
+  }
   return score;
 };
 
@@ -219,7 +245,9 @@ export const buildSearchBrief = (
   answerShape?: AnswerShape,
 ): SearchBrief => {
   const facts: string[] = [];
-  const maxFacts = intents.includes("news")
+  const maxFacts = isIsraelCinemaNowQuery(query)
+    ? 22
+    : intents.includes("news")
     ? 24
     : answerShape === "short_fact"
       ? 5
@@ -254,15 +282,72 @@ export const buildSearchBrief = (
     gaps.unshift("לא נמצאו נתונים חיים לשאלה זו");
   }
 
+  if (isIsraelCinemaNowQuery(query)) {
+    const webSources = sources.filter(
+      (s) =>
+        (s.provider === "tavily" || s.provider === "scavio" || s.provider === "searxng") &&
+        s.ok &&
+        (s.webHits?.length || s.text.trim()),
+    );
+    const movies = extractCinemaMoviesFromSources(webSources, 6);
+    if (movies.length) {
+      facts.unshift(
+        `[Cinema IL] ANSWER (now showing): ${movies
+          .slice(0, 6)
+          .map((m, i) => `${i + 1}. ${m.title}`)
+          .join(" · ")}`,
+      );
+      for (const m of movies.slice(0, 4)) {
+        facts.unshift(`[${m.source}] סרט: ${m.title}`);
+      }
+    }
+    for (const src of webSources) {
+      let addedListing = false;
+      for (const hit of src.webHits ?? []) {
+        const listing = hit.snippet?.trim();
+        if (!listing || parseCinemaMoviesFromText(listing).length < 2) continue;
+        try {
+          const host = new URL(hit.url).hostname.replace(/^www\./, "");
+          facts.unshift(
+            `[${src.label}] רשימת קופה (${host}): ${listing.slice(0, CINEMA_LISTING_FACT_MAX)}`,
+          );
+        } catch {
+          facts.unshift(
+            `[${src.label}] רשימת קופה: ${listing.slice(0, CINEMA_LISTING_FACT_MAX)}`,
+          );
+        }
+        addedListing = true;
+        break;
+      }
+      if (addedListing) continue;
+    }
+  }
+
   const rankedFacts = rerankBriefFacts(facts, intents, query, answerShape).slice(0, maxFacts);
 
   return { facts: rankedFacts, links, gaps, intents };
 };
 
-const answerShapeInstructions = (shape?: AnswerShape, intents?: SearchIntent[]): string[] => {
+const answerShapeInstructions = (
+  shape?: AnswerShape,
+  intents?: SearchIntent[],
+  query = "",
+): string[] => {
   if (!shape) return [];
   if (shape === "bullet_list" && intents?.includes("news")) {
     return ["ANSWER SHAPE: bullet_list — 5–8 Hebrew headline bullets from ALL RSS outlets in FACTS; translate English."];
+  }
+  if (shape === "bullet_list" && needsOpenWebEnrichment(query)) {
+    if (isIsraelCinemaNowQuery(query) && /(?:תקציר|summary|עליל)/i.test(query)) {
+      return [
+        "ANSWER SHAPE: bullet_list — 3 Hebrew bullets; one per movie from ANSWER (now showing) / Cinema IL facts ONLY.",
+        "Each bullet: «שם הסרט — תקציר שורה אחת»; use general knowledge ONLY for well-known films listed in FACTS; if plot unknown say «מוקרן כרגע — אין תקציר בדף הקופה».",
+        "NO placeholders. NO homepage text. NO duplicate site names.",
+      ];
+    }
+    return [
+      "ANSWER SHAPE: bullet_list — use WEB FACTS (Tavily/SearXNG/Scavio) titles/snippets; one Hebrew bullet per movie/team/player; NO placeholders like [תקציר].",
+    ];
   }
   const map: Record<AnswerShape, string> = {
     short_fact: "ANSWER SHAPE: short_fact — one crisp Hebrew sentence; lead with ANSWER line if present.",
@@ -293,7 +378,7 @@ export const formatSearchBriefContext = (
   if (regionLabel) {
     lines.splice(2, 0, `SHARED REGION: ${regionLabel} — compare sources for this area.`);
   }
-  lines.splice(2, 0, ...answerShapeInstructions(answerShape, brief.intents));
+  lines.splice(2, 0, ...answerShapeInstructions(answerShape, brief.intents, query));
   if (shouldBuildCrossSourceCorrelation(query, brief.intents)) {
     const metrics = extractCrossSourceMetrics(sources, regionLabel);
     const correlation = buildCrossSourceCorrelationLines(query, metrics, brief.intents);
@@ -317,15 +402,45 @@ export const formatSearchBriefContext = (
     lines.push("GAPS (tell user honestly):");
     lines.push(...brief.gaps.map((g) => `- ${g}`));
   }
+  if (isIsraelCinemaNowQuery(query) && brief.facts.some((f) => /ANSWER \(now showing\)/i.test(f))) {
+    const answerFact =
+      brief.facts.find((f) => /^\[Cinema IL\]\s*ANSWER \(now showing\)/i.test(f)) ??
+      brief.facts.find((f) => /ANSWER \(now showing\)/i.test(f));
+    const listingFacts = brief.facts.filter((f) => /רשימת קופה/i.test(f)).slice(0, 2);
+    if (answerFact) {
+      lines.splice(2, 0, answerFact.replace(/^\[[^\]]+\]\s*/, ""));
+    }
+    for (const listing of listingFacts) {
+      lines.splice(3, 0, listing.replace(/^\[[^\]]+\]\s*/, ""));
+    }
+  }
   if (brief.intents.includes("ships") && brief.facts.some((f) => /ANSWER \(ships live\)|ספינות בטווח:/.test(f))) {
     const countFact =
       brief.facts.find((f) => /ANSWER \(ships live\)/.test(f)) ??
       brief.facts.find((f) => /ספינות בטווח:/.test(f));
-    if (countFact) lines.splice(2, 0, `ANSWER (ships): ${countFact.replace(/^\[[^\]]+\]\s*/, "")}`);
+    const gapFact = brief.facts.find((f) => /^[^\n]*הערה:/.test(f));
+    if (countFact) {
+      const count = countFact.match(/ANSWER \(ships live\):\s*(\d+)/)?.[1] ?? countFact.match(/:\s*(\d+)/)?.[1];
+      lines.splice(2, 0, `ANSWER (ships): ${count ?? "0"} אוניות עם AIS חי`);
+    }
+    if (gapFact && /Digitraffic|אין כיסוי|הדגמה|אין דיווח AIS/i.test(gapFact)) {
+      lines.splice(3, 0, "GAPS: אין דיווח AIS לאזור — הספירה 0.");
+    }
   }
-  if (brief.intents.includes("aviation") && brief.facts.some((f) => /מטוסים בטווח:/.test(f))) {
-    const countFact = brief.facts.find((f) => /מטוסים בטווח:/.test(f));
-    if (countFact) lines.splice(4, 0, `ANSWER (aircraft count): ${countFact.replace(/^\[[^\]]+\]\s*/, "")}`);
+  if (brief.intents.includes("aviation") && brief.facts.some((f) => /מטוסים בטווח:|כל\s+המטוסים:|סה"כ\s+\d+\s+מטוסים/i.test(f))) {
+    const countFact =
+      brief.facts.find((f) => /מטוסים בטווח:/.test(f)) ??
+      brief.facts.find((f) => /כל\s+המטוסים:/.test(f)) ??
+      brief.facts.find((f) => /סה"כ\s+\d+\s+מטוסים/.test(f));
+    if (countFact) {
+      const plain = countFact.replace(/^\[[^\]]+\]\s*/, "");
+      const countLine = /מטוסים בטווח:/.test(plain)
+        ? plain
+        : /כל\s+המטוסים:/.test(plain)
+          ? plain.replace(/כל\s+המטוסים:/, "מטוסים בטווח:")
+          : plain.replace(/סה"כ\s+(\d+)\s+מטוסים/i, "מטוסים בטווח: $1");
+      lines.splice(4, 0, `ANSWER (aircraft count): ${countLine}`);
+    }
   }
   if (brief.intents.includes("earthquake") && brief.facts.some((f) => /סה"כ|M\d+\.\d/i.test(f))) {
     const eqLead =
@@ -335,6 +450,13 @@ export const formatSearchBriefContext = (
     if (eqLead) {
       lines.splice(4, 0, `ANSWER (earthquake): ${eqLead.replace(/^\[[^\]]+\]\s*/, "")}`);
     }
+  }
+  if (brief.intents.includes("earthquake") && brief.intents.includes("news")) {
+    lines.splice(
+      3,
+      0,
+      "SENSOR+RSS: USGS FACTS = magnitudes/locations/times; NEWS = media — correlate same region if possible; note alarming headlines.",
+    );
   }
   if (brief.intents.includes("airquality") && brief.facts.some((f) => /ANSWER \(air quality\)|US AQI/i.test(f))) {
     const aqFact =

@@ -59,6 +59,21 @@ describe("autoGradePresentationQuery", () => {
     ).toBe("fail");
   });
 
+  it("passes B10 canned with AWACS zero count", () => {
+    expect(
+      autoGradePresentationQuery(
+        q("B10"),
+        turn({
+          query: q("B10").prompt,
+          reply: "0 מטוסי AWACS מזוהים כרגע במעקב ADS-B (heuristic — לא כל AWACS משדר).",
+          replySource: "canned-live",
+          webContextSent: "ANSWER (AWACS): 0 מטוסים מזוהים כ-AWACS",
+          searchProviders: ["adsb-aviation"],
+        }),
+      ),
+    ).toBe("pass");
+  });
+
   it("passes B06 with weather brief", () => {
     expect(
       autoGradePresentationQuery(
@@ -68,6 +83,21 @@ describe("autoGradePresentationQuery", () => {
           reply: "בטוקיו כרגע 22 מעלות, מעונן חלקית לפי Open-Meteo.",
           webContextSent: "[SEARCH BRIEF — live data]\nFACTS:\n- [מזג אוויר] טמפרatura: 22°C",
           searchProviders: ["open-meteo"],
+        }),
+      ),
+    ).toBe("pass");
+  });
+
+  it("passes B11 canned with zero live ships", () => {
+    expect(
+      autoGradePresentationQuery(
+        q("B11"),
+        turn({
+          query: q("B11").prompt,
+          reply: "0 אוניות בתעלת סואץ לפי AIS · עדכון 2026-06-20 22:17:38.",
+          replySource: "canned-live",
+          webContextSent: "[SEARCH BRIEF]\nANSWER (ships): 0 אוניות עם AIS חי\nGAPS: Digitraffic",
+          searchProviders: ["ais-ships"],
         }),
       ),
     ).toBe("pass");
@@ -95,11 +125,42 @@ describe("autoGradePresentationQuery", () => {
           query: q("B03").prompt,
           reply: "1 USD = 2.9207 ILS לפי Frankfurter.",
           replySource: "canned-live",
-          webContextSent: "[SEARCH BRIEF]\nDATA AGE: שער ECB מ-2026-06-12",
+          webContextSent: "[SEARCH BRIEF]\n1 USD = 2.9207 ILS\nDATA AGE: שער ECB מ-2026-06-12",
           searchProviders: ["frankfurter-fx"],
         }),
       ),
     ).toBe("partial");
+  });
+
+  it("fails B03 when model ignores rate in brief", () => {
+    expect(
+      autoGradePresentationQuery(
+        q("B03"),
+        turn({
+          query: q("B03").prompt,
+          reply: "כאן נמסר עדכון על שער הדולר. עדכון אחרון מ-ECB.",
+          replySource: "model",
+          webContextSent: "[SEARCH BRIEF]\n1 USD = 2.9622 ILS\nDATA AGE: שער ECB מ-2026-06-19",
+          searchProviders: ["frankfurter-fx"],
+        }),
+      ),
+    ).toBe("fail");
+  });
+
+  it("fails B07 when model ignores USGS ANSWER line", () => {
+    expect(
+      autoGradePresentationQuery(
+        q("B07"),
+        turn({
+          query: q("B07").prompt,
+          reply: "לא נמצאו נתונים ספציפיים לרעידת אדמה אחרונה מעל 5.0.",
+          replySource: "model",
+          webContextSent:
+            "[SEARCH BRIEF]\nANSWER (earthquake): הרעידה האחרונה מעל M5: M5.2 · Greece",
+          searchProviders: ["usgs-earthquake", "grovee-news"],
+        }),
+      ),
+    ).toBe("fail");
   });
 
   it("passes B09 canned with aircraft count", () => {
@@ -108,12 +169,27 @@ describe("autoGradePresentationQuery", () => {
         q("B09"),
         turn({
           query: q("B09").prompt,
-          reply: "מטוסים בטווח: 61 לפי ADS-B.",
+          reply: "61 מטוסים מעל ישראל כרגע (ADS-B / עולם חי).",
           replySource: "canned-live",
           webContextSent: "[SEARCH BRIEF]\nANSWER (aircraft count): מטוסים בטווח: 61",
           searchProviders: ["adsb-aviation"],
         }),
       ),
     ).toBe("pass");
+  });
+
+  it("fails B09 when model says unavailable despite count in brief", () => {
+    expect(
+      autoGradePresentationQuery(
+        q("B09"),
+        turn({
+          query: q("B09").prompt,
+          reply: "מספר המטוסים הנוכחי מעל ישrael אינו זמין כרגע.",
+          replySource: "model",
+          webContextSent: "[SEARCH BRIEF]\nכל המטוסים: 49\nסה\"כ 49 מטוסים במעקב",
+          searchProviders: ["adsb-aviation"],
+        }),
+      ),
+    ).toBe("fail");
   });
 });

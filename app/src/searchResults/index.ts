@@ -18,5 +18,16 @@ export {
   shouldOpenSearchResultsPanel,
 } from "./mergeSearchHits";
 export { rankAndDedupeHits, rankHitsForQuery, filterHits } from "./rankHits";
-export { buildPanelSearchPlan, createEmptySearchPayload } from "./panelSearch";
+export { buildPanelSearchPlan, createEmptySearchPayload, refreshLivePanelPayload } from "./panelSearch";
+export {
+  buildLiveDisastersPayload,
+  refreshLiveDisastersInPayload,
+  parseUsgsEarthquakeText,
+  parseGdacsDisasterText,
+} from "./liveDisastersHits";
+export {
+  parseAisShipsText,
+  parseMarineInfraText,
+  mergeLiveShipHits,
+} from "./liveShipsHits";
 export { faviconForUrl, hostFromUrl, displayPath, sourceLabelForHost } from "./sourceBranding";

@@ -17,6 +17,8 @@ import {
   isNewsQuery,
   isLikelyArtistQuery,
   shouldSearchYouTube,
+  isLiveMediaQuery,
+  shouldSearchLiveMedia,
   buildYouTubeSearchQuery,
 } from "./intents";
 import { regexPlanForQuery } from "./searchPlanner";
@@ -31,6 +33,22 @@ describe("webSearch intents", () => {
     expect(classifySearchIntents("שלמה ארצי")).toContain("youtube");
     expect(buildYouTubeSearchQuery("שלמה ארצי")).toContain("שיר");
     expect(isLikelyArtistQuery("מה מזג האוויר")).toBe(false);
+  });
+
+  it("detects live TV / radio queries", () => {
+    expect(isLiveMediaQuery("רוק")).toBe(true);
+    expect(isLiveMediaQuery("רדיו גלגל צהוב")).toBe(true);
+    expect(isLiveMediaQuery("tv live news")).toBe(true);
+    expect(isLiveMediaQuery("ערוץ 14")).toBe(true);
+    expect(isLiveMediaQuery("קומדיה")).toBe(true);
+    expect(isLiveMediaQuery("חדשות")).toBe(false);
+    expect(classifySearchIntents("רוק")).toContain("livemedia");
+    expect(classifySearchIntents("מוזיקה רוק")).toContain("youtube");
+    expect(shouldSearchLiveMedia("comedy", true)).toBe(true);
+    expect(shouldSearchLiveMedia("comedy", false)).toBe(true);
+    expect(shouldSearchLiveMedia("weather", false)).toBe(false);
+    expect(shouldSearchLiveMedia("weather", true)).toBe(false);
+    expect(shouldSearchLiveMedia("trump news", true)).toBe(false);
   });
 
   it("detects weather queries in Hebrew and English", () => {
@@ -51,6 +69,20 @@ describe("webSearch intents", () => {
 
   it("classifies earthquake intent", () => {
     expect(classifySearchIntents("רעידות אדמה אחרונות")).toContain("earthquake");
+  });
+
+  it("earthquake queries also fetch RSS news", () => {
+    const intents = classifySearchIntents("רעידות אדמה אחרונות");
+    expect(intents).toContain("earthquake");
+    expect(intents).toContain("news");
+  });
+
+  it("M5+ earthquake query adds disaster intent", () => {
+    const q = "האם היו רעידות אדמה ב-24 השעות האחרונות מעל 5 בסולם ריכטר?";
+    const intents = classifySearchIntents(q);
+    expect(intents).toContain("earthquake");
+    expect(intents).toContain("news");
+    expect(intents).toContain("disaster");
   });
 
   it("does not add wikipedia without explicit search request", () => {
@@ -80,7 +112,7 @@ describe("webSearch intents", () => {
     expect(needsWebSearch("מי היה אinstein")).toBe(false);
     expect(needsWebSearch("מה בירת יפן?")).toBe(false);
     expect(needsWebSearch("מה המטבע של ברזיל?")).toBe(false);
-    expect(needsWebSearch('כמה ק"מ בין ירושלים לחיפה?')).toBe(false);
+    expect(needsWebSearch('כמה ק"מ בין ירושלים לחיפה?')).toBe(true);
     expect(needsWebSearch("מי ראש הממשלה של בריטניה?")).toBe(true);
     expect(needsWebSearch("מה הכותרת הראשית בעולם כרגע?")).toBe(true);
     expect(classifySearchIntents("מה הכותרת הראשית בעולם כרגע?")).toContain("news");
@@ -238,6 +270,8 @@ describe("webSearch intents", () => {
 
   it("detects aviation follow-up without repeating aircraft keyword", () => {
     expect(isAviationQuery("כמה מהם צבאיים")).toBe(true);
+    expect(isAviationQuery("כמה מטוסים צבאיים מעל ישראל?")).toBe(true);
+    expect(isAviationQuery("כמה מטוסי אוואקס פעילים?")).toBe(true);
     expect(classifySearchIntents("כמה מהם צבאיים")).toContain("aviation");
   });
 

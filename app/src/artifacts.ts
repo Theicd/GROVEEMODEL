@@ -127,6 +127,24 @@ const extractRichParts = (content: string): MsgPart[] => {
 
 
 
+    const mdImage = remaining.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+
+    if (mdImage && mdImage.index !== undefined) {
+
+      candidates.push({
+
+        idx: mdImage.index,
+
+        len: mdImage[0].length,
+
+        part: { type: "image", value: mdImage[2].trim() },
+
+      });
+
+    }
+
+
+
     let best: Cand | null = null;
 
     for (const c of candidates) {

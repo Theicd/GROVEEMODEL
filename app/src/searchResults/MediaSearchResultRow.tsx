@@ -16,19 +16,20 @@ const formatDuration = (sec?: number): string => {
 };
 
 const labels = {
-  he: { image: "תמונה", video: "וידאו", youtube: "YouTube", preview: "תצוגה מקדימה", open: "פתח" },
-  en: { image: "Image", video: "Video", youtube: "YouTube", preview: "Preview", open: "Open" },
+  he: { image: "תמונה", video: "וידאו", youtube: "YouTube", livetv: "TV LIVE", radio: "רדיו", preview: "תצוגה מקדימה", open: "פתח" },
+  en: { image: "Image", video: "Video", youtube: "YouTube", livetv: "Live TV", radio: "Radio", preview: "Preview", open: "Open" },
 } as const;
 
 /** Image / video hit in the unified «הכל» tab — thumbnail + lightbox (same assets as dedicated tabs). */
 export function MediaSearchResultRow({ hit, uiLang }: Props) {
   const [lightbox, setLightbox] = useState(false);
   const L = labels[uiLang];
-  const isVideo = hit.kind === "video" || hit.kind === "youtube";
+  const isVideo = hit.kind === "video" || hit.kind === "youtube" || hit.kind === "livetv";
+  const isRadio = hit.kind === "radio";
   const isYoutube = hit.kind === "youtube";
   const thumb = hit.imageUrl;
-  const pill = isYoutube ? L.youtube : isVideo ? L.video : L.image;
-  const playable = isVideo && Boolean(hit.mediaPlayUrl?.trim());
+  const pill = isRadio ? L.radio : isYoutube ? L.youtube : hit.kind === "livetv" ? L.livetv : isVideo ? L.video : L.image;
+  const playable = (isVideo || isRadio) && Boolean(hit.mediaPlayUrl?.trim());
 
   return (
     <>

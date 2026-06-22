@@ -1,4 +1,5 @@
 import { fetchJson, fetchText } from "../fetchJson";
+import { isWeeklyMarketChangeQuery } from "../intents";
 import { isStaticWebHost, proxyAwareFetch } from "../proxyFetch";
 import type { SearchSourceResult } from "../types";
 
@@ -14,6 +15,12 @@ type YahooChart = {
         currency?: string;
         exchangeName?: string;
         regularMarketTime?: number;
+      };
+      timestamp?: number[];
+      indicators?: {
+        quote?: Array<{
+          close?: Array<number | null>;
+        }>;
       };
     }>;
   };
@@ -71,8 +78,8 @@ const pickQuote = (query: string): QuoteSpec => {
   return TICKER_ALIASES.gold;
 };
 
-const yahooChartUrl = (symbol: string): string =>
-  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+const yahooChartUrl = (symbol: string, range = "1d"): string =>
+  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${range}`;
 
 const parseYahooChart = (data: YahooChart) => {
   const meta = data.chart?.result?.[0]?.meta;
@@ -103,68 +110,75 @@ const fetchYahooViaRelay = async (url: string, timeoutMs: number): Promise<Yahoo
   }
 };
 
-const fetchYahooQuote = async (spec: QuoteSpec): Promise<{
+const fetchYahooQuote = async (
+  spec: QuoteSpec,
+  query: string,
+): Promise<{
   price: number;
   prev: number | null;
   when: string;
   symbol: string;
   name: string;
   sourceLabel: string;
+  weeklyChangePct?: number | null;
 } | null> => {
-  const url = yahooChartUrl(spec.symbol);
+  const weekly = isWeeklyMarketChangeQuery(query);
+  const range = weekly ? "5d" : "1d";
+  const url = yahooChartUrl(spec.symbol, range);
   const timeoutMs = isStaticWebHost() ? 14_000 : 18_000;
 
-  const tasks: Array<Promise<YahooChart | null>> = [
-    fetchJson<YahooChart>(url, undefined, { timeoutMs }).catch(() => null),
-  ];
-  if (isStaticWebHost()) {
-    tasks.push(fetchYahooViaRelay(url, timeoutMs));
-  }
-
-  const results = await Promise.all(tasks);
-  for (const data of results) {
-    if (!data) continue;
-    const meta = parseYahooChart(data);
-    if (!meta) continue;
-    return {
-      price: meta.regularMarketPrice!,
-      prev: meta.previousClose ?? null,
-      when:
-        meta.regularMarketTime != null
-          ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
-          : "—",
-      symbol: meta.symbol ?? spec.symbol,
-      name: meta.shortName ?? meta.longName ?? spec.label,
-      sourceLabel: "Yahoo Finance",
-    };
-  }
-
-  if (!isStaticWebHost()) return null;
-
-  try {
-    const response = await proxyAwareFetch(url, { headers: { Accept: "application/json" } });
-    if (response.ok) {
-      const data = (await response.json()) as YahooChart;
-      const meta = parseYahooChart(data);
-      if (meta) {
-        return {
-          price: meta.regularMarketPrice!,
-          prev: meta.previousClose ?? null,
-          when:
-            meta.regularMarketTime != null
-              ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
-              : "—",
-          symbol: meta.symbol ?? spec.symbol,
-          name: meta.shortName ?? meta.longName ?? spec.label,
-          sourceLabel: "Yahoo Finance",
-        };
-      }
+  const loadChart = async (chartUrl: string): Promise<YahooChart | null> => {
+    const tasks: Array<Promise<YahooChart | null>> = [
+      fetchJson<YahooChart>(chartUrl, undefined, { timeoutMs }).catch(() => null),
+    ];
+    if (isStaticWebHost()) {
+      tasks.push(fetchYahooViaRelay(chartUrl, timeoutMs));
     }
-  } catch {
-    /* fall through */
+    const results = await Promise.all(tasks);
+    for (const data of results) {
+      if (data?.chart?.result?.[0]) return data;
+    }
+    if (!isStaticWebHost()) return null;
+    try {
+      const response = await proxyAwareFetch(chartUrl, { headers: { Accept: "application/json" } });
+      if (response.ok) return (await response.json()) as YahooChart;
+    } catch {
+      /* fall through */
+    }
+    return null;
+  };
+
+  const data = await loadChart(url);
+  if (!data) return null;
+
+  const result = data.chart?.result?.[0];
+  const meta = result?.meta;
+  if (meta?.regularMarketPrice == null || !Number.isFinite(meta.regularMarketPrice)) return null;
+
+  let weeklyChangePct: number | null = null;
+  if (weekly) {
+    const closes = result?.indicators?.quote?.[0]?.close?.filter(
+      (v): v is number => v != null && Number.isFinite(v),
+    );
+    if (closes && closes.length >= 2) {
+      const first = closes[0]!;
+      const last = closes[closes.length - 1]!;
+      if (first !== 0) weeklyChangePct = ((last - first) / first) * 100;
+    }
   }
 
-  return null;
+  return {
+    price: meta.regularMarketPrice,
+    prev: meta.previousClose ?? null,
+    when:
+      meta.regularMarketTime != null
+        ? new Date(meta.regularMarketTime * 1000).toISOString().replace("T", " ").slice(0, 19)
+        : "—",
+    symbol: meta.symbol ?? spec.symbol,
+    name: meta.shortName ?? meta.longName ?? spec.label,
+    sourceLabel: "Yahoo Finance",
+    weeklyChangePct,
+  };
 };
 
 /** Monthly Shiller S&P — CORS-friendly fallback when Yahoo/Stooq fail on static hosts. */
@@ -218,6 +232,7 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
     let symbol = picked.symbol;
     let name = picked.label;
     let sourceLabel = "Yahoo Finance";
+    let weeklyChangePct: number | null = null;
 
     if (picked.symbol === "^GSPC" && isStaticWebHost()) {
       const shillerFirst = await fetchShillerSp500();
@@ -230,7 +245,7 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
 
     if (price == null) {
       const [yahoo, stooq, shiller] = await Promise.all([
-        fetchYahooQuote(picked),
+        fetchYahooQuote(picked, query),
         fetchStooqQuote(picked),
         picked.symbol === "^GSPC" ? fetchShillerSp500() : Promise.resolve(null),
       ]);
@@ -242,6 +257,7 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
         symbol = yahoo.symbol;
         name = yahoo.name;
         sourceLabel = yahoo.sourceLabel;
+        weeklyChangePct = yahoo.weeklyChangePct ?? null;
       } else if (stooq) {
         price = stooq.price;
         when = stooq.when;
@@ -274,9 +290,11 @@ export const fetchMarketQuoteSearch = async (query: string): Promise<SearchSourc
     const lines = [
       `${picked.label}: ${price.toFixed(2)} ${picked.unit}${staleNote}`,
       name !== picked.label ? `שם: ${name}` : "",
-      change != null
-        ? `שינוי מהסגירה הקודמת: ${change >= 0 ? "+" : ""}${change.toFixed(2)}${changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)` : ""}`
-        : "",
+      weeklyChangePct != null
+        ? `שינוי בשבוע האחרון: ${weeklyChangePct >= 0 ? "+" : ""}${weeklyChangePct.toFixed(2)}%`
+        : change != null
+          ? `שינוי מהסגירה הקודמת: ${change >= 0 ? "+" : ""}${change.toFixed(2)}${changePct != null ? ` (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)` : ""}`
+          : "",
       `עדכון (${sourceLabel}): ${when} UTC`,
       `סימול: ${symbol}`,
     ].filter(Boolean);

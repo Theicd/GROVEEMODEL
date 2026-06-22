@@ -1,4 +1,6 @@
 import { classifySearchIntents, needsWebSearch, userRequestsSearch, isGeneralWebTopicQuery, isTopicalOverviewQuery, isBareWorldNewsQuery, isTimelyOverviewQuery, isNewsQuery } from "./intents";
+import { isOpenWebTopicQuery } from "./openWebTopicDetect";
+import { buildWebTopicSearchPlan, planToSearchPlan } from "./webTopicQueryPlan";
 import { expandCrossSourceIntents } from "./crossSourceIntents";
 import { isGeneralNewsDigestQuery, isIsraelNewsQuery, isWorldHeadlineQuery } from "./queryExtract";
 import { isTopicalOverviewRouting, topicalEnrichmentIntents, topicalProviderQuery } from "./topicalEnrichment";
@@ -97,6 +99,11 @@ export const regexPlanForQuery = (query: string): SearchPlan | null => {
   const q = query.trim();
   if (!q) return null;
 
+  const openWebPlan = buildWebTopicSearchPlan(q);
+  if (openWebPlan) {
+    return planToSearchPlan(openWebPlan) as SearchPlan;
+  }
+
   if (hasUrlInQuery(q)) {
     return {
       intents: ["link"],
@@ -177,6 +184,7 @@ export const regexPlanForQuery = (query: string): SearchPlan | null => {
   if (
     userRequestsSearch(q) &&
     !hasUrlInQuery(q) &&
+    !isOpenWebTopicQuery(q) &&
     !/מזג|weather|מטוס|aircraft|ספינ|ship|רעיד|earthquake/i.test(q)
   ) {
     const intents = [...new Set<SearchIntent>([...(isNewsQuery(q) ? ["news" as const] : []), "news", ...topicalEnrichmentIntents(q)])];

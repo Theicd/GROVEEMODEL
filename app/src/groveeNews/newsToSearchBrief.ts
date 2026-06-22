@@ -1,28 +1,31 @@
 import type { SearchSourceResult } from "../webSearch/types";
+import { resolveNetworkReachability } from "../networkReachability";
 import { isTopicsOverviewQuery } from "./headlineIntent";
 import { queryHasHebrew } from "./hebrewSearchTerms";
 import {
   isBroadNewsOverviewQuery,
+  isSensorNewsQuery,
   isSpecificNewsTopicQuery,
   normalizeNewsEngineQuery,
 } from "./newsQueryNormalize";
+import { isNewsQuery } from "../webSearch/intents";
 import { buildRecentHeadlineHits } from "./recentHeadlineHits";
 import { hitsToDisplayCards } from "./searchAdapter";
 import { fetchTopicsBundle } from "./topicsAdapter";
 import { startGroveeNewsBoot } from "./engineBoot";
 import type { GroveeNewsCard } from "./types";
 import { searchNews } from "./engine/engine/pipeline";
-import { priorityPollHebrewFeeds } from "./hebrewFeedPoll";
+import { pollRssForLiveSearch } from "./liveSearchPoll";
 import { getEngineLibraryStats } from "./engine/engine/engineStats";
 import { getSearchIndexSize } from "./engine/search/flexIndex";
 import { isTopHitRelevant } from "./engine/search/relevance";
 import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
+import { getRssHeadlineCount } from "./engine/storage/db";
 import type { SearchHit } from "./engine/types";
 
 const PROVIDER = "grovee-news" as const;
 
 export type GroveeNewsSearchOptions = {
-  /** Called when a background Hebrew RSS scan finds more relevant headlines. */
   onRefresh?: (result: SearchSourceResult) => void;
 };
 
@@ -32,7 +35,7 @@ function formatHeadlinesForBrief(cards: { title: string; source: string }[]): st
   const lead = cards[0];
   return [
     `ANSWER (headline): [${lead.source}] ${lead.title}`,
-    "מקור: GROVEE NEWS (מנוע מקומי)",
+    "מקור: GROVEE NEWS (סריקת RSS)",
     ...lines,
   ].join("\n");
 }
@@ -63,7 +66,8 @@ async function searchNewsWithFallback(query: string): Promise<SearchHit[]> {
   }
 
   if (engineQuery && specific) {
-    hits = hits.filter((h) => isTopHitRelevant(h.article, query));
+    const relevanceQuery = isSensorNewsQuery(query) ? engineQuery : query;
+    hits = hits.filter((h) => isTopHitRelevant(h.article, relevanceQuery));
   }
 
   if (!hits.length && engineQuery && engineQuery !== query && !specific) {
@@ -74,8 +78,19 @@ async function searchNewsWithFallback(query: string): Promise<SearchHit[]> {
     hits = await buildRecentHeadlineHits(query);
   }
 
-  if (!hits.length && specific) {
+  if (!hits.length && (specific || isNewsQuery(query) || isBroadNewsOverviewQuery(engineQuery))) {
     hits = await buildRecentHeadlineHits(query);
+  }
+
+  if (!hits.length && !specific) {
+    hits = await buildRecentHeadlineHits(query, 16);
+  }
+
+  if (!hits.length) {
+    const headlineCount = await getRssHeadlineCount();
+    if (headlineCount > 0) {
+      hits = await buildRecentHeadlineHits(query, 12);
+    }
   }
 
   if (heUi && hits.length) {
@@ -95,12 +110,13 @@ function buildNewsSearchResult(
   cards: GroveeNewsCard[],
   stats: { rssHeadlines: number },
   started: number,
+  scanNote: string,
   label = "חדשות (GROVEE NEWS)",
 ): SearchSourceResult {
   const text =
     cards.length > 0
       ? formatHeadlinesForBrief(cards)
-      : `מאגר: ${stats.rssHeadlines} כותרות RSS, אינדקס ${getSearchIndexSize()} — לא נמצאו תוצאות ל«${query.slice(0, 80)}»`;
+      : `סריקת RSS · ${stats.rssHeadlines} כותרות במאגר — לא נמצאו תוצאות ל«${query.slice(0, 80)}»`;
 
   return {
     provider: PROVIDER,
@@ -109,56 +125,50 @@ function buildNewsSearchResult(
     text,
     url: cards[0]?.url,
     newsCards: cards,
-    error: cards.length ? undefined : "לא נמצאו ידיעות תואמות במאגר המקומי",
+    newsScanNote: scanNote,
+    error: cards.length ? undefined : "לא נמצאו ידיעות תואמות לאחר סריקת RSS",
     latencyMs: Math.round(performance.now() - started),
   };
-}
-
-async function continueHebrewNewsScan(
-  query: string,
-  baselineCount: number,
-  onRefresh: (result: SearchSourceResult) => void,
-): Promise<void> {
-  const added = await priorityPollHebrewFeeds({ timeoutMs: 20_000 });
-  if (added <= 0 && baselineCount > 0) return;
-
-  const hits = await searchNewsWithFallback(query);
-  if (hits.length <= baselineCount) return;
-
-  const cards = await hitsToDisplayCards(hits);
-  const stats = await getEngineLibraryStats(getSearchIndexSize());
-  onRefresh(buildNewsSearchResult(query, cards, stats, performance.now()));
 }
 
 /** Search or Topics → SearchSourceResult + side panel payload. */
 export async function fetchGroveeNewsSearch(
   query: string,
-  options?: GroveeNewsSearchOptions,
+  _options?: GroveeNewsSearchOptions,
 ): Promise<SearchSourceResult> {
   const started = performance.now();
   const label = "חדשות (GROVEE NEWS)";
 
   try {
-    await startGroveeNewsBoot();
-
-    const heUi = getUserNewsProfile().uiLanguage === "he";
-    if (heUi) {
-      await priorityPollHebrewFeeds({ timeoutMs: 12_000 });
+    const reachability = await resolveNetworkReachability();
+    if (reachability === "offline") {
+      return {
+        provider: PROVIDER,
+        label,
+        ok: false,
+        text: "",
+        newsScanNote: "אין חיבור לאינטרנט — חיפוש חדשות דורש רשת",
+        error: "אין חיבור לאינטרנט — חיפוש חדשות דורש רשת",
+        latencyMs: Math.round(performance.now() - started),
+      };
     }
 
+    await startGroveeNewsBoot();
+
+    const poll = await pollRssForLiveSearch(query);
     const stats = await getEngineLibraryStats(getSearchIndexSize());
+    const scanNote =
+      poll.feedsOk > 0
+        ? `סריקת RSS · ${poll.feedsOk} מקורות · ${stats.rssHeadlines.toLocaleString("he-IL")} כותרות במאגר`
+        : "סריקת RSS — לא הצלחנו לגשת למקורות (בדוק חיבור)";
 
     if (isTopicsOverviewQuery(query)) {
       const bundle = await fetchTopicsBundle();
-      let cards: GroveeNewsCard[] = bundle.cards.slice(0, 24);
-      if (!cards.length && stats.rssHeadlines > 0) {
-        const hits = await buildRecentHeadlineHits(query, 24);
-        cards = await hitsToDisplayCards(hits);
-      }
+      const cards: GroveeNewsCard[] = bundle.cards.slice(0, 24);
       const text =
         cards.length > 0
           ? formatHeadlinesForBrief(cards)
-          : `מאגר מקומי: ${stats.rssHeadlines} כותרות — Topics עדיין מתמלא`;
+          : `סריקת RSS · Topics עדיין מתמלא (${stats.rssHeadlines} כותרות במאגר)`;
 
       return {
         provider: PROVIDER,
@@ -166,26 +176,15 @@ export async function fetchGroveeNewsSearch(
         ok: cards.length > 0,
         text,
         newsCards: cards,
-        error: cards.length ? undefined : "אין עדיין נושאים מוכנים — המתן לאיסוף ברקע",
+        newsScanNote: scanNote,
+        error: cards.length ? undefined : "אין עדיין נושאים מוכנים",
         latencyMs: Math.round(performance.now() - started),
       };
     }
 
-    let hits = await searchNewsWithFallback(query);
-    if (heUi && hits.length < 8) {
-      await priorityPollHebrewFeeds({ timeoutMs: 15_000 });
-      const refreshed = await searchNewsWithFallback(query);
-      if (refreshed.length > hits.length) hits = refreshed;
-    }
-
+    const hits = await searchNewsWithFallback(query);
     const cards = await hitsToDisplayCards(hits);
-    const result = buildNewsSearchResult(query, cards, stats, started, label);
-
-    if (heUi && options?.onRefresh) {
-      void continueHebrewNewsScan(query, hits.length, options.onRefresh);
-    }
-
-    return result;
+    return buildNewsSearchResult(query, cards, stats, started, scanNote, label);
   } catch (err) {
     return {
       provider: PROVIDER,

@@ -200,7 +200,7 @@ describe("mergeSearchHits", () => {
 
 
 
-  it("sets preferYouTubeFilter for artist name queries", () => {
+  it("sets preferVideoFilter for artist name queries with YouTube hits", () => {
     const payload = buildUnifiedSearchPayload("שלמה ארצי", [
       {
         provider: "invidious-videos",
@@ -222,11 +222,11 @@ describe("mergeSearchHits", () => {
         ],
       },
     ]);
-    expect(payload.preferYouTubeFilter).toBe(true);
+    expect(payload.preferVideoFilter).toBe(true);
     expect(payload.facets.youtube).toBe(1);
   });
 
-  it("sets preferYouTubeFilter for music queries", () => {
+  it("sets preferVideoFilter for music queries with YouTube hits", () => {
     const payload = buildUnifiedSearchPayload("שיר עומר אדם", [
       {
         provider: "invidious-videos",
@@ -248,14 +248,11 @@ describe("mergeSearchHits", () => {
         ],
       },
     ]);
-    expect(payload.preferYouTubeFilter).toBe(true);
+    expect(payload.preferVideoFilter).toBe(true);
     expect(payload.facets.youtube).toBe(1);
   });
 
-
-
   it("sets preferRssFilter for news queries with RSS hits", () => {
-
     const sources: SearchSourceResult[] = [
 
       {

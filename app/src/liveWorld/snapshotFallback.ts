@@ -1,7 +1,7 @@
 import type { SearchIntent } from "../webSearch/types";
 import { getCachedLiveWorldSnapshot } from "./snapshotStore";
 import type { LiveWorldSnapshot, SnapshotSearchFallback } from "./types";
-import { buildMilitaryAviationText } from "./militaryAviation";
+import { buildMilitaryAviationText, isMilitaryAviationQuery } from "./militaryAviation";
 import { isLiveShipSource } from "../realityData/shipAggregate";
 import { formatIssSnapshotText, LIVE_WORLD_ISS_MAX_AGE_MS } from "./issSnapshot";
 
@@ -84,7 +84,7 @@ const shipsText = (snap: LiveWorldSnapshot, query: string): string | null => {
 };
 
 const aviationText = (snap: LiveWorldSnapshot, query: string): string | null => {
-  if (/\bawacs\b|צבאי|military|תדלוק|tanker|מודיעין/i.test(query)) {
+  if (isMilitaryAviationQuery(query)) {
     const mil = buildMilitaryAviationText(query, snap);
     if (mil) return mil;
   }

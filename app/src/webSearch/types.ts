@@ -38,6 +38,9 @@ export type SearchProviderId =
   | "starlink-catalog"
   | "spacex-launches"
   | "searxng"
+  | "openserp"
+  | "tavily"
+  | "scavio"
   | "open-meteo-air-quality"
   | "arxiv"
   | "url-context"
@@ -47,7 +50,8 @@ export type SearchProviderId =
   | "peertube-videos"
   | "internet-archive-media"
   | "invidious-videos"
-  | "israeli-products";
+  | "israeli-products"
+  | "live-tv";
 
 export type SearchIntent =
   | "weather"
@@ -83,7 +87,8 @@ export type SearchIntent =
   | "movies"
   | "images"
   | "video"
-  | "products";
+  | "products"
+  | "livemedia";
 
 export type DataTier = "structured" | "news" | "web_fallback";
 
@@ -134,6 +139,25 @@ export type MediaSerpHit = {
   youtubeSubType?: "video" | "playlist" | "channel";
 };
 
+/** Live TV channel or internet radio station from IPTV-org / Radio Browser. */
+export type LiveMediaSerpHit = {
+  id: string;
+  mediaType: "livetv" | "radio";
+  title: string;
+  url: string;
+  streamUrl: string;
+  logoUrl?: string;
+  snippet?: string;
+  country?: string;
+  category?: string;
+  tags?: string[];
+  status?: "working" | "warning" | "offline" | "unknown";
+  bitrate?: number;
+  codec?: string;
+  votes?: number;
+  fuseScore?: number;
+};
+
 /** Israeli supermarket product row (catalog + Open Food Facts + optional Cheapersal prices). */
 export type ProductSerpHit = {
   id: string;
@@ -182,6 +206,8 @@ export type SearchSourceResult = {
   timeWidget?: TimeWidgetData;
   /** RSS cards attached by grovee-news provider. */
   newsCards?: import("../groveeNews/types").GroveeNewsCard[];
+  /** Human-readable RSS scan status for search UI. */
+  newsScanNote?: string;
   /** Structured web hits from SearXNG. */
   webHits?: WebSerpHit[];
   /** Enriched movie rows from movie catalog providers. */
@@ -192,6 +218,17 @@ export type SearchSourceResult = {
   productHits?: ProductSerpHit[];
   /** Hugging Face models with API probe / connection snippets. */
   hfModelHits?: import("./hf/hfModelTypes").HfModelSerpHit[];
+  /** IPTV / Radio Browser hits from local live media library. */
+  liveMediaHits?: LiveMediaSerpHit[];
+  /** Coordinates / route geometry for map panel (Nominatim, OSRM). */
+  geo?: {
+    lat?: number;
+    lon?: number;
+    label?: string;
+    from?: { lat: number; lon: number; label?: string };
+    to?: { lat: number; lon: number; label?: string };
+    route?: Array<{ lat: number; lon: number }>;
+  };
 };
 
 export type SearchProgressEvent =

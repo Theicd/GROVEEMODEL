@@ -4,7 +4,9 @@ import { extractDecadeRange, resolveGameSearch } from "./gameAliases";
 import {
   detectGameCategory,
   extractGameQuery,
+  extractUserIntentPrefix,
   isGameSearchRequest,
+  isTextCompositionRequest,
   parseGameUserRequest,
   shouldOpenGamePanel,
 } from "./gameIntents";
@@ -85,7 +87,30 @@ describe("gameIntents", () => {
   });
 
   it("shouldOpenGamePanel for bored_play topic", () => {
-    expect(shouldOpenGamePanel("שלום", "bored_play")).toBe(true);
+    expect(shouldOpenGamePanel("שלום", "bored_play")).toBe(false);
+    expect(shouldOpenGamePanel("משעמם לי", "bored_play")).toBe(true);
+  });
+
+  it("does not treat text composition as game search when payload mentions games", () => {
+    const msg = `נסח את ההוראה הזו מחדש
+
+Design a high-end brand official משחק ארקייד בקובץ HTML יחיד בסגנון שנות ה80
+
+Visual Strategy:
+Imagery: athletic poses.
+Color Palette: neon orange.
+Overall Vibe: professional, hardcore.`;
+    expect(extractUserIntentPrefix(msg)).toBe("נסח את ההוראה הזו מחדש");
+    expect(isTextCompositionRequest(msg)).toBe(true);
+    expect(isGameSearchRequest(msg)).toBe(false);
+    expect(shouldOpenGamePanel(msg, "general")).toBe(false);
+    expect(shouldOpenGamePanel(msg, "bored_play")).toBe(false);
+  });
+
+  it("does not match bare game words inside long pasted content", () => {
+    const doc =
+      "This spec describes a משחק ארקייד HTML page inspired by 80s arcade aesthetics and quest design.";
+    expect(isGameSearchRequest(doc)).toBe(false);
   });
 });
 

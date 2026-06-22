@@ -33,7 +33,9 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: |
+          npm run build
+          node --import tsx scripts/build-rss-cache.mjs --out=dist
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

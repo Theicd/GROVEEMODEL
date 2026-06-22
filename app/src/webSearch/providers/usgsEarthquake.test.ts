@@ -32,6 +32,15 @@ describe("usgsEarthquake", () => {
     }
   });
 
+  it("does not treat 24-hour phrasing as geographic region", async () => {
+    const result = await fetchEarthquakeSearch(
+      "האם היו רעידות אדמה ב-24 השעות האחרונות מעל 5 בסולם ריכטר?",
+    );
+    expect(result.ok).toBe(true);
+    expect(result.text).not.toMatch(/באזור \(ב-24/);
+    expect(result.text).toMatch(/M\d|אין רעידות מעל M5/);
+  });
+
   it("still filters by region when Israel is mentioned", async () => {
     const result = await fetchEarthquakeSearch("האם הייתה רעידת אדמה בישראל השבוע?");
     expect(result.ok).toBe(true);

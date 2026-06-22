@@ -17,5 +17,7 @@ export function setHfToken(token: string): void {
 
 export function getHfScannerBaseUrl(): string | undefined {
   const raw = (import.meta.env.VITE_HF_SCANNER_URL as string | undefined)?.trim();
-  return raw ? raw.replace(/\/$/, "") : undefined;
+  if (raw) return raw.replace(/\/$/, "");
+  if (import.meta.env.DEV) return "/api/hf-scanner";
+  return undefined;
 }

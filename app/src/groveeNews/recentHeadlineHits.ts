@@ -9,8 +9,9 @@ import {
   isSpecificNewsTopicQuery,
   normalizeNewsEngineQuery,
 } from "./newsQueryNormalize";
+import { isNewsQuery } from "../webSearch/intents";
 
-/** Fallback when lexical search returns nothing but RSS cache has headlines. */
+/** Fallback when lexical search returns nothing but RSS DB has headlines. */
 export async function buildRecentHeadlineHits(query: string, limit = 12): Promise<SearchHit[]> {
   const rssItems = await getAllRssItems(800);
   if (!rssItems.length) return [];
@@ -41,15 +42,13 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
       .filter((h) => h !== null)
       .slice(0, limit);
     if (hits.length) return hits;
-    if (specific) return [];
   }
 
-  if (!isBroadNewsOverviewQuery(engineQuery)) return [];
-
-  const ranked = rankRssHeadlinesForQuery(rssItems, engineQuery || "world news", new Set(), limit);
+  const rankQuery = engineQuery || query.trim() || "news";
+  const ranked = rankRssHeadlinesForQuery(rssItems, rankQuery, new Set(), limit);
   if (ranked.length) {
     const byId = new Map(rssItems.map((r) => [r.id, r]));
-    return ranked
+    const rankedHits = ranked
       .map((h) => {
         const item = byId.get(h.id);
         if (!item) return null;
@@ -61,6 +60,13 @@ export async function buildRecentHeadlineHits(query: string, limit = 12): Promis
         } satisfies SearchHit;
       })
       .filter((h) => h !== null);
+    if (rankedHits.length) return rankedHits;
+  }
+
+  if (isBroadNewsOverviewQuery(engineQuery) || isSpecificNewsTopicQuery(query) || isNewsQuery(query)) {
+    /* fall through to recent headlines */
+  } else if (!rankQuery || rankQuery.length < 2) {
+    return [];
   }
 
   const preferIlHe = getUserNewsProfile().uiLanguage === "he";

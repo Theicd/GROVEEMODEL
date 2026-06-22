@@ -4,10 +4,11 @@ import type { GameCategoryId } from "./gameSearch/types";
 type Props = {
   activeCategory?: GameCategoryId | null;
   onPick: (category: GameCategoryId) => void;
+  onOpenFavorites?: () => void;
   compact?: boolean;
 };
 
-export function GameCategoryPicker({ activeCategory, onPick, compact }: Props) {
+export function GameCategoryPicker({ activeCategory, onPick, onOpenFavorites, compact }: Props) {
   return (
     <div
       className={`game-category-picker${compact ? " game-category-picker--compact" : ""}`}
@@ -20,6 +21,11 @@ export function GameCategoryPicker({ activeCategory, onPick, compact }: Props) {
           ? "בחר קטגוריה לגלישה:"
           : "לא מצאתי את המשחק המבוקש — אפשר לגלוש לפי קטגוריות:"}
       </p>
+      {onOpenFavorites ? (
+        <button type="button" className="game-category-picker-favorites" onClick={onOpenFavorites}>
+          ★ מועדפים — משחקים ששמרת
+        </button>
+      ) : null}
       <div className="game-category-picker-grid">
         {GAME_CATEGORIES.map((cat) => (
           <button

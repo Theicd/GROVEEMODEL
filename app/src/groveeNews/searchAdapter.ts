@@ -5,7 +5,7 @@ import { getUserNewsProfile } from "./engine/settings/userNewsProfile";
 import type { SearchHit } from "./engine/types";
 import type { GroveeNewsCard } from "./types";
 
-const MAX_CARDS = 12;
+const MAX_CARDS = 24;
 
 export function hitToCard(hit: SearchHit, article = hit.article): GroveeNewsCard {
   return {

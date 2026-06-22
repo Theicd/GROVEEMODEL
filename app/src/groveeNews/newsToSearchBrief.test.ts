@@ -11,13 +11,24 @@ const hitsToDisplayCardsMock = vi.fn();
 const startBootMock = vi.fn();
 const getEngineLibraryStatsMock = vi.fn();
 const getSearchIndexSizeMock = vi.fn();
+const pollLiveMock = vi.fn();
+const resolveReachabilityMock = vi.fn();
+
+vi.mock("../networkReachability", () => ({
+  resolveNetworkReachability: (...args: unknown[]) => resolveReachabilityMock(...args),
+}));
 
 vi.mock("./engine/engine/pipeline", () => ({
   searchNews: (...args: unknown[]) => searchNewsMock(...args),
 }));
 
+vi.mock("./liveSearchPoll", () => ({
+  pollRssForLiveSearch: (...args: unknown[]) => pollLiveMock(...args),
+}));
+
 vi.mock("./hebrewFeedPoll", () => ({
   priorityPollHebrewFeeds: vi.fn().mockResolvedValue(0),
+  pollCatalogFeeds: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("./engine/settings/userNewsProfile", () => ({
@@ -48,12 +59,24 @@ vi.mock("./engine/search/flexIndex", () => ({
   getSearchIndexSize: (...args: unknown[]) => getSearchIndexSizeMock(...args),
 }));
 
+vi.mock("./engine/storage/db", () => ({
+  getRssHeadlineCount: vi.fn().mockResolvedValue(3201),
+}));
+
 describe("news chat bridge routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveReachabilityMock.mockResolvedValue("online");
     startBootMock.mockResolvedValue(undefined);
     getEngineLibraryStatsMock.mockResolvedValue({ rssHeadlines: 3201, articlesIndexed: 40 });
     getSearchIndexSizeMock.mockReturnValue(40);
+    pollLiveMock.mockResolvedValue({
+      sessionStart: 1_700_000_000_000,
+      feedsOk: 12,
+      feedsFailed: 1,
+      newHeadlines: 40,
+      feedsPolled: 13,
+    });
     hitsToDisplayCardsMock.mockImplementation(async (hits: { article: { id: string; title: string; source: string; url: string } }[]) =>
       hits.map((h) => ({
         id: h.article.id,
@@ -80,7 +103,7 @@ describe("news chat bridge routing", () => {
     expect(isTopicsOverviewQuery("חפש חדשות על חלל")).toBe(false);
   });
 
-  it("normalizes Hebrew topic before engine search", async () => {
+  it("polls RSS then searches full corpus when online", async () => {
     searchNewsMock.mockResolvedValue([]);
     buildRecentHeadlineHitsMock.mockResolvedValue([
       {
@@ -98,9 +121,11 @@ describe("news chat bridge routing", () => {
 
     const result = await fetchGroveeNewsSearch("חפש חדשות על חלל");
 
+    expect(pollLiveMock).toHaveBeenCalled();
     expect(normalizeNewsEngineQuery("חפש חדשות על חלל")).toBe("space");
     expect(searchNewsMock).toHaveBeenCalledWith("space");
     expect(result.ok).toBe(true);
+    expect(result.newsScanNote).toMatch(/סריקת RSS/);
     expect(result.newsCards?.length).toBeGreaterThan(0);
   });
 
@@ -155,5 +180,16 @@ describe("news chat bridge routing", () => {
     expect(buildRecentHeadlineHitsMock).toHaveBeenCalled();
     expect(result.ok).toBe(true);
     expect(result.newsCards?.[0]?.title).toBe("Fallback headline");
+  });
+
+  it("returns error when offline — no archive search", async () => {
+    resolveReachabilityMock.mockResolvedValue("offline");
+
+    const result = await fetchGroveeNewsSearch("פוליטיקה");
+
+    expect(pollLiveMock).not.toHaveBeenCalled();
+    expect(searchNewsMock).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/אין חיבור/);
   });
 });

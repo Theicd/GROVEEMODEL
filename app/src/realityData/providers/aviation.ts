@@ -2,7 +2,7 @@ import { fetchJson } from "../../webSearch/fetchJson";
 import type { SearchSourceResult } from "../../webSearch/types";
 import { classifyAircraft, isAwacsSuspect, isTankerSuspect } from "../aviationClassifier";
 import { getCachedLiveWorldSnapshot } from "../../liveWorld/snapshotStore";
-import { buildMilitaryAviationText } from "../../liveWorld/militaryAviation";
+import { buildMilitaryAviationText, isAwacsQuery, isMilitaryAviationQuery } from "../../liveWorld/militaryAviation";
 
 type AdsbResponse = {
   ac?: Array<{
@@ -37,9 +37,6 @@ const pickRegion = (context: string): RegionPoint => {
   if (EUROPE_RE.test(context)) return { lat: 50.0, lon: 10.0, label: "מרכז אירופה" };
   return { lat: 40.7, lon: -74.0, label: "גלובלי (OpenSky)" };
 };
-
-const isMilitaryAviationQuery = (query: string): boolean =>
-  /\bawacs\b|צבאי|military|תדלוק|tanker|מודיעין/i.test(query);
 
 const mapOpenSky = (states: OpenSkyResponse["states"]) =>
   (states ?? [])
@@ -167,7 +164,7 @@ export const fetchAviationSearch = async (
         return buildRegionalResult();
       }
 
-      if (/\bawacs\b/i.test(query)) {
+      if (isAwacsQuery(query)) {
         const awacs = mapped.filter(
           (a) => a.cls.awacsSuspect || isAwacsSuspect(a.callsign, a.cls.label, undefined),
         );

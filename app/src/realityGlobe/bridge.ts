@@ -13,11 +13,14 @@ export type GlobeMapLayer = Exclude<GlobeLayer, "iss">;
 
 export type GlobeLayersState = Record<GlobeMapLayer, boolean>;
 
+export type GlobeRoutePoint = { lat: number; lon: number; label?: string };
+
 export type GlobeCommand =
-  | { type: "flyTo"; lat: number; lon: number; alt?: number }
+  | { type: "flyTo"; lat: number; lon: number; alt?: number; label?: string; presentation?: boolean }
   | { type: "flyToAlert"; lat: number; lon: number; severity?: number; category?: string; alt?: number }
   | { type: "focusPlace"; name: string; alt?: number }
   | { type: "focusPlaceQuiet"; name: string; alt?: number; presentation?: boolean }
+  | { type: "drawRoute"; points: GlobeRoutePoint[]; label?: string; presentation?: boolean }
   | { type: "setPresentationMode"; on: boolean }
   | { type: "setQuietAlerts"; on: boolean }
   | { type: "showLayer"; layer: GlobeLayer }

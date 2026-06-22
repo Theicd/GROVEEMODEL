@@ -2,6 +2,7 @@ import {
   isAviationQuery,
   isAirQualityQuery,
   isCurrencyQuery,
+  isDisasterQuery,
   isEarthquakeQuery,
   isGitHubPopularQuery,
   isIssQuery,
@@ -40,6 +41,20 @@ import {
 } from "./crossSourceCorrelation";
 import { agentDebugLog } from "../debugAgentLog";
 import { buildNewsPanelGuideReply } from "../groveeNews/newsPanelGuideReply";
+import {
+  isCompositeFinanceQuery,
+  isMultiCountryGovernmentQuery,
+  needsOpenWebEnrichment,
+  requestedBulletCount,
+  wantsNewsHeadlineBulletsInChat,
+} from "./openWebTopics";
+import { buildOpenWebFailureReply } from "./openWebQueryPlanner";
+import {
+  extractCinemaMoviesFromSources,
+  formatCinemaMovieBullets,
+  wantsCinemaPlotSummaries,
+} from "./cinemaIlExtract";
+import { buildWebTopicSearchPlan, filterWebHitsForPlan } from "./webTopicQueryPlan";
 import type { AnswerShape, SearchIntent, SearchSourceResult } from "./types";
 
 const PROVIDER_INTROS: Partial<Record<SearchSourceResult["provider"], string>> = {
@@ -120,7 +135,20 @@ const formatGenericSource = (source: SearchSourceResult): string => {
 
   if (source.provider === "frankfurter-fx") {
     const date = lines.find((l) => l.startsWith("תאריך:"))?.replace("תאריך:", "").trim();
-    const rate = lines.find((l) => /1\s+USD\s*=/.test(l));
+    const rates = lines.filter((l) => /^1\s+[A-Z]{3}\s*=/.test(l.trim()));
+    if (rates.length >= 2) {
+      const lead = [
+        `שערי מטבע — עדכון אחרון מ-${date ?? "?"}:`,
+        ...rates.map((r) => r.trim()),
+      ].join("\n");
+      return [
+        lead,
+        ...(dataAge ? [dataAge] : []),
+        `Sources: ${source.label}`,
+        `מקור: ${source.label}.`,
+      ].join("\n");
+    }
+    const rate = rates[0] ?? lines.find((l) => /^1\s+[A-Z]{3}\s*=/.test(l.trim()));
     const rateText = rate?.replace(/^•\s*/, "").trim();
     const lead = rateText
       ? `שער הדולר מול השקל — עדכון אחרון מ-${date ?? "?"}: ${rateText}`
@@ -662,6 +690,7 @@ const buildProductsPriceReply = (
   }
 
   if (prod.ok && (prod.productHits?.length || prod.text.trim())) {
+    if (!isPriceQuery(query) && !isProductsQuery(query)) return null;
     return formatGenericSource(prod);
   }
 
@@ -700,6 +729,134 @@ const buildMarketLiveReply = (
   const market = sources.find((s) => s.provider === "yahoo-finance" && s.ok && s.text.trim());
   if (!market) return null;
   return formatGenericSource(market);
+};
+
+const buildCompositeFinanceReply = (
+  query: string,
+  intents: SearchIntent[],
+  sources: SearchSourceResult[],
+): string | null => {
+  if (!isCompositeFinanceQuery(query)) return null;
+  const fx = buildCurrencyLiveReply(query, intents, sources);
+  const market = buildMarketLiveReply(query, intents, sources);
+  if (!fx && !market) return null;
+  const parts = [fx, market].filter(Boolean);
+  return [...parts, "Sources: Frankfurter (ECB), Yahoo Finance"].join("\n\n");
+};
+
+const WEB_PROVIDERS = new Set<SearchSourceResult["provider"]>([
+  "tavily",
+  "searxng",
+  "scavio",
+  "openserp",
+]);
+
+/** Canned reply from Tavily/SearXNG/Scavio hits for sports/cinema/events topics. */
+export const buildOpenWebTopicReply = (
+  query: string,
+  sources: SearchSourceResult[],
+): string | null => {
+  if (!needsOpenWebEnrichment(query)) return null;
+
+  const plan = buildWebTopicSearchPlan(query);
+  if (!plan) return null;
+
+  const webSources = sources.filter(
+    (s) => WEB_PROVIDERS.has(s.provider) && s.ok && (s.webHits?.length || s.text.trim()),
+  );
+  if (!webSources.length) {
+    return buildOpenWebFailureReply(plan.engineQueries);
+  }
+
+  if (plan.kind === "cinema_il") {
+    const movies = extractCinemaMoviesFromSources(webSources, plan.bulletCount);
+    if (movies.length) {
+      const intro = `סרטים בקולנוע בישראל (${Math.min(plan.bulletCount, movies.length)}):`;
+      const sourceLabels = [...new Set(movies.map((m) => m.source))].slice(0, 2).join(" · ");
+      return [
+        intro,
+        ...formatCinemaMovieBullets(movies, plan.bulletCount),
+        `Sources: ${sourceLabels || "Tavily / web search"}`,
+      ].join("\n");
+    }
+  }
+
+  const bullets: string[] = [];
+  for (const src of webSources) {
+    const hits = src.webHits?.length
+      ? filterWebHitsForPlan(src.webHits, plan, plan.bulletCount + 4)
+      : [];
+    for (const hit of hits) {
+      const snippet = hit.snippet?.slice(0, 160).trim();
+      bullets.push(`• ${hit.title}${snippet ? ` — ${snippet}` : ""}`);
+    }
+    if (!hits.length) {
+      for (const line of src.text.split("\n")) {
+        const row = line.match(/^\d+\.\s+(.+)/);
+        if (!row?.[1]) continue;
+        const fakeHit = { title: row[1].split(" · ")[0] ?? row[1], url: "", snippet: row[1] };
+        if (filterWebHitsForPlan([fakeHit], plan, 1).length) {
+          bullets.push(`• ${row[1].trim()}`);
+        }
+      }
+    }
+  }
+
+  const tavily = webSources.find((s) => s.provider === "tavily");
+  const tavilyAnswer = tavily?.text.match(/תשובת Tavily:\s*(.+)/)?.[1]?.trim();
+  const tavilyOk =
+    tavilyAnswer &&
+    !plan.blockPatterns.some((re) => re.test(tavilyAnswer)) &&
+    (plan.relevanceTerms.length === 0 ||
+      plan.relevanceTerms.some((t) => tavilyAnswer.toLowerCase().includes(t.toLowerCase())));
+
+  if (!bullets.length && !tavilyOk) {
+    return buildOpenWebFailureReply(plan.engineQueries);
+  }
+
+  const limit = plan.bulletCount;
+  const intro = plan.kind === "cinema_il"
+    ? `סרטים בקולנוע בישראל (${limit}):`
+    : plan.kind === "sports_championship"
+      ? "אליפות / טורניר (לפי אתרים):"
+      : "לפי חיפוש באינטרנט:";
+
+  return [
+    intro,
+    ...(tavilyOk ? [tavilyAnswer!] : []),
+    ...bullets.slice(0, limit),
+    "Sources: Tavily / web search",
+  ].join("\n");
+};
+
+/** Headline bullets in chat from GROVEE NEWS RSS brief. */
+export const buildNewsHeadlineBulletsReply = (
+  query: string,
+  sources: SearchSourceResult[],
+  limit = 3,
+): string | null => {
+  const news = sources.find((s) => s.provider === "grovee-news" && s.ok && s.text.trim());
+  if (!news) return null;
+
+  const bullets: string[] = [];
+  for (const line of news.text.split("\n")) {
+    const trimmed = line.trim();
+    const tagged = trimmed.match(/^\[([^\]]+)\]\s*\d+\.\s*(.+)/);
+    const headline = trimmed.match(/^ANSWER \(headline\):\s*\[([^\]]+)\]\s*(.+)/);
+    if (headline) {
+      bullets.push(`• [${headline[1]}] ${headline[2].trim()}`);
+    } else if (tagged) {
+      bullets.push(`• [${tagged[1]}] ${tagged[2].trim()}`);
+    }
+    if (bullets.length >= limit) break;
+  }
+
+  if (!bullets.length) return null;
+  return [
+    `כותרות עולם (${Math.min(limit, bullets.length)}):`,
+    ...bullets.slice(0, limit),
+    "Sources: GROVEE NEWS",
+  ].join("\n");
 };
 
 const pickPrimarySource = (
@@ -791,17 +948,48 @@ export function shouldDeliverStructuredLiveReply(
   cannedReply?: string | null,
 ): boolean {
   if (isInlineTextTaskRequest(query)) return false;
+  if (needsOpenWebEnrichment(query)) {
+    if (wantsCinemaPlotSummaries(query)) {
+      const webSources = sources.filter(
+        (s) =>
+          WEB_PROVIDERS.has(s.provider) && s.ok && (s.webHits?.length || s.text.trim()),
+      );
+      const movies = extractCinemaMoviesFromSources(webSources, 3);
+      if (movies.length) return false;
+    }
+    return !!cannedReply?.trim();
+  }
+  if (
+    isMultiCountryGovernmentQuery(query) &&
+    /(?:בחירות|elections?|חילופ(?:י)?\s+שלטון)/i.test(query)
+  ) {
+    return false;
+  }
+  if (isCompositeFinanceQuery(query)) {
+    const hasFx = sources.some((s) => s.provider === "frankfurter-fx" && s.ok && s.text.trim());
+    const hasMarket = sources.some((s) => s.provider === "yahoo-finance" && s.ok && s.text.trim());
+    return hasFx && hasMarket;
+  }
+  if (wantsNewsHeadlineBulletsInChat(query) && cannedReply?.trim()) return true;
   if (isEarthquakeQuery(query) && sources.some((s) => s.provider === "usgs-earthquake" && s.ok && s.text.trim())) {
     return true;
   }
   if (
+    isDisasterQuery(query) &&
+    sources.some((s) => s.provider === "gdacs-disasters" && s.ok && s.text.trim())
+  ) {
+    return true;
+  }
+  if (
     isCurrencyQuery(query) &&
+    !isCompositeFinanceQuery(query) &&
     sources.some((s) => s.provider === "frankfurter-fx" && s.ok && s.text.trim())
   ) {
     return true;
   }
   if (
     isMarketPriceQuery(query) &&
+    !isCompositeFinanceQuery(query) &&
     sources.some((s) => s.provider === "yahoo-finance" && s.ok && s.text.trim())
   ) {
     return true;
@@ -956,6 +1144,12 @@ export function buildCapabilityLiveReply(
   const earthquake = buildEarthquakeLiveReply(q, sources);
   if (earthquake) return earthquake;
 
+  const compositeFinance = buildCompositeFinanceReply(q, intents, sources);
+  if (compositeFinance) return compositeFinance;
+
+  const openWeb = buildOpenWebTopicReply(q, sources);
+  if (openWeb) return openWeb;
+
   const currency = buildCurrencyLiveReply(q, intents, sources);
   if (currency) return currency;
 
@@ -980,6 +1174,10 @@ export function buildCapabilityLiveReply(
   if (productsPrice) return productsPrice;
 
   if (isNewsQuery(q)) {
+    if (wantsNewsHeadlineBulletsInChat(q)) {
+      const bullets = buildNewsHeadlineBulletsReply(q, sources, requestedBulletCount(q));
+      if (bullets) return bullets;
+    }
     const news = sources.find((s) => s.provider === "grovee-news");
     if (news) {
       const cardCount = news.ok ? countNewsCardsInBrief(news.text) : 0;

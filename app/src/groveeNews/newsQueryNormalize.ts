@@ -222,10 +222,18 @@ export function isExplicitNewsTopicSearch(query: string): boolean {
   return /(?:חפש|מצא|תביא)?\s*חדשות\s+(?:בנושא|על|לגבי)\s+\S+/i.test(query.trim());
 }
 
+/** Live sensor queries (earthquake / flood / disaster) — RSS uses English engine terms, not strict Hebrew topic filter. */
+export function isSensorNewsQuery(query: string): boolean {
+  return /רעיד|earthquake|seismic|צונאמ|הצפה|שיטפון|flood|inundation|אסון|אסונות|hurricane|הוריקן|tsunami|wildfire|שריפ/i.test(
+    query,
+  );
+}
+
 /** True when the user named a concrete topic (city, country, entity) — not a world overview. */
 export function isSpecificNewsTopicQuery(query: string): boolean {
   const raw = query.trim();
   if (!raw) return false;
+  if (isSensorNewsQuery(raw)) return false;
   if (isExplicitNewsTopicSearch(raw)) return true;
   const phrase = extractNewsTopicPhrase(raw);
   if (phrase && /[\u0590-\u05FF]/.test(phrase)) return true;
@@ -262,6 +270,18 @@ function mapHebrewTextToEnglish(text: string): string[] {
 export function normalizeNewsEngineQuery(query: string): string {
   const raw = query.trim();
   if (!raw) return "";
+
+  if (/רעיד|earthquake|seismic|צונאמ/i.test(raw)) {
+    return "earthquake";
+  }
+
+  if (/הצפה|שיטפון|flood|inundation/i.test(raw)) {
+    return "flood";
+  }
+
+  if (/אסון|אסונות|hurricane|הוריקן|tsunami|צונאמי|wildfire|שריפ/i.test(raw)) {
+    return "disaster";
+  }
 
   const phrase = extractNewsTopicPhrase(raw);
   let work = phrase || raw;

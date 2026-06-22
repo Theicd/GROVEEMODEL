@@ -1,9 +1,12 @@
 /** User-defined presentation QA list — category label + prompt sent to chat. */
+export type UserPresentationQueryGroup = "basic" | "cross" | "natural" | "events" | "ui";
+
 export type UserPresentationQuery = {
   id: string;
-  group: "basic" | "cross" | "natural";
+  group: UserPresentationQueryGroup;
   category: string;
   prompt: string;
+  custom?: boolean;
 };
 
 export const USER_PRESENTATION_QUERIES: UserPresentationQuery[] = [
@@ -101,4 +104,48 @@ export const USER_PRESENTATION_QUERIES: UserPresentationQuery[] = [
     category: "טבעי",
     prompt: "איזה אזור בעולם נראה הכי פעיל כרגע לפי כל הנתונים שיש לך?",
   },
+  { id: "B20", group: "basic", category: "איכות אוויר", prompt: "מה ה-AQI בתל אביב?" },
+  { id: "B21", group: "basic", category: "arXiv", prompt: "מאמרים על LLM ב-arXiv" },
+  { id: "B22", group: "basic", category: "חגים", prompt: "האם מחר חג בגרמניה?" },
+  { id: "B23", group: "basic", category: "מרחק", prompt: "כמה ק\"מ מירושלים לחיפה?" },
+  { id: "B24", group: "basic", category: "התרעות", prompt: "יש התרעה בישראל?" },
+  { id: "B25", group: "basic", category: "SpaceX", prompt: "מתי השיגור הבא של SpaceX?" },
+  { id: "B26", group: "basic", category: "SearXNG", prompt: "מה חדש ברובוטיקה?" },
+  { id: "B27", group: "basic", category: "רעידות+חדשות", prompt: "רעידות אדמה — מה בחדשות?" },
+  { id: "B28", group: "basic", category: "הצפה", prompt: "הצפות פעילות בעולם?" },
+  { id: "B29", group: "basic", category: "Hacker News", prompt: "מה HOT ב-Hacker News?" },
+  { id: "B30", group: "basic", category: "קישור", prompt: "https://github.com/torvalds/linux" },
+  { id: "B31", group: "basic", category: "HF", prompt: "מודל qwen ב-HuggingFace" },
+  { id: "B32", group: "basic", category: "מוצרים", prompt: "מחיר חלב תנובה" },
+  { id: "B33", group: "basic", category: "תמונות", prompt: "תמונות של חתול" },
+  { id: "B34", group: "basic", category: "TV", prompt: "ערוץ חדשות ישראלי" },
+  { id: "B35", group: "basic", category: "שלילי", prompt: "מחיר מניית NVIDIA" },
+  { id: "B36", group: "basic", category: "תחזית שבוע", prompt: "מה תחזית מזג האוויר לשבוע?" },
+  { id: "B37", group: "basic", category: "מפה+מסלול", prompt: "איך מגיעים משדה התעופה BER לתחנת הרכבת — תראה על המפה" },
+  { id: "E01", group: "events", category: "אירועים", prompt: "מה האירועים המרכזיים בעולם כרגע?" },
+  { id: "E02", group: "events", category: "אירועים", prompt: "יש אסון טבע פעיל כרגע?" },
+  { id: "E03", group: "events", category: "אירועים", prompt: "מה קורה בחדשות על רעידות אדמה?" },
+  { id: "E04", group: "events", category: "חריגות", prompt: "יש חריגות מזג אוויר בעולם?" },
+  { id: "E05", group: "events", category: "חריגות", prompt: "מהירות רוח חריגה בים התיכון?" },
+  { id: "E06", group: "events", category: "חריגות", prompt: "גובה גלים חריג מול חופי ישראל?" },
+  { id: "E07", group: "events", category: "ישראל", prompt: "מה קורה כרגע בישראל — חדשות והתרעות?" },
+  { id: "E08", group: "events", category: "הצלבה", prompt: "אזור עם סופה פעילה ואוניות וחדשות" },
+  { id: "U01", group: "ui", category: "UI", prompt: "חדשות על חלל — פאנל חדשות" },
+  { id: "U02", group: "ui", category: "UI", prompt: "רעידות אדמה — טאב USGS" },
+  { id: "U03", group: "ui", category: "UI", prompt: "רעידות אדמה וחדשות RSS יחד" },
+  { id: "U04", group: "ui", category: "UI", prompt: "מה קורה בעולם? Topics" },
+  { id: "U05", group: "ui", category: "UI", prompt: "חפש WebGPU ב-GitHub" },
+  { id: "U06", group: "ui", category: "UI", prompt: "מזג אוויר תל אביב — גלוב" },
+  { id: "U07", group: "ui", category: "UI", prompt: "כמה מטוסים מעל ישראל — Progress" },
+  { id: "U08", group: "ui", category: "UI", prompt: "סרטים על Batman" },
+  { id: "U09", group: "ui", category: "UI", prompt: "וידאו חתולים" },
+  { id: "U10", group: "ui", category: "UI", prompt: "YouTube tutorial Python" },
+  { id: "U11", group: "ui", category: "UI", prompt: "TV LIVE חדשות" },
+  { id: "U12", group: "ui", category: "UI", prompt: "מה זה RAG?" },
+  { id: "U13", group: "ui", category: "UI", prompt: "חפש קישורים למפות OpenStreetMap" },
+  { id: "U14", group: "ui", category: "UI", prompt: "מזג אוויר ומטוסים מעל ישראל" },
+  { id: "U15", group: "ui", category: "UI", prompt: "תחנת רכבת ליד BER — מפת OSM" },
 ];
+
+/** Built-in count — update when adding B/E/U rows. */
+export const BUILTIN_PRESENTATION_QUERY_COUNT = USER_PRESENTATION_QUERIES.length;

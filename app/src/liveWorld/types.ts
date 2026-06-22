@@ -6,6 +6,16 @@ export type LiveEarthquakeItem = {
   time: number;
   lat?: number;
   lon?: number;
+  url?: string;
+  tsunami?: boolean;
+};
+
+export type LiveDisasterItem = {
+  eventName: string;
+  country: string;
+  alertLevel: string;
+  eventType?: string;
+  url?: string;
 };
 
 export type LiveIssPosition = {
@@ -52,11 +62,19 @@ export type LiveWorldSnapshot = {
   fetchedAt: number;
   source: "globe" | "fetch" | "mixed";
   earthquake?: { items: LiveEarthquakeItem[]; feedLabel: string };
+  disasters?: { items: LiveDisasterItem[]; feedLabel: string; fetchedAt: number };
   iss?: LiveIssPosition;
   ships?: { regionLabel: string; count: number; items: LiveShipItem[] };
+  marineInfra?: {
+    regionLabel: string;
+    items: Array<{ name: string; kind: string; lat?: number; lon?: number }>;
+  };
   aviation?: LiveAviationSummary;
 };
 
-export type LiveWorldLayer = keyof Pick<LiveWorldSnapshot, "earthquake" | "iss" | "ships" | "aviation">;
+export type LiveWorldLayer = keyof Pick<
+  LiveWorldSnapshot,
+  "earthquake" | "disasters" | "iss" | "ships" | "marineInfra" | "aviation"
+>;
 
 export type SnapshotSearchFallback = SearchSourceResult;

@@ -83,17 +83,15 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
   );
 }
 
-export function NewsEnginePanel({
-  open,
-  onClose,
+export function NewsEnginePanelContent({
+  active = true,
   gemmaReady = false,
   gemmaLoading = false,
   gemmaLoadPct = 0,
   gemmaLoadDetail,
   onRequestGemmaLoad,
 }: {
-  open: boolean;
-  onClose: () => void;
+  active?: boolean;
   gemmaReady?: boolean;
   gemmaLoading?: boolean;
   gemmaLoadPct?: number;
@@ -119,11 +117,11 @@ export function NewsEnginePanel({
   }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     reloadStats();
     const timer = window.setInterval(reloadStats, 8_000);
     return () => window.clearInterval(timer);
-  }, [open, reloadStats]);
+  }, [active, reloadStats]);
 
   const onRefreshFeeds = async () => {
     setRefreshing(true);
@@ -135,9 +133,149 @@ export function NewsEnginePanel({
     }
   };
 
-  if (!open) return null;
+  if (!active) return null;
 
   const phaseClass = busy ? "polling" : headlines > 0 ? "ready" : "idle";
+
+  return (
+    <>
+      <div className="activity-panel-toolbar news-engine-toolbar">
+        <span className={`news-engine-live ${busy ? "news-engine-live--on" : ""}`}>
+          {busy ? "● פעיל עכשיו" : headlines > 0 ? `${fmtNum(headlines)} כותרות באוסף` : "ממתין לנתונים"}
+        </span>
+        <button
+          type="button"
+          className="gn-engine-panel__refresh"
+          onClick={() => void onRefreshFeeds()}
+          disabled={refreshing || status.phase === "polling"}
+        >
+          {status.phase === "polling" || refreshing ? "סורק…" : "רענון מקורות"}
+        </button>
+      </div>
+
+      <nav className="gn-engine-tabs news-engine-tabs" aria-label="לשוניות מנוע חדשות">
+        <button
+          type="button"
+          className={`gn-engine-tabs__btn${tab === "status" ? " gn-engine-tabs__btn--active" : ""}`}
+          onClick={() => setTab("status")}
+        >
+          סטטוס
+        </button>
+        <button
+          type="button"
+          className={`gn-engine-tabs__btn${tab === "log" ? " gn-engine-tabs__btn--active" : ""}`}
+          onClick={() => setTab("log")}
+        >
+          לוג
+          {status.activityLog.length ? (
+            <span className="gn-engine-tabs__badge">{Math.min(status.activityLog.length, 99)}</span>
+          ) : null}
+        </button>
+      </nav>
+
+      <div className="news-engine-body news-engine-body--hub">
+        {tab === "status" ? (
+          <>
+            <p className={`gn-engine-phase gn-engine-phase--${phaseClass}`}>
+              {phaseLabelHe(status, aiOn, gemmaReady)}
+            </p>
+
+            {busy && status.phase === "polling" && status.feedsTotal > 0 ? (
+              <div className="news-engine-progress" role="progressbar" aria-valuenow={scanPct} aria-valuemin={0} aria-valuemax={100}>
+                <div className="news-engine-progress__track">
+                  <div className="news-engine-progress__fill" style={{ width: `${scanPct}%` }} />
+                </div>
+                <span className="news-engine-progress__label">
+                  {scanPct}% · {status.feedsOk + status.feedsFailed}/{status.feedsTotal} מקורות
+                </span>
+              </div>
+            ) : null}
+
+            <dl className="gn-db-summary">
+              <div>
+                <dt>סריקה אחרונה</dt>
+                <dd>{status.lastPollAt ? fmtTime(status.lastPollAt) : busy ? "בתהליך…" : "מעולם לא"}</dd>
+              </div>
+              <div>
+                <dt>סריקה הבאה</dt>
+                <dd>{nextPollShort(status.lastPollAt, status.phase)}</dd>
+              </div>
+              <div>
+                <dt>מקורות RSS</dt>
+                <dd>
+                  {busy && status.feedsOk + status.feedsFailed === 0
+                    ? `מתחיל 0/${status.feedsTotal}…`
+                    : `${status.feedsOk}/${status.feedsTotal} תקין · ${status.feedsFailed} נכשל`}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="gn-engine-stat-grid gn-engine-stat-grid--compact">
+              <StatCard label="כותרות RSS" value={fmtNum(headlines)} hint="נשמר ב-IndexedDB" />
+              <StatCard label="בחיפוש" value={fmtNum(articles)} hint="FlexSearch" />
+              <StatCard label="בתור" value={fmtNum(pending)} hint="ממתין לעיבוד" />
+              <StatCard
+                label="סיכומי עומק"
+                value={fmtNum(summarized)}
+                hint={gemmaReady ? "Gemma · לפי בקשה" : "טען Gemma לסיכום"}
+              />
+            </div>
+
+            <AiDeepReadPanel
+              gemmaReady={gemmaReady}
+              gemmaLoading={gemmaLoading}
+              gemmaLoadPct={gemmaLoadPct}
+              gemmaLoadDetail={gemmaLoadDetail}
+              onRequestGemmaLoad={onRequestGemmaLoad}
+            />
+          </>
+        ) : (
+          <ul className="gn-activity-log gn-activity-log--panel">
+            {status.activityLog.length === 0 ? (
+              <li className="gn-activity-log__empty">אין פעילות עדיין — המנוע יתחיל לאסוף אחרי טעינת האפליקציה.</li>
+            ) : (
+              status.activityLog.map((e) => (
+                <li key={`${e.ts}-${e.message}`} className={`gn-activity-log__item gn-activity-log__item--${e.kind}`}>
+                  <span className="gn-activity-log__time">{fmtTime(e.ts)}</span>
+                  <span className="gn-activity-log__icon">{kindIcon(e.kind)}</span>
+                  <span className="gn-activity-log__msg">{e.message}</span>
+                </li>
+              ))
+            )}
+          </ul>
+        )}
+      </div>
+
+      {status.lastSummary ? (
+        <footer className="activity-panel-foot news-engine-foot">
+          <span className="news-engine-foot__label">
+            סיכום אחרון {status.lastSummary.byModel ? "(מודל)" : "(RSS)"}:
+          </span>
+          <span className="news-engine-foot__title">{status.lastSummary.title}</span>
+        </footer>
+      ) : null}
+    </>
+  );
+}
+
+export function NewsEnginePanel({
+  open,
+  onClose,
+  gemmaReady = false,
+  gemmaLoading = false,
+  gemmaLoadPct = 0,
+  gemmaLoadDetail,
+  onRequestGemmaLoad,
+}: {
+  open: boolean;
+  onClose: () => void;
+  gemmaReady?: boolean;
+  gemmaLoading?: boolean;
+  gemmaLoadPct?: number;
+  gemmaLoadDetail?: string;
+  onRequestGemmaLoad?: () => void;
+}) {
+  if (!open) return null;
 
   return (
     <div
@@ -160,121 +298,14 @@ export function NewsEnginePanel({
           </button>
         </header>
 
-        <div className="activity-panel-toolbar news-engine-toolbar">
-          <span className={`news-engine-live ${busy ? "news-engine-live--on" : ""}`}>
-            {busy ? "● פעיל עכשיו" : headlines > 0 ? `${fmtNum(headlines)} כותרות באוסף` : "ממתין לנתונים"}
-          </span>
-          <button
-            type="button"
-            className="gn-engine-panel__refresh"
-            onClick={() => void onRefreshFeeds()}
-            disabled={refreshing || status.phase === "polling"}
-          >
-            {status.phase === "polling" || refreshing ? "סורק…" : "רענון מקורות"}
-          </button>
-        </div>
-
-        <nav className="gn-engine-tabs news-engine-tabs" aria-label="לשוניות מנוע חדשות">
-          <button
-            type="button"
-            className={`gn-engine-tabs__btn${tab === "status" ? " gn-engine-tabs__btn--active" : ""}`}
-            onClick={() => setTab("status")}
-          >
-            סטטוס
-          </button>
-          <button
-            type="button"
-            className={`gn-engine-tabs__btn${tab === "log" ? " gn-engine-tabs__btn--active" : ""}`}
-            onClick={() => setTab("log")}
-          >
-            לוג
-            {status.activityLog.length ? (
-              <span className="gn-engine-tabs__badge">{Math.min(status.activityLog.length, 99)}</span>
-            ) : null}
-          </button>
-        </nav>
-
-        <div className="news-engine-body">
-          {tab === "status" ? (
-            <>
-              <p className={`gn-engine-phase gn-engine-phase--${phaseClass}`}>
-                {phaseLabelHe(status, aiOn, gemmaReady)}
-              </p>
-
-              {busy && status.phase === "polling" && status.feedsTotal > 0 ? (
-                <div className="news-engine-progress" role="progressbar" aria-valuenow={scanPct} aria-valuemin={0} aria-valuemax={100}>
-                  <div className="news-engine-progress__track">
-                    <div className="news-engine-progress__fill" style={{ width: `${scanPct}%` }} />
-                  </div>
-                  <span className="news-engine-progress__label">
-                    {scanPct}% · {status.feedsOk + status.feedsFailed}/{status.feedsTotal} מקורות
-                  </span>
-                </div>
-              ) : null}
-
-              <dl className="gn-db-summary">
-                <div>
-                  <dt>סריקה אחרונה</dt>
-                  <dd>{status.lastPollAt ? fmtTime(status.lastPollAt) : busy ? "בתהליך…" : "מעולם לא"}</dd>
-                </div>
-                <div>
-                  <dt>סריקה הבאה</dt>
-                  <dd>{nextPollShort(status.lastPollAt, status.phase)}</dd>
-                </div>
-                <div>
-                  <dt>מקורות RSS</dt>
-                  <dd>
-                    {busy && status.feedsOk + status.feedsFailed === 0
-                      ? `מתחיל 0/${status.feedsTotal}…`
-                      : `${status.feedsOk}/${status.feedsTotal} תקין · ${status.feedsFailed} נכשל`}
-                  </dd>
-                </div>
-              </dl>
-
-              <div className="gn-engine-stat-grid gn-engine-stat-grid--compact">
-                <StatCard label="כותרות RSS" value={fmtNum(headlines)} hint="נשמר ב-IndexedDB" />
-                <StatCard label="בחיפוש" value={fmtNum(articles)} hint="FlexSearch" />
-                <StatCard label="בתור" value={fmtNum(pending)} hint="ממתין לעיבוד" />
-                <StatCard
-                  label="סיכומי עומק"
-                  value={fmtNum(summarized)}
-                  hint={gemmaReady ? "Gemma · לפי בקשה" : "טען Gemma לסיכום"}
-                />
-              </div>
-
-              <AiDeepReadPanel
-                gemmaReady={gemmaReady}
-                gemmaLoading={gemmaLoading}
-                gemmaLoadPct={gemmaLoadPct}
-                gemmaLoadDetail={gemmaLoadDetail}
-                onRequestGemmaLoad={onRequestGemmaLoad}
-              />
-            </>
-          ) : (
-            <ul className="gn-activity-log gn-activity-log--panel">
-              {status.activityLog.length === 0 ? (
-                <li className="gn-activity-log__empty">אין פעילות עדיין — המנוע יתחיל לאסוף אחרי טעינת האפליקציה.</li>
-              ) : (
-                status.activityLog.map((e) => (
-                  <li key={`${e.ts}-${e.message}`} className={`gn-activity-log__item gn-activity-log__item--${e.kind}`}>
-                    <span className="gn-activity-log__time">{fmtTime(e.ts)}</span>
-                    <span className="gn-activity-log__icon">{kindIcon(e.kind)}</span>
-                    <span className="gn-activity-log__msg">{e.message}</span>
-                  </li>
-                ))
-              )}
-            </ul>
-          )}
-        </div>
-
-        {status.lastSummary ? (
-          <footer className="activity-panel-foot news-engine-foot">
-            <span className="news-engine-foot__label">
-              סיכום אחרון {status.lastSummary.byModel ? "(מודל)" : "(RSS)"}:
-            </span>
-            <span className="news-engine-foot__title">{status.lastSummary.title}</span>
-          </footer>
-        ) : null}
+        <NewsEnginePanelContent
+          active
+          gemmaReady={gemmaReady}
+          gemmaLoading={gemmaLoading}
+          gemmaLoadPct={gemmaLoadPct}
+          gemmaLoadDetail={gemmaLoadDetail}
+          onRequestGemmaLoad={onRequestGemmaLoad}
+        />
       </div>
     </div>
   );

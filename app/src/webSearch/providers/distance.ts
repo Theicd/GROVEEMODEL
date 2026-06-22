@@ -4,7 +4,11 @@ import { extractPlacePair } from "../queryExtract";
 import type { SearchSourceResult } from "../types";
 
 type OsrmRoute = {
-  routes?: Array<{ distance: number; duration: number }>;
+  routes?: Array<{
+    distance: number;
+    duration: number;
+    geometry?: { coordinates?: [number, number][] };
+  }>;
   code?: string;
 };
 
@@ -40,7 +44,7 @@ export const fetchDistanceSearch = async (query: string): Promise<SearchSourceRe
 
     const coords = `${a.longitude},${a.latitude};${b.longitude},${b.latitude}`;
     const route = await fetchJson<OsrmRoute>(
-      `https://router.project-osrm.org/route/v1/driving/${coords}?overview=false`,
+      `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
     );
     const leg = route.routes?.[0];
     if (!leg) {
@@ -59,6 +63,13 @@ export const fetchDistanceSearch = async (query: string): Promise<SearchSourceRe
     const mins = Math.round((leg.duration % 3600) / 60);
     const driveTime = hours > 0 ? `${hours} שע' ${mins} דק'` : `${mins} דק'`;
 
+    const routePoints =
+      leg.geometry?.coordinates?.map(([lon, lat]) => ({ lat, lon })) ??
+      [
+        { lat: a.latitude, lon: a.longitude },
+        { lat: b.latitude, lon: b.longitude },
+      ];
+
     const lines = [
       `מ: ${formatPlaceLabel(a)} (${aName})`,
       `אל: ${formatPlaceLabel(b)} (${bName})`,
@@ -71,7 +82,13 @@ export const fetchDistanceSearch = async (query: string): Promise<SearchSourceRe
       label,
       ok: true,
       text: lines.join("\n"),
-      url: `https://router.project-osrm.org/route/v1/driving/${coords}`,
+      url: `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${a.latitude}%2C${a.longitude}%3B${b.latitude}%2C${b.longitude}`,
+      geo: {
+        from: { lat: a.latitude, lon: a.longitude, label: formatPlaceLabel(a) },
+        to: { lat: b.latitude, lon: b.longitude, label: formatPlaceLabel(b) },
+        route: routePoints,
+        label: `${formatPlaceLabel(a)} → ${formatPlaceLabel(b)}`,
+      },
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

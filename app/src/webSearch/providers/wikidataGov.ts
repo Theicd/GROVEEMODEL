@@ -1,6 +1,6 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
-import { extractCountryPhrase } from "../queryExtract";
+import { extractCountryPhrase, extractCountryPhrases } from "../queryExtract";
 import { resolveCountry } from "./restCountries";
 
 type WbSearchHit = {
@@ -91,12 +91,38 @@ SELECT ?personLabel ?roleLabel WHERE {
   return data.results?.bindings ?? [];
 };
 
+async function leadersForCountry(countryName: string, query: string): Promise<string[] | null> {
+  const country = await resolveCountry(countryName);
+  const lookupName = country?.name ?? countryName;
+  const qid = await findCountryQid(lookupName, country?.iso2);
+  if (!qid) return null;
+
+  const leaders = await fetchLeaders(qid);
+  if (!leaders.length) return null;
+
+  const wantsPm = /ראש\s+(?:ה)?ממשל(?:ה|ת)|prime\s+minister/i.test(query);
+  const wantsPresident = /נשיא|president|head\s+of\s+state/i.test(query);
+  let rows = leaders;
+  if (wantsPm && !wantsPresident) {
+    rows = leaders.filter((b) => /ראש ממשלה|prime minister/i.test(b.roleLabel?.value ?? ""));
+  } else if (wantsPresident && !wantsPm) {
+    rows = leaders.filter((b) => /נשיא|president|ראש מדינה/i.test(b.roleLabel?.value ?? ""));
+  }
+  if (!rows.length) rows = leaders;
+
+  return [
+    `מדינה: ${lookupName} (Wikidata ${qid})`,
+    ...rows.map((b) => `- ${b.personLabel?.value ?? "—"} · ${b.roleLabel?.value ?? "תפקיד"}`),
+  ];
+}
+
 export const fetchGovernmentSearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "wikidata-gov" as const;
   const label = "ממשל (Wikidata)";
   try {
-    const countryName = extractCountryPhrase(query);
+    const countries = extractCountryPhrases(query);
+    const countryName = countries[0] ?? extractCountryPhrase(query);
     if (!countryName) {
       return {
         provider,
@@ -108,22 +134,15 @@ export const fetchGovernmentSearch = async (query: string): Promise<SearchSource
       };
     }
 
-    const country = await resolveCountry(countryName);
-    const lookupName = country?.name ?? countryName;
-    const qid = await findCountryQid(lookupName, country?.iso2);
-    if (!qid) {
-      return {
-        provider,
-        label,
-        ok: false,
-        text: "",
-        error: `לא נמצאה ישות Wikidata: ${lookupName}`,
-        latencyMs: Math.round(performance.now() - started),
-      };
+    const targets = countries.length ? countries : [countryName];
+    const blocks: string[] = [];
+
+    for (const name of targets.slice(0, 4)) {
+      const block = await leadersForCountry(name, query);
+      if (block) blocks.push(block.join("\n"));
     }
 
-    const leaders = await fetchLeaders(qid);
-    if (!leaders.length) {
+    if (!blocks.length) {
       return {
         provider,
         label,
@@ -134,27 +153,16 @@ export const fetchGovernmentSearch = async (query: string): Promise<SearchSource
       };
     }
 
-    const wantsPm = /ראש\s+(?:ה)?ממשל(?:ה|ת)|prime\s+minister/i.test(query);
-    const picked = wantsPm
-      ? leaders.filter((b) => /ראש ממשלה|prime minister/i.test(b.roleLabel?.value ?? ""))
-      : leaders;
-    const rows = picked.length ? picked : leaders;
-
-    const lines = [
-      `מדינה: ${lookupName} (Wikidata ${qid})`,
-      "נושאי משרה (Wikidata):",
-      ...rows.map((b) => `- ${b.personLabel?.value ?? "—"} · ${b.roleLabel?.value ?? "תפקיד"}`),
-    ];
-    if (wantsPm && rows[0]?.personLabel?.value) {
-      lines.push(`ANSWER: ראש הממשלה (Wikidata): ${rows[0].personLabel.value}`);
-    }
+    const electionNote = /(?:בחירות|elections?|חילופ(?:י)?\s+שלטון)/i.test(query)
+      ? "\n\nהערה: לשאלות על בחירות/חילופי שלטון — השתמש גם בתוצאות חיפוש האינטרנט (Tavily/SearXNG) ב-WEB CONTEXT."
+      : "";
 
     return {
       provider,
       label,
       ok: true,
-      text: lines.join("\n"),
-      url: `https://www.wikidata.org/wiki/${qid}`,
+      text: blocks.join("\n\n") + electionNote,
+      url: "https://www.wikidata.org/",
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

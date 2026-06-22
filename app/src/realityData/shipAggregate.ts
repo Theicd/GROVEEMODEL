@@ -10,6 +10,8 @@ import {
   type RouteMarkerHit,
   type ShipBbox,
 } from "./medPorts";
+import { isAisStreamConfigured } from "../apiKeys/apiKeyStore";
+import { fetchAisStreamGlobeShips, fetchAisStreamShips } from "./providers/aisStream";
 
 type AisFeature = {
   properties?: {
@@ -36,16 +38,22 @@ export type ShipHit = {
   lon: number;
   speed?: number;
   destination?: string;
-  source: "ais" | "route-marker" | "globe";
+  source: "ais" | "route-marker" | "globe" | "aisstream";
   timestamp?: string;
 };
 
-const LIVE_GLOBE_SOURCES = new Set(["ais", "digitraffic", "globe"]);
+const LIVE_GLOBE_SOURCES = new Set(["ais", "digitraffic", "globe", "aisstream"]);
 
 export const isLiveShipSource = (source?: string): boolean =>
   !source || LIVE_GLOBE_SOURCES.has(source);
 
 export const isCountShipsQuery = (query: string): boolean => /כמה|how\s+many/i.test(query);
+
+/** Digitraffic regional API is Baltic-centric — Mediterranean/Suez/Haifa need global locations + bbox filter. */
+export const shouldUseGlobalAisFetch = (regionLabel: string, query: string): boolean =>
+  /סואץ|suez|חיפה|haifa|ים\s+תיכון|mediterranean|פרס|persian|אשדוד|ashdod|אילat|eilat|israel|ישראל|turkey|טורקיה|greece|יוון|cyprus|קפריסין|alexandria|אל.?ksandr/i.test(
+    `${regionLabel} ${query}`,
+  );
 
 const hitKey = (s: ShipHit) => `${s.name}|${s.lat.toFixed(3)}|${s.lon.toFixed(3)}`;
 
@@ -141,7 +149,7 @@ export const fetchDigitrafficAis = async (
   const url = center
     ? `https://meri.digitraffic.fi/api/ais/v1/locations?latitude=${center.lat}&longitude=${center.lon}&radius=${radiusNm}`
     : "https://meri.digitraffic.fi/api/ais/v1/locations";
-  const geo = await fetchJson<AisGeo>(url, undefined, { timeoutMs: 16_000 });
+  const geo = await fetchJson<AisGeo>(url, undefined, { timeoutMs: center ? 12_000 : 18_000 });
   return parseAisFeatures(geo.features ?? [], bbox, meta);
 };
 
@@ -155,6 +163,7 @@ export type ShipAggregateResult = {
   demoHits: ShipHit[];
   allHits: ShipHit[];
   aisCount: number;
+  aisStreamCount: number;
   globeCount: number;
   routeCount: number;
   fetchedAt: string;
@@ -168,15 +177,44 @@ export const aggregateShipHits = async (
   const globeLive = hitsFromGlobeCache(region.bbox, true);
   const globeDemo = hitsFromGlobeCache(region.bbox, false).filter((h) => h.source === "route-marker");
 
+  const globalOnly = shouldUseGlobalAisFetch(region.label, query);
   let aisHits: ShipHit[] = [];
   try {
-    const meta = await loadVesselMeta();
-    aisHits = await fetchDigitrafficAis(region.center, region.radiusNm, region.bbox, meta);
-    if (!aisHits.length && region.bbox && /סואץ|suez|פרס|persian|ים\s+תיכון|mediterranean/i.test(region.label + query)) {
-      aisHits = await fetchDigitrafficAis(null, region.radiusNm, region.bbox, meta);
-    }
+    const [meta, regionalHits, globalHits] = await Promise.all([
+      loadVesselMeta(),
+      globalOnly
+        ? Promise.resolve([] as ShipHit[])
+        : fetchDigitrafficAis(region.center, region.radiusNm, region.bbox, new Map()),
+      fetchDigitrafficAis(null, region.radiusNm, region.bbox, new Map()),
+    ]);
+    const raw = regionalHits.length ? regionalHits : globalHits;
+    aisHits = raw.map((h) => {
+      const mmsiMatch = h.name.match(/^MMSI (\d+)$/);
+      if (!mmsiMatch) return h;
+      const metaRow = meta.get(Number(mmsiMatch[1]));
+      return metaRow?.name?.trim() ? { ...h, name: metaRow.name.trim() } : h;
+    });
   } catch {
     aisHits = [];
+  }
+
+  let aisStreamHits: ShipHit[] = [];
+  if (isAisStreamConfigured()) {
+    try {
+      if (region.bbox) {
+        // Regional query — bbox-scoped AISStream only (never merge unfiltered globe fleet).
+        aisStreamHits = await fetchAisStreamShips(region.bbox, { timeoutMs: 11_000 });
+      } else {
+        aisStreamHits = await fetchAisStreamGlobeShips({ timeoutMs: 20_000 });
+      }
+    } catch {
+      aisStreamHits = [];
+    }
+  }
+
+  // Without regional bbox, raw Digitraffic is Baltic-heavy — cap when AISStream already covers the globe.
+  if (!region.bbox && aisStreamHits.length >= 5 && aisHits.length > 40) {
+    aisHits = aisHits.slice(0, 40);
   }
 
   const routeHits: ShipHit[] = routeMarkersForRegion(region.bbox).map((r) => ({
@@ -184,7 +222,12 @@ export const aggregateShipHits = async (
     source: "route-marker" as const,
   }));
 
-  const liveHits = dedupeHits([...globeLive, ...aisHits]);
+  const inRegion = (h: ShipHit): boolean =>
+    !region.bbox || inShipBbox(h.lat, h.lon, region.bbox);
+
+  const liveHits = dedupeHits(
+    [...aisStreamHits, ...globeLive, ...aisHits].filter(inRegion),
+  );
   const demoHits = dedupeHits([
     ...globeDemo.filter((h) => !liveHits.some((l) => hitKey(l) === hitKey(h))),
     ...routeHits.filter((h) => !liveHits.some((l) => hitKey(l) === hitKey(h))),
@@ -198,6 +241,7 @@ export const aggregateShipHits = async (
     demoHits,
     allHits,
     aisCount: liveHits.filter((h) => h.source === "ais").length,
+    aisStreamCount: liveHits.filter((h) => h.source === "aisstream").length,
     globeCount: liveHits.filter((h) => h.source === "globe").length,
     routeCount: demoHits.length,
     fetchedAt,
@@ -216,32 +260,45 @@ export const formatShipsText = (
   const lines = [
     `אזור: ${regionLabel}`,
     `ANSWER (ships live): ${answerCount}`,
-    `דיווח AIS חי + עולם חי: ${liveCount} (${agg.aisCount} AIS · ${agg.globeCount} עולם חי)`,
+    `דיווח AIS חי + עולם חי: ${liveCount} (${agg.aisStreamCount} AISStream · ${agg.aisCount} Digitraffic · ${agg.globeCount} עולם חי)`,
+    `עודכן: ${agg.fetchedAt.replace("T", " ").slice(0, 19)} UTC`,
   ];
 
-  if (agg.demoHits.length) {
-    lines.push(`סימוני מסלול (הדגמה — לא AIS חי): ${agg.demoHits.length}`);
+  if (!countQuery && agg.demoHits.length) {
+    lines.splice(3, 0, `סימוני מסלול (הדגמה — לא AIS חי): ${agg.demoHits.length}`);
   }
 
-  lines.push(`עודכן: ${agg.fetchedAt.replace("T", " ").slice(0, 19)} UTC`);
-
-  if (countQuery && liveCount === 0 && agg.demoHits.length) {
+  if (countQuery && liveCount === 0) {
     lines.push(
-      "הערה: בתעלת סואץ ובאזורים מחוץ לצפון אירופה אין כיסוי AIS חי מ-Digitraffic — הספירה 0. סימוני המסלול הם הדגמה מ«עולם חי», לא אוניות בזמן אמת. פתח REALITY LIVE לשכבת ספינות.",
+      isAisStreamConfigured()
+        ? "הערה: אין דיווח AIS לאזור — ודא ש-npm run dev פעיל ומפתח AISStream תקין."
+        : "הערה: אין דיווח AIS לאזור — הוסף מפתח AISStream במסך מפתחות.",
     );
-  } else {
-    lines.push("הערה: Digitraffic מכסה בעיקר צפון אירופה; עולם חי משלב AIS גלובלי + סימוני מסלול.");
+  } else if (!countQuery) {
+    lines.push("הערה: AISStream + Digitraffic + cache עולם חי.");
   }
 
-  const samplePool = countQuery && liveCount > 0 ? agg.liveHits : agg.allHits;
-  lines.push(
-    ...samplePool.slice(0, 12).map((s, i) => {
-      const spd = s.speed != null ? `${s.speed.toFixed(1)} kn` : "—";
-      const tag =
-        s.source === "route-marker" ? "מסלול (הדגמה)" : s.source === "globe" ? "עולם חי" : "AIS";
-      return `${i + 1}. ${s.name} · ${tag} · ${s.lat.toFixed(2)},${s.lon.toFixed(2)} · ${spd}${s.destination ? ` → ${s.destination}` : ""}`;
-    }),
-  );
+  const samplePool = (countQuery ? agg.liveHits : agg.allHits).slice().sort((a, b) => {
+    const rank = (s: ShipHit) =>
+      s.source === "aisstream" ? 0 : s.source === "globe" ? 1 : s.source === "ais" ? 2 : 9;
+    return rank(a) - rank(b);
+  });
+  if (samplePool.length) {
+    lines.push(
+      ...samplePool.slice(0, 64).map((s, i) => {
+        const spd = s.speed != null ? `${s.speed.toFixed(1)} kn` : "—";
+        const tag =
+          s.source === "route-marker"
+            ? "מסלול (הדגמה)"
+            : s.source === "aisstream"
+              ? "AISStream"
+              : s.source === "globe"
+                ? "עולם חי"
+                : "AIS";
+        return `${i + 1}. ${s.name} · ${tag} · ${s.lat.toFixed(2)},${s.lon.toFixed(2)} · ${spd}${s.destination ? ` → ${s.destination}` : ""}`;
+      }),
+    );
+  }
 
   return lines.join("\n");
 };

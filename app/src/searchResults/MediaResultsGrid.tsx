@@ -26,7 +26,7 @@ export function MediaResultsGrid({ hits, uiLang, mode }: Props) {
           <button
             key={hit.id}
             type="button"
-            className={`serp-media-card serp-media-card--${mode}`}
+            className={`serp-media-card serp-media-card--${hit.kind === "youtube" ? "youtube" : mode}`}
             onClick={() => setActive(hit)}
             role="listitem"
           >
@@ -42,10 +42,10 @@ export function MediaResultsGrid({ hits, uiLang, mode }: Props) {
               ) : (
                 <span className="serp-media-thumb serp-media-thumb--placeholder" />
               )}
-              {(mode === "video" || mode === "youtube") && hit.durationSec ? (
+              {(hit.kind === "video" || hit.kind === "youtube") && hit.durationSec ? (
                 <span className="serp-media-duration">{formatDuration(hit.durationSec)}</span>
               ) : null}
-              {(mode === "video" || (mode === "youtube" && hit.mediaPlayUrl)) ? (
+              {hit.kind === "video" || (hit.kind === "youtube" && hit.mediaPlayUrl) ? (
                 <span className="serp-media-play" aria-hidden="true">
                   ▶
                 </span>

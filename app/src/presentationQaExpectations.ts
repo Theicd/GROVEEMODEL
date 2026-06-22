@@ -40,6 +40,21 @@ const REQUIRES_LIVE_IDS = new Set([
   "B16",
   "B17",
   "B19",
+  "B20",
+  "B23",
+  "B24",
+  "B25",
+  "B27",
+  "B28",
+  "B36",
+  "B37",
+  "E01",
+  "E02",
+  "E03",
+  "E04",
+  "E05",
+  "E06",
+  "E07",
 ]);
 
 const STALE_OK_PARTIAL = new Set(["B03", "B04"]);
@@ -82,7 +97,12 @@ export function autoGradePresentationQuery(
   }
 
   if (queryAsksLiveNow(q.prompt) && hasStaleDataAge(ctx) && STALE_OK_PARTIAL.has(q.id)) {
-    return "partial";
+    if (q.id === "B03") {
+      const rate = ctx.match(/1 USD = ([\d.]+ ILS)/)?.[1];
+      if (rate && new RegExp(rate.replace(".", "\\.")).test(reply)) return "partial";
+    } else {
+      return "partial";
+    }
   }
 
   if (q.id === "B01") {
@@ -100,14 +120,27 @@ export function autoGradePresentationQuery(
   }
 
   if (q.id === "B10") {
-    if (!/awacs|ads-b|מודיעין|עולם חי|heuristic|צבא/i.test(ctx + reply)) return "fail";
-    if (/\d+\s*מטוס/.test(reply) && !/עולם חי|heuristic|מסתמן|זיהוי|אומדן|ANSWER|מועמד/i.test(reply)) {
+    const awacsCount =
+      ctx.match(/ANSWER \(AWACS\):\s*(\d+)/i)?.[1] ??
+      ctx.match(/מועמדים ל-AWACS[^:]*:\s*(\d+)/i)?.[1] ??
+      ctx.match(/(\d+)\s+AWACS\?/i)?.[1];
+    if (awacsCount && /לא מצאתי|אין נתונים|לא ניתן|אינו זמין/i.test(reply)) return "fail";
+    if (awacsCount && r.replySource === "canned-live") {
+      if (new RegExp(`^${awacsCount}\\s+מטוס`).test(reply.trim())) return "pass";
+      if (/\d+\s*מטוס/.test(reply) && !/heuristic|מסומנ|מזוה|ADS-B|עולם חי/i.test(reply)) return "fail";
+      return "partial";
+    }
+    if (!/awacs|ads-b|מודיעין|עולם חי|heuristic|צבא|אוואקס/i.test(ctx + reply)) return "fail";
+    if (/\d+\s*מטוס/.test(reply) && !/עולם חי|heuristic|מסומנ|מזוה|ADS-B|מועמד/i.test(reply)) {
       return "fail";
     }
   }
 
   if (q.id === "B03") {
     const rate = ctx.match(/1 USD = ([\d.]+ ILS)/)?.[1];
+    if (rate && !new RegExp(rate.replace(".", "\\.")).test(reply)) {
+      return r.replySource === "canned-live" ? "partial" : "fail";
+    }
     if (rate && /אינו זמין|לא זמין/i.test(reply) && !new RegExp(rate.replace(".", "\\.")).test(reply)) {
       return "fail";
     }
@@ -116,17 +149,56 @@ export function autoGradePresentationQuery(
     }
   }
 
+  if (q.id === "B07") {
+    const eqAnswer =
+      ctx.match(/ANSWER \(earthquake\):\s*(.+?)(?:\n|$)/)?.[1] ??
+      ctx.match(/הרעידה האחרונה מעל M\d+:\s*(M[\d.]+[^\n]+)/)?.[1];
+    const mag =
+      eqAnswer?.match(/:\s*M([\d.]+)/)?.[1] ??
+      [...(eqAnswer?.matchAll(/M([\d.]+)/g) ?? [])].at(-1)?.[1];
+    if (eqAnswer && /לא נמצאו|אין נתונים ספציפיים/i.test(reply) && !new RegExp(String(mag ?? "").replace(".", "\\.")).test(reply)) {
+      return "fail";
+    }
+    if (mag && !new RegExp(mag.replace(".", "\\.")).test(reply)) {
+      return r.replySource === "canned-live" ? "partial" : "fail";
+    }
+    if (eqAnswer && r.replySource === "canned-live" && /M[\d.]+/.test(reply)) {
+      return "pass";
+    }
+  }
+
   if (q.id === "B09") {
-    const count = ctx.match(/מטוסים בטווח:\s*(\d+)/i)?.[1];
-    if (count && /לא מצאתי|אין נתונים|לא ניתן/i.test(reply)) return "fail";
-    if (count && !new RegExp(count).test(reply)) {
-      return r.replySource === "canned-live" ? "pass" : "partial";
+    const count =
+      ctx.match(/ANSWER \(aircraft count\):\s*מטוסים בטווח:\s*(\d+)/i)?.[1] ??
+      ctx.match(/מטוסים בטווח:\s*(\d+)/i)?.[1] ??
+      ctx.match(/כל\s+המטוסים:\s*(\d+)/i)?.[1] ??
+      ctx.match(/סה[״"']?כ\s+(\d+)\s+מטוסים/i)?.[1];
+    if (count && /לא מצאתי|אין נתונים|לא ניתן|אינו זמין|לא זמין/i.test(reply)) return "fail";
+    if (count && !new RegExp(`\\b${count}\\b`).test(reply)) {
+      return r.replySource === "canned-live" ? "partial" : "fail";
+    }
+    if (count && r.replySource === "canned-live") {
+      if (new RegExp(`^${count}\\s+מטוסים`).test(reply.trim())) return "pass";
+      return "partial";
     }
   }
 
   if (q.id === "B11") {
-    if (!/ANSWER|ais|ספינות|סואץ|digitraffic|עולם חי/i.test(ctx + reply)) return "fail";
-    if (/^\s*(?:ישנ(?:ות|ים)?\s+)?2\s+ספינות/i.test(reply) && !/0\s+אוניות|הדגמה|לא ais/i.test(reply)) {
+    const liveCount =
+      ctx.match(/ANSWER \(ships\):\s*(\d+)/i)?.[1] ??
+      ctx.match(/ANSWER \(ships live\):\s*(\d+)/i)?.[1] ??
+      ctx.match(/דיווח AIS חי \+ עולם חי:\s*(\d+)/i)?.[1];
+    if (liveCount && /לא מצאתי|אין נתונים|מספר ספינות|several ships|הדגמה/i.test(reply) && !new RegExp(`^${liveCount}\\s+`).test(reply.trim())) {
+      return r.replySource === "canned-live" ? "partial" : "fail";
+    }
+    if (liveCount && r.replySource === "canned-live") {
+      if (new RegExp(`^${liveCount}\\s+`).test(reply.trim()) && !/הדגמה|מסלול \(הדגמה\)/i.test(reply)) {
+        return "pass";
+      }
+      return "partial";
+    }
+    if (!/ais|ספינות|סואץ|digitraffic|עולם חי|אוני/i.test(ctx + reply)) return "fail";
+    if (/^\s*(?:ישנ(?:ות|ים)?\s+)?2\s+ספינות/i.test(reply) && !/^0\s+/.test(reply.trim())) {
       return "fail";
     }
   }
@@ -144,8 +216,30 @@ export function autoGradePresentationQuery(
     if (NO_LIVE(ctx) && !/starlink-catalog|celestrak/i.test(ctx + reply)) return "partial";
   }
 
-  if (q.id === "B15") {
-    if (!/nominatim|תחנ|station|ber|ברלין/i.test(ctx + reply)) return "partial";
+  if (q.id === "B15" || q.id === "U15") {
+    if (!/nominatim|תחנ|station|ber|ברלין|openstreetmap|flughafen/i.test(ctx + reply)) return "partial";
+    if (r.replySource === "canned-live" && /מפה|openstreetmap|REALITY/i.test(reply)) return "pass";
+  }
+
+  if (q.id === "B36") {
+    if (!/open-meteo|תחזית|טמפר/i.test(ctx + reply)) return "fail";
+    if (/fetch failed|לא הצלחתי/i.test(reply) && !/תחזית/i.test(reply)) return "fail";
+  }
+
+  if (q.id === "B37") {
+    if (!/osrm|openstreetmap|מסלול|מרחק/i.test(ctx + reply)) return "partial";
+    if (r.replySource === "canned-live" && /מפה|מסלול/i.test(reply)) return "pass";
+  }
+
+  if (q.group === "ui") {
+    if (r.error) return "fail";
+    if (r.replySource === "canned-live" || r.replySource === "canned-globe") return "pass";
+    return "partial";
+  }
+
+  if (q.group === "events") {
+    if (providers.length < 1 && NO_LIVE(ctx)) return "fail";
+    if (r.replySource === "canned-live" && reply.length >= 25) return "pass";
   }
 
   if (q.group === "cross") {

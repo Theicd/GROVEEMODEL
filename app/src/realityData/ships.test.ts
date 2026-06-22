@@ -57,7 +57,7 @@ describe("fetchShipsSearch", () => {
     const result = await fetchShipsSearch("כמה כלי שייט במפרץ חיפה?");
     expect(result.ok).toBe(true);
     expect(result.text).toMatch(/ANSWER \(ships live\): 0/);
-    expect(result.text).toMatch(/סימוני מסלול/);
+    expect(result.text).not.toMatch(/Haifa Cargo|מסלול \(הדגמה\)/);
     expect(result.text).toMatch(/מפרץ חיפה/);
     vi.unstubAllGlobals();
   });
@@ -77,7 +77,7 @@ describe("fetchShipsSearch", () => {
     expect(result.ok).toBe(true);
     expect(result.text).toMatch(/ANSWER \(ships live\): 0/);
     expect(result.text).toMatch(/תעלת סואץ/);
-    expect(result.text).toMatch(/סימוני מסלול \(הדגמה/);
+    expect(result.text).not.toMatch(/Suez Transit|מסלול \(הדגמה\)/);
     vi.unstubAllGlobals();
   });
 

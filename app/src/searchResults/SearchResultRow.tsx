@@ -6,6 +6,7 @@ import { displayBreadcrumb, googleTranslatePageUrl } from "./displayUrl";
 import { formatGithubTitleLine } from "./formatGithubHit";
 import { hitNeedsTranslatePageLink } from "./translateHits";
 import { hostFromUrl } from "./sourceBranding";
+import { webProviderLabel } from "./webProviderLabels";
 import type { UnifiedSearchHit } from "./types";
 
 type Props = {
@@ -163,6 +164,14 @@ export function SearchResultRow({ hit, uiLang, onSummaryReady }: Props) {
           ) : null}
         </div>
         {hit.kind === "rss" ? <span className="serp-rss-pill">RSS</span> : null}
+        {hit.kind === "web" && hit.provider === "openserp" ? (
+          <span className="serp-companion-pill" title="Grove Search Companion">
+            OpenSERP
+          </span>
+        ) : null}
+        {hit.kind === "web" && hit.provider !== "openserp" && webProviderLabel(hit.provider, uiLang) ? (
+          <span className="serp-web-pill">{webProviderLabel(hit.provider, uiLang)}</span>
+        ) : null}
         {hit.kind === "movie" ? (
           <span className="serp-movie-pill">{uiLang === "he" ? "סרט" : "Movie"}</span>
         ) : null}

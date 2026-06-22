@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { NetworkStatusIcon } from "./components/NetworkStatusIcon";
+import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import type { StartupContext } from "./startupContext/types";
 
 const WMO_ICON: Record<number, string> = {
@@ -19,9 +21,19 @@ const WMO_ICON: Record<number, string> = {
 
 type Props = {
   context: StartupContext | null;
+  uiLang?: "he" | "en";
 };
 
-export function LocalContextBar({ context }: Props) {
+function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Jerusalem";
+  } catch {
+    return "Asia/Jerusalem";
+  }
+}
+
+export function LocalContextBar({ context, uiLang = "he" }: Props) {
+  const networkStatus = useNetworkStatus();
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -29,36 +41,47 @@ export function LocalContextBar({ context }: Props) {
     return () => window.clearInterval(id);
   }, []);
 
-  if (!context) return null;
-
-  const tz = context.timezone;
+  const tz = context?.timezone ?? browserTimezone();
   let timeLabel = "—";
   let dateLabel = "";
   try {
-    timeLabel = new Intl.DateTimeFormat("he-IL", {
+    timeLabel = new Intl.DateTimeFormat(uiLang === "he" ? "he-IL" : "en-US", {
       timeZone: tz,
       hour: "2-digit",
       minute: "2-digit",
     }).format(now);
-    dateLabel = new Intl.DateTimeFormat("he-IL", {
+    dateLabel = new Intl.DateTimeFormat(uiLang === "he" ? "he-IL" : "en-US", {
       timeZone: tz,
       weekday: "short",
       day: "numeric",
       month: "short",
     }).format(now);
   } catch {
-    timeLabel = now.toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" });
-    dateLabel = now.toLocaleDateString("he-IL", { weekday: "short", day: "numeric", month: "short" });
+    timeLabel = now.toLocaleTimeString(uiLang === "he" ? "he-IL" : "en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    dateLabel = now.toLocaleDateString(uiLang === "he" ? "he-IL" : "en-US", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
   }
 
-  const place = context.cityName ?? context.countryCode;
+  const place = context?.cityName ?? context?.countryCode ?? (uiLang === "he" ? "מקומי" : "Local");
   const wx =
-    context.localTempC != null
+    context?.localTempC != null
       ? `${WMO_ICON[context.localWeatherCode ?? 0] ?? "🌡"} ${Math.round(context.localTempC)}°`
       : null;
 
   return (
-    <div className="local-context-bar" dir="ltr" title={`${context.timezone} · ${context.countryName}`}>
+    <div
+      className="local-context-bar"
+      dir="ltr"
+      title={context ? `${context.timezone} · ${context.countryName}` : tz}
+    >
+      <NetworkStatusIcon status={networkStatus} uiLang={uiLang} />
+      <span className="local-context-sep" aria-hidden="true" />
       <span className="local-context-time">{timeLabel}</span>
       <span className="local-context-sep" aria-hidden="true" />
       <span className="local-context-date">{dateLabel}</span>
@@ -68,7 +91,7 @@ export function LocalContextBar({ context }: Props) {
         <>
           <span className="local-context-sep" aria-hidden="true" />
           <span
-            className={`local-context-weather${context.localTempC != null ? " local-context-weather--live" : ""}`}
+            className={`local-context-weather${context?.localTempC != null ? " local-context-weather--live" : ""}`}
           >
             {wx}
           </span>

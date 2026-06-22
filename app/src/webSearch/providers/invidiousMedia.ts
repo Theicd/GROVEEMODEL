@@ -50,12 +50,10 @@ type InvidiousSearchHit = {
 
 
 
+/** Public Invidious instances — pruned for reliability (avoid 403/404 dead relays). */
 const DEFAULT_INSTANCES = [
-  "https://invidious.privacyredirect.com",
-  "https://inv.nadeko.net",
   "https://inv.tux.pizza",
-  "https://yewtu.be",
-  "https://invidious.nerdvpn.de",
+  "https://invidious.io",
 ];
 
 
@@ -277,29 +275,18 @@ export async function searchInvidiousVideos(query: string): Promise<MediaSerpHit
 
 
   for (const instance of getInvidiousInstances()) {
-
     try {
+      const videos = await searchInvidiousType(instance, q, "video");
+      if (!videos.length) continue;
 
-      const [videos, playlists, channels] = await Promise.all([
-
-        searchInvidiousType(instance, q, "video"),
-
-        searchInvidiousType(instance, q, "playlist"),
-
-        searchInvidiousType(instance, q, "channel"),
-
+      const [playlists, channels] = await Promise.all([
+        searchInvidiousType(instance, q, "playlist").catch(() => [] as MediaSerpHit[]),
+        searchInvidiousType(instance, q, "channel").catch(() => [] as MediaSerpHit[]),
       ]);
-
-      const merged = [...videos, ...playlists, ...channels];
-
-      if (merged.length) return merged;
-
+      return [...videos, ...playlists, ...channels];
     } catch {
-
       continue;
-
     }
-
   }
 
   return [];

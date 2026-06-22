@@ -1,5 +1,10 @@
 import { classifySearchIntents, sanitizeSearchQuery } from "./intents";
+import { needsOpenWebEnrichment, inferAnswerShape } from "./openWebTopics";
+import { buildWebTopicSearchPlan } from "./webTopicQueryPlan";
 import { isSearxngConfigured } from "./providers/searxng";
+import { isOpenSerpConfigured } from "./providers/openserp";
+import { isTavilyConfigured } from "./providers/tavily";
+import { isScavioConfigured } from "./providers/scavio";
 import { planWantsWebFallback, regexPlanForQuery } from "./searchPlanner";
 import type { AnswerShape, SearchIntent, WebSearchPlanHint } from "./types";
 
@@ -35,30 +40,38 @@ export type QueryRoute = {
  */
 export const routeQuery = (query: string, planHint?: WebSearchPlanHint): QueryRoute => {
   const q = sanitizeSearchQuery(query);
+  const openWebPlan = buildWebTopicSearchPlan(q);
   const regexPlan = regexPlanForQuery(q);
   const ruleIntents = classifySearchIntents(q);
-  const intents = regexPlan ? regexPlan.intents : ruleIntents;
+  const intents = openWebPlan ? ruleIntents : regexPlan ? regexPlan.intents : ruleIntents;
 
   const answerShape: AnswerShape =
     planHint?.answerShape ??
+    openWebPlan?.answerShape ??
     regexPlan?.answerShape ??
+    inferAnswerShape(q) ??
     (/כמה|how\s+many/i.test(q) ? "count" : "short_fact");
 
-  const queries =
-    planHint?.queries?.length && planHint.queries.length > 1
+  const queries = openWebPlan
+    ? openWebPlan.engineQueries
+    : planHint?.queries?.length && planHint.queries.length > 1
       ? planHint.queries.slice(0, 3)
       : regexPlan?.queries?.length && regexPlan.queries.length > 1
         ? regexPlan.queries.slice(0, 3)
         : [q];
 
   const hasStructuredTasks = intents.length > 0;
-  const blendNewsWithWeb = regexPlan?.blendNewsWithWeb === true || planHint?.blendNewsWithWeb === true;
+  const blendNewsWithWeb =
+    openWebPlan?.blendNewsWithWeb ??
+    (regexPlan?.blendNewsWithWeb === true || planHint?.blendNewsWithWeb === true);
   const useWebFallback =
-    blendNewsWithWeb ||
-    (!hasStructuredTasks &&
-      (regexPlan?.useWebFallback === true ||
-        planHint?.useWebFallback === true ||
-        planWantsWebFallback({ useWebFallback: planHint?.useWebFallback, intents: [] }, q)));
+    openWebPlan?.useWebFallback ??
+    (blendNewsWithWeb ||
+      needsOpenWebEnrichment(q) ||
+      (!hasStructuredTasks &&
+        (regexPlan?.useWebFallback === true ||
+          planHint?.useWebFallback === true ||
+          planWantsWebFallback({ useWebFallback: planHint?.useWebFallback, intents: [] }, q))));
 
   return {
     intents,
@@ -71,7 +84,14 @@ export const routeQuery = (query: string, planHint?: WebSearchPlanHint): QueryRo
   };
 };
 
-/** Critical rule: structured API → no SearXNG — except overview blend (RSS + web). */
+/** At least one open-web provider for fallback. */
+export const isWebSearchConfigured = (): boolean =>
+  isOpenSerpConfigured() ||
+  isTavilyConfigured() ||
+  isScavioConfigured() ||
+  isSearxngConfigured();
+
+/** Critical rule: structured API → no open web — except overview blend (RSS + web). */
 export const shouldAllowWebFallback = (
   structuredTaskCount: number,
   plan?: { useWebFallback?: boolean; blendNewsWithWeb?: boolean },
@@ -79,7 +99,8 @@ export const shouldAllowWebFallback = (
 ): boolean => {
   if (plan?.blendNewsWithWeb) return true;
   if (plan?.useWebFallback) return true;
+  if (needsOpenWebEnrichment(query)) return true;
   if (structuredTaskCount > 0) return false;
-  if (!isSearxngConfigured()) return false;
+  if (!isWebSearchConfigured()) return false;
   return planWantsWebFallback(plan, query);
 };

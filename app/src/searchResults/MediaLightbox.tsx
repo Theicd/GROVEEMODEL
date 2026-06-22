@@ -1,6 +1,7 @@
 import { useEffect, type MouseEvent } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 import type { UnifiedSearchHit } from "./types";
+import { HlsStreamPlayer } from "./HlsStreamPlayer";
 
 type Props = {
   hit: UnifiedSearchHit;
@@ -12,13 +13,13 @@ const labels = {
   he: {
     close: "סגור",
     download: "הורדה",
-    sourceOn: (name: string) => `מקור ב-${name}`,
+    sourceOn: (name: string) => `מקור: ${name}`,
     by: "על ידי",
   },
   en: {
     close: "Close",
     download: "Download",
-    sourceOn: (name: string) => `View on ${name}`,
+    sourceOn: (name: string) => `Source: ${name}`,
     by: "by",
   },
 } as const;
@@ -31,9 +32,11 @@ const usesEmbedPlayer = (hit: UnifiedSearchHit): boolean =>
 
 export function MediaLightbox({ hit, uiLang, onClose }: Props) {
   const L = labels[uiLang];
-  const isVideo = hit.kind === "video" || hit.kind === "youtube";
-  const embed = isVideo && usesEmbedPlayer(hit);
-  const mediaSrc = hit.mediaPlayUrl || hit.imageUrl || hit.url;
+  const isRadio = hit.kind === "radio";
+  const isLiveTv = hit.kind === "livetv";
+  const isVideo = hit.kind === "video" || hit.kind === "youtube" || isLiveTv;
+  const embed = isVideo && !isLiveTv && usesEmbedPlayer(hit);
+  const streamSrc = hit.mediaPlayUrl || hit.url;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -52,19 +55,39 @@ export function MediaLightbox({ hit, uiLang, onClose }: Props) {
           ×
         </button>
 
-        {isVideo ? (
+        {isRadio ? (
+          <div className="serp-media-lightbox-audio-wrap">
+            {hit.imageUrl ? (
+              <img className="serp-media-lightbox-audio-art" src={hit.imageUrl} alt="" referrerPolicy="no-referrer" />
+            ) : null}
+            <HlsStreamPlayer
+              src={streamSrc}
+              className="serp-media-lightbox-audio"
+              tag="audio"
+              autoPlay
+            />
+          </div>
+        ) : isVideo ? (
           embed ? (
             <iframe
               className="serp-media-lightbox-embed"
-              src={mediaSrc}
+              src={streamSrc}
               title={hit.title}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
             />
+          ) : isLiveTv || /\.m3u8/i.test(streamSrc) ? (
+            <HlsStreamPlayer
+              src={streamSrc}
+              poster={hit.imageUrl}
+              className="serp-media-lightbox-video"
+              tag="video"
+              autoPlay
+            />
           ) : (
             <video
               className="serp-media-lightbox-video"
-              src={mediaSrc}
+              src={streamSrc}
               controls
               autoPlay
               playsInline
@@ -72,7 +95,7 @@ export function MediaLightbox({ hit, uiLang, onClose }: Props) {
             />
           )
         ) : (
-          <img className="serp-media-lightbox-image" src={mediaSrc} alt={hit.title} />
+          <img className="serp-media-lightbox-image" src={hit.imageUrl || hit.url} alt={hit.title} />
         )}
 
         <div className="serp-media-lightbox-foot">
@@ -82,6 +105,7 @@ export function MediaLightbox({ hit, uiLang, onClose }: Props) {
               {L.by} {hit.author}
             </div>
           ) : null}
+          {hit.snippet ? <div className="serp-media-lightbox-sub">{hit.snippet}</div> : null}
           <div className="serp-media-lightbox-actions">
             {hit.downloadUrl ? (
               <a
@@ -95,7 +119,7 @@ export function MediaLightbox({ hit, uiLang, onClose }: Props) {
               </a>
             ) : null}
             <a className="serp-btn serp-btn--ghost" href={hit.url} target="_blank" rel="noopener noreferrer">
-              {L.sourceOn(hit.sourceLabel || "מקור")}
+              {L.sourceOn(hit.sourceLabel || "stream")}
             </a>
           </div>
         </div>

@@ -2,7 +2,7 @@ import type { GroveeNewsCard } from "../groveeNews/types";
 
 import type { MediaSerpHit, SearchProviderId, SearchSourceResult } from "../webSearch/types";
 
-import { isNewsQuery, isMoviesQuery, isImagesQuery, isVideoMediaQuery, isProductsQuery, isHuggingFaceQuery, shouldSearchYouTube } from "../webSearch/intents";
+import { isNewsQuery, isMoviesQuery, isImagesQuery, isVideoMediaQuery, isProductsQuery, isHuggingFaceQuery, shouldSearchYouTube, isMusicQuery, hasTimelyInfoSignal, isEarthquakeQuery, isDisasterQuery, isWeatherQuery, isMarineQuery, isAirQualityQuery, isPlacesQuery, isDistanceQuery, isShipsQuery, isMarineInfraQuery, isIsraelCinemaNowQuery } from "../webSearch/intents";
 import { isYouTubeUrl } from "../webSearch/youtubeUrls";
 
 import { parseArxivText, parseGithubLines, parseHackerNewsLines, parseWikipediaText } from "./parseProviderLines";
@@ -13,12 +13,31 @@ import { filterBlockedHits } from "./serpBlocklist";
 
 import { cleanDisplaySnippet } from "./snippetCleanup";
 
+import { webHitSourceLabel } from "./webProviderLabels";
 import { faviconForUrl, hostFromUrl } from "./sourceBranding";
 
 import type { SearchResultsFacets, SearchResultsPayload, UnifiedSearchHit } from "./types";
 import { youtubeHitFromMedia, youtubeHitFromWeb } from "./youtubeHits";
+import {
+  formatLiveDisastersNote,
+  mergeLiveDisasterHits,
+  parseGdacsDisasterText,
+  parseUsgsEarthquakeText,
+} from "./liveDisastersHits";
+import {
+  formatLiveShipsNote,
+  mergeLiveShipHits,
+  parseAisShipsText,
+  parseMarineInfraText,
+  shipsPanelTotal,
+} from "./liveShipsHits";
+import { getLiveWorldSnapshotForPanel } from "../liveWorld/snapshotStore";
+import { parseStructuredProviderHits } from "./structuredProviderHits";
+import { isCinemaHomepageHit, parseCinemaMoviesFromText } from "../webSearch/cinemaIlExtract";
+import { buildWebTopicSearchPlan } from "../webSearch/webTopicQueryPlan";
 
 const mediaProviderId = (m: MediaSerpHit, kind: "image" | "video"): SearchProviderId => {
+  if (m.source?.startsWith("OpenSERP")) return "openserp";
   switch (m.source) {
     case "Internet Archive":
       return "internet-archive-media";
@@ -98,7 +117,12 @@ export const mergeSourcesToHits = (
 
   for (const s of sources) {
 
-    if (!s.ok) continue;
+    if (!s.ok) {
+      if (s.provider === "grovee-news" && s.newsCards?.length) {
+        s.newsCards.forEach((card, i) => out.push(newsCardToHit(card, i)));
+      }
+      continue;
+    }
 
 
 
@@ -123,7 +147,18 @@ export const mergeSourcesToHits = (
           score: 52,
         });
         if (yt) {
-          out.push(yt);
+          out.push({
+            ...yt,
+            provider:
+              s.provider === "openserp"
+                ? "openserp"
+                : s.provider === "tavily"
+                  ? "tavily"
+                  : s.provider === "scavio"
+                    ? "scavio"
+                    : yt.provider,
+            sourceLabel: s.provider === "openserp" ? "YouTube · OpenSERP" : yt.sourceLabel,
+          });
           continue;
         }
 
@@ -139,11 +174,28 @@ export const mergeSourcesToHits = (
 
           snippet: cleanDisplaySnippet(w.title, w.snippet, w.url),
 
-          sourceLabel: hostFromUrl(w.url) || w.engine || "Web",
+          sourceLabel: webHitSourceLabel(
+            s.provider === "tavily"
+              ? "tavily"
+              : s.provider === "scavio"
+                ? "scavio"
+                : s.provider === "openserp"
+                  ? "openserp"
+                  : "searxng",
+            w.url,
+            w.engine,
+          ),
 
           faviconUrl: faviconForUrl(w.url),
 
-          provider: "searxng",
+          provider:
+            s.provider === "tavily"
+              ? "tavily"
+              : s.provider === "scavio"
+                ? "scavio"
+                : s.provider === "openserp"
+                  ? "openserp"
+                  : "searxng",
 
           score: 45,
 
@@ -342,6 +394,34 @@ export const mergeSourcesToHits = (
       continue;
     }
 
+    if (s.liveMediaHits?.length) {
+      for (const m of s.liveMediaHits) {
+        const kind = m.mediaType === "radio" ? "radio" : "livetv";
+        const statusBoost = m.status === "working" ? 24 : m.status === "unknown" ? 6 : 0;
+        const fuseBoost = Math.round((m.fuseScore ?? 0) * 40);
+        out.push({
+          id: m.id,
+          kind,
+          title: m.title,
+          titleOriginal: m.title,
+          url: m.url,
+          snippet: m.snippet?.trim() || m.category || "",
+          snippetOriginal: m.snippet || "",
+          imageUrl: m.logoUrl,
+          mediaPlayUrl: m.streamUrl,
+          sourceLabel: kind === "radio" ? "Radio" : "TV LIVE",
+          provider: "live-tv",
+          score: (kind === "radio" && isMusicQuery(query) ? 68 : 58) + statusBoost + fuseBoost,
+          meta: {
+            engine: m.category || m.codec || "Live",
+            year: m.bitrate,
+          },
+          summarizable: false,
+        });
+      }
+      continue;
+    }
+
     if (s.provider === "github" && s.text.trim()) {
 
       out.push(...parseGithubLines(s.text));
@@ -359,6 +439,23 @@ export const mergeSourcesToHits = (
       s.text.trim()
     ) {
       out.push(...parseWikipediaText(s.text, s.provider));
+    } else if (s.provider === "usgs-earthquake" && s.text.trim()) {
+      out.push(...parseUsgsEarthquakeText(s.text));
+    } else if (s.provider === "gdacs-disasters" && s.text.trim()) {
+      out.push(...parseGdacsDisasterText(s.text));
+    } else if (s.provider === "ais-ships" && s.text.trim()) {
+      out.push(...parseAisShipsText(s.text));
+    } else if (s.provider === "osm-overpass-marine" && s.text.trim()) {
+      out.push(...parseMarineInfraText(s.text));
+    } else if (
+      s.text.trim() &&
+      (s.provider === "open-meteo" ||
+        s.provider === "open-meteo-marine" ||
+        s.provider === "open-meteo-air-quality" ||
+        s.provider === "nominatim-places" ||
+        s.provider === "osrm-distance")
+    ) {
+      out.push(...parseStructuredProviderHits(s));
     }
 
   }
@@ -366,12 +463,34 @@ export const mergeSourcesToHits = (
 
 
   const hebrewUi = getUserNewsProfile().uiLanguage === "he";
-  return filterBlockedHits(
-    rankHitsForQuery(rankAndDedupeHits(out), query, {
-      newsQuery: isNewsQuery(query),
+  const topicPlan = buildWebTopicSearchPlan(query);
+  if (topicPlan?.kind === "cinema_il") {
+    for (const hit of out) {
+      if (hit.kind !== "web") continue;
+      const snippet = hit.snippetOriginal ?? hit.snippet;
+      const movies = parseCinemaMoviesFromText(snippet);
+      if (movies.length >= 2) {
+        hit.score = (hit.score ?? 0) + 220;
+      } else if (
+        isCinemaHomepageHit({
+          title: hit.titleOriginal ?? hit.title,
+          url: hit.url,
+          snippet,
+        })
+      ) {
+        hit.score = Math.max(0, (hit.score ?? 0) - 180);
+      }
+    }
+  }
+  const rankQuery = query;
+  const ranked = filterBlockedHits(
+    rankHitsForQuery(rankAndDedupeHits(out), rankQuery, {
+      newsQuery: isNewsQuery(query) && !topicPlan,
       hebrewUi,
     }),
   );
+  if (topicPlan) return ranked;
+  return mergeLiveShipHits(mergeLiveDisasterHits(ranked, query), query);
 };
 
 
@@ -380,7 +499,9 @@ const buildFacets = (hits: UnifiedSearchHit[]): SearchResultsFacets => ({
 
   rss: hits.filter((h) => h.kind === "rss").length,
 
-  web: hits.filter((h) => h.kind === "web").length,
+  web: hits.filter((h) => h.kind === "web" && h.provider !== "openserp").length,
+
+  companionWeb: hits.filter((h) => h.kind === "web" && h.provider === "openserp").length,
 
   repos: hits.filter((h) => h.kind === "github").length,
 
@@ -394,9 +515,25 @@ const buildFacets = (hits: UnifiedSearchHit[]): SearchResultsFacets => ({
 
   youtube: hits.filter((h) => h.kind === "youtube").length,
 
+  liveTv: hits.filter((h) => h.kind === "livetv").length,
+
+  radio: hits.filter((h) => h.kind === "radio").length,
+
   products: hits.filter((h) => h.kind === "product").length,
 
   hfModels: hits.filter((h) => h.kind === "hfmodel").length,
+
+  earthquakes: hits.filter((h) => h.kind === "earthquake").length,
+
+  disasters: hits.filter((h) => h.kind === "disaster").length,
+
+  ships: hits.filter((h) => h.kind === "ship" || h.kind === "marine").length,
+
+  weather: hits.filter((h) => h.kind === "weather").length,
+
+  marine: hits.filter((h) => h.kind === "marine").length,
+
+  places: hits.filter((h) => h.kind === "place" || h.kind === "route").length,
 
   other: hits.filter((h) => h.kind === "hackernews" || h.kind === "structured").length,
 
@@ -412,11 +549,17 @@ export const buildUnifiedSearchPayload = (
 
 ): SearchResultsPayload => {
 
+  const topicPlan = buildWebTopicSearchPlan(query);
   const rawProviderErrors = sources
     .filter((s) => !s.ok && s.error)
     .map((s) => `${s.label}: ${s.error}`);
 
   const hits = mergeSourcesToHits(sources, query);
+
+  const companionWebCount = hits.filter((h) => h.kind === "web" && h.provider === "openserp").length;
+  const openserpSource = sources.find((s) => s.provider === "openserp");
+
+  const webCount = hits.filter((h) => h.kind === "web" && h.provider !== "openserp").length;
 
   const rssCount = hits.filter((h) => h.kind === "rss").length;
 
@@ -424,18 +567,54 @@ export const buildUnifiedSearchPayload = (
   const imagesCount = hits.filter((h) => h.kind === "image").length;
   const videosCount = hits.filter((h) => h.kind === "video").length;
   const youtubeCount = hits.filter((h) => h.kind === "youtube").length;
+  const liveTvCount = hits.filter((h) => h.kind === "livetv").length;
+  const radioCount = hits.filter((h) => h.kind === "radio").length;
   const productsCount = hits.filter((h) => h.kind === "product").length;
   const hfModelsCount = hits.filter((h) => h.kind === "hfmodel").length;
+  const earthquakesCount = hits.filter((h) => h.kind === "earthquake").length;
+  const disastersCount = hits.filter((h) => h.kind === "disaster").length;
+  const shipsCount = shipsPanelTotal(hits);
+  const weatherCount = hits.filter((h) => h.kind === "weather").length;
 
   /** Hide provider noise when we have results — but surface YouTube failures when the YouTube tab is empty. */
   const providerErrors =
     hits.length === 0
       ? rawProviderErrors
-      : youtubeCount === 0
-        ? rawProviderErrors.filter((e) => /YouTube|Invidious|Piped|SearXNG/i.test(e))
-        : [];
+      : rssCount === 0 && rawProviderErrors.some((e) => /GROVEE NEWS|חדשות/i.test(e))
+        ? rawProviderErrors.filter((e) => /GROVEE NEWS|חדשות|YouTube|Invidious|SearXNG|TV LIVE|Radio|live-tv|קטלוג/i.test(e))
+        : youtubeCount === 0 || (liveTvCount === 0 && radioCount === 0)
+          ? rawProviderErrors.filter((e) =>
+              /YouTube|Invidious|Piped|SearXNG|TV LIVE|Radio|live-tv|קטלוג/i.test(e),
+            )
+          : [];
 
 
+
+  const newsSource = sources.find((s) => s.provider === "grovee-news");
+  const newsRssNote = newsSource?.newsScanNote;
+  const snapshot = getLiveWorldSnapshotForPanel();
+  const liveDisastersNote = formatLiveDisastersNote(snapshot, "he");
+  const liveShipsNote = formatLiveShipsNote(snapshot, "he", query);
+
+  const wantsEarthquakeTab = isEarthquakeQuery(query);
+  const wantsDisasterTab = isDisasterQuery(query) && !wantsEarthquakeTab;
+  const wantsLiveSensorTab = wantsEarthquakeTab || wantsDisasterTab;
+  const wantsWeatherTab =
+    isWeatherQuery(query) || isMarineQuery(query) || isAirQualityQuery(query);
+  const wantsShipsTab =
+    !topicPlan && (isShipsQuery(query) || isMarineInfraQuery(query));
+  const wantsPlacesTab = isPlacesQuery(query) || isDistanceQuery(query);
+  const wantsEventsTab =
+    /אירוע|חריג|מה קורה בעולם|current events/i.test(query) ||
+    wantsEarthquakeTab ||
+    wantsDisasterTab ||
+    wantsWeatherTab ||
+    (earthquakesCount > 0 && disastersCount > 0);
+  const openMeteoMarineCount = hits.filter(
+    (h) => h.kind === "marine" && h.provider === "open-meteo-marine",
+  ).length;
+  const eventsCount =
+    earthquakesCount + disastersCount + weatherCount + openMeteoMarineCount;
 
   return {
 
@@ -449,27 +628,53 @@ export const buildUnifiedSearchPayload = (
 
     providerErrors,
 
-    preferRssFilter: isNewsQuery(query) && rssCount > 0,
+    newsRssNote,
 
-    preferMoviesFilter: isMoviesQuery(query) && moviesCount > 0 && rssCount === 0,
+    liveDisastersNote,
+
+    liveShipsNote,
+
+    preferShipsFilter:
+      shipsCount > 0 &&
+      wantsShipsTab &&
+      rssCount === 0 &&
+      !wantsLiveSensorTab &&
+      !wantsEventsTab,
+
+    preferEventsFilter: eventsCount > 0 && wantsEventsTab && rssCount === 0,
+
+    preferRssFilter:
+      !topicPlan &&
+      !wantsLiveSensorTab &&
+      !wantsWeatherTab &&
+      !wantsPlacesTab &&
+      !wantsShipsTab &&
+      rssCount > 0 &&
+      (isNewsQuery(query) || hasTimelyInfoSignal(query) || (rssCount >= 2 && youtubeCount === 0 && liveTvCount === 0)),
+
+    showCompanionTab: !!openserpSource,
+
+    companionWebError:
+      openserpSource && !openserpSource.ok ? openserpSource.error : undefined,
+
+    preferMoviesFilter:
+      (isMoviesQuery(query) || isIsraelCinemaNowQuery(query)) &&
+      moviesCount > 0 &&
+      rssCount === 0 &&
+      !topicPlan,
 
     preferImagesFilter:
       isImagesQuery(query) && imagesCount > 0 && rssCount === 0 && moviesCount === 0,
 
     preferVideoFilter:
-      (isVideoMediaQuery(query) || (isMoviesQuery(query) && videosCount > 0)) &&
-      videosCount > 0 &&
+      (isVideoMediaQuery(query) ||
+        (isMoviesQuery(query) && videosCount > 0) ||
+        shouldSearchYouTube(query)) &&
+      videosCount + youtubeCount > 0 &&
       rssCount === 0 &&
-      moviesCount === 0 &&
-      youtubeCount === 0,
+      moviesCount === 0,
 
-    preferYouTubeFilter:
-      shouldSearchYouTube(query) &&
-      youtubeCount > 0 &&
-      rssCount === 0,
-
-    preferProductsFilter:
-      isProductsQuery(query) && productsCount > 0 && rssCount === 0 && moviesCount === 0,
+    preferProductsFilter: isProductsQuery(query) && productsCount > 0,
 
     preferHfModelsFilter:
       isHuggingFaceQuery(query) && hfModelsCount > 0,
@@ -481,6 +686,8 @@ export const buildUnifiedSearchPayload = (
 
 
 export const shouldOpenSearchResultsPanel = (payload: SearchResultsPayload): boolean =>
-
-  payload.hits.length > 0 || payload.providerErrors.some((e) => /SearXNG/i.test(e));
+  payload.hits.length > 0 ||
+  payload.providerErrors.some((e) => /SearXNG/i.test(e)) ||
+  (payload.facets.earthquakes ?? 0) + (payload.facets.disasters ?? 0) > 0 ||
+  (payload.facets.ships ?? 0) > 0;
 

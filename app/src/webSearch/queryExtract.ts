@@ -73,6 +73,9 @@ export const extractLocationPhrase = (query: string): string | null => {
     /(?:מה\s+)?(?:ה)?(?:טמפרטור(?:ה|ה)|temperature)\s+(?:עכשיו|כרגע|now)?\s*(?:ב|ב־|in|at|of|של)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:תחזית|forecast)\s+(?:מזג\s*האוויר|weather)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:מהי|מה\s+ה)?(?:תחזית|forecast)\s+(?:מזג\s*האוויר|weather)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
+    /(?:מה\s+)?(?:ה)?תחזית(?:\s+(?:מזג\s*האוויר|weather))?\s+(?:ל|for)\s*(?:שבוע|week|שבועי)(?:\s+(?:ב|ב־|in|at|for)\s+(.+?))?(?:[?!.]?$)/i,
+    /(?:תחזית|forecast)(?:\s+(?:מזג\s*האוויר|weather))?\s+(?:ל|for)\s*(?:שבוע|week)(?:\s+(?:ב|ב־|in|at|for)\s+(.+?))?(?:[?!.]?$)/i,
+    /(?:תחזית|forecast)(?:\s+(?:מזג\s*האוויר|weather))?\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:\s+(?:ל|for)\s*(?:שבוע|week))?(?:[?!.]?$)/i,
     /^([A-Za-z\u0590-\u05FF][\w\s\-'".]{1,40})\s+(?:weather|forecast|temperature|מזג|תחזית)/i,
     /(?:ב|ב־|in|at)\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-'".]{1,40})(?:[?!.]?$)/i,
   ];
@@ -143,6 +146,41 @@ export const extractCountryPhrase = (query: string): string | null => {
   );
   if (known) return normalizeCountrySearchName(known[0]);
   return null;
+};
+
+const KNOWN_COUNTRY_RE =
+  /\b(Israel|Germany|France|Japan|China|Brazil|Canada|Mexico|Russia|Australia|United States|United Kingdom|Britain|UK|Spain|Italy|India|ישראל|גרמניה|צרפת|יפן|סין|ברזיל|קנדה|מקסיקו|רוסיה|אוסטרליה|בריטניה|איטליה|ספרד|הודו|ארצות\s+הברית|ארה"ב)\b/gi;
+
+const HEBREW_COUNTRY_ALIASES: [RegExp, string][] = [
+  [/ישראל/i, "Israel"],
+  [/גרמניה/i, "Germany"],
+  [/צרפת/i, "France"],
+  [/בריטניה/i, "United Kingdom"],
+  [/איטליה/i, "Italy"],
+  [/ספרד/i, "Spain"],
+  [/ארצות\s+הברית|ארה"ב/i, "United States"],
+  [/יפן/i, "Japan"],
+  [/סין/i, "China"],
+  [/ברזיל/i, "Brazil"],
+  [/קנדה/i, "Canada"],
+  [/מקסיקו/i, "Mexico"],
+  [/רוסיה/i, "Russia"],
+  [/אוסטרליה/i, "Australia"],
+  [/הודו/i, "India"],
+];
+
+/** All countries mentioned in government / leadership queries. */
+export const extractCountryPhrases = (query: string): string[] => {
+  const found = new Set<string>();
+  for (const [re, en] of HEBREW_COUNTRY_ALIASES) {
+    if (re.test(query)) found.add(en);
+  }
+  for (const m of query.matchAll(KNOWN_COUNTRY_RE)) {
+    found.add(normalizeCountrySearchName(m[0]));
+  }
+  const single = extractCountryPhrase(query);
+  if (single) found.add(single);
+  return [...found];
 };
 
 /** Currency pair e.g. USD to ILS — supports codes, names, and natural Hebrew/English. */
@@ -276,6 +314,11 @@ export const extractCurrencyPair = (query: string): CurrencyPair | null => {
 
   if (/(?:יחס|המר|convert|exchange|rate)/i.test(q)) {
     const codes = collectCurrencyCodes(q);
+    const hasIls = codes.includes("ILS") || /שקל|shekel|ils|nis/i.test(q);
+    if (codes.length >= 2 && hasIls) {
+      const base = codes.find((c) => c !== "ILS");
+      if (base) return { from: base, to: "ILS" };
+    }
     if (codes.length >= 2) return { from: codes[0], to: codes[1] };
     if (codes.length === 1) {
       const other =
@@ -287,6 +330,14 @@ export const extractCurrencyPair = (query: string): CurrencyPair | null => {
   }
 
   const codes = collectCurrencyCodes(q);
+  const hasIls = codes.includes("ILS") || /שקל|shekel|ils|nis/i.test(q);
+  if (codes.length >= 2 && hasIls) {
+    const base = codes.find((c) => c !== "ILS");
+    if (base) return { from: base, to: "ILS" };
+  }
+  if (/דולר|dollar|usd/i.test(q) && /יורו|euro|eur/i.test(q) && hasIls) {
+    return { from: "USD", to: "ILS" };
+  }
   if (codes.length >= 2) return { from: codes[0], to: codes[1] };
 
   const m3 = q.match(/(?:דולר|dollar|usd|יורו|euro|eur)\s+(?:מול|ל|to|ב)\s+(?:שקל|shekel|ils|nis)/i);
@@ -295,11 +346,39 @@ export const extractCurrencyPair = (query: string): CurrencyPair | null => {
   return null;
 };
 
+/** All FX pairs implied by the query (e.g. USD→ILS and EUR→ILS). */
+export const extractCurrencyPairs = (query: string): CurrencyPair[] => {
+  const q = query.trim();
+  if (!q) return [];
+
+  const codes = collectCurrencyCodes(q);
+  const hasIls = codes.includes("ILS") || /שקל|shekel|ils|nis/i.test(q);
+  const bases = [...new Set(codes.filter((c) => c !== "ILS"))];
+
+  if (hasIls && bases.length >= 2) {
+    return bases.map((from) => ({ from, to: "ILS" }));
+  }
+  if (hasIls && bases.length === 1) {
+    return [{ from: bases[0], to: "ILS" }];
+  }
+  if (/דולר|dollar|usd/i.test(q) && /יורו|euro|eur/i.test(q) && hasIls) {
+    return [
+      { from: "USD", to: "ILS" },
+      { from: "EUR", to: "ILS" },
+    ];
+  }
+
+  const single = extractCurrencyPair(q);
+  return single ? [single] : [];
+};
+
 /** Two places for distance queries: "בין X ל-Y". */
 export const extractPlacePair = (query: string): [string, string] | null => {
   const q = query.trim();
   const patterns = [
     /(?:מרחק|distance|כמה\s+(?:ק["″']?מ|km|kilometers?))\s+(?:בין|between)\s+(.+?)\s+(?:ל|ו|to|and)\-?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:איך\s+מגיע(?:ים)?|how\s+to\s+get|(?:דרך|מסלול|route)\s+(?:מ|from))\s*(.+?)\s+(?:ל|אל|to)\s*(.+?)(?:[?!.]?$)/i,
+    /(?:מ|מש|from)\s*(.+?)\s+(?:ל|אל|to|עד)\s*(.+?)(?:[?!.]?$)/i,
     /(?:בין|between)\s+(.+?)\s+(?:ל|ו|to|and)\-?\s*(.+?)(?:[?!.]?$)/i,
   ];
   for (const re of patterns) {

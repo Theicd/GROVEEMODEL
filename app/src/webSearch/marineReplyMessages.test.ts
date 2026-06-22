@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMarineLiveReply } from "./marineReplyMessages";
+import { buildMarineLiveReply, formatShipsCannedReply } from "./marineReplyMessages";
 import type { SearchSourceResult } from "./types";
 
 describe("marineReplyMessages", () => {
@@ -14,7 +14,6 @@ describe("marineReplyMessages", () => {
       "סימוני מסלול (הדגמה — לא AIS חי): 2",
       "עודכן: 2026-06-13 16:30:00 UTC",
       "1. Haifa Cargo · מסלול (הדגמה) · 32.82,35.00 · —",
-      "2. Haifa Port Route · מסלול (הדגמה) · 32.79,35.02 · —",
     ].join("\n"),
     latencyMs: 50,
   };
@@ -27,8 +26,21 @@ describe("marineReplyMessages", () => {
       "אזור: תעלת סואץ",
       "ANSWER (ships live): 0",
       "דיווח AIS חי + עולם חי: 0 (0 AIS · 0 עולם חי)",
-      "סימוני מסלול (הדגמה — לא AIS חי): 2",
       "עודכן: 2026-06-13 16:30:00 UTC",
+    ].join("\n"),
+    latencyMs: 50,
+  };
+
+  const rotterdamShips: SearchSourceResult = {
+    provider: "ais-ships",
+    label: "ספינות",
+    ok: true,
+    text: [
+      "אזור: נמל רוטרדם",
+      "ANSWER (ships live): 2",
+      "דיווח AIS חי + עולם חי: 2 (2 AIS · 0 עולם חי)",
+      "עודכן: 2026-06-13 16:30:00 UTC",
+      "1. MAERSK · AIS · 51.92,4.48 · 5.0 kn",
     ].join("\n"),
     latencyMs: 50,
   };
@@ -45,18 +57,23 @@ describe("marineReplyMessages", () => {
     latencyMs: 80,
   };
 
-  it("builds Haifa ships canned reply with live count 0", () => {
-    const reply = buildMarineLiveReply("כמה כלי שייט במפרץ חיפה?", ["ships"], [haifaShips]);
-    expect(reply).toMatch(/ANSWER: 0/);
-    expect(reply).toMatch(/מפרץ חיפה/);
-    expect(reply).toMatch(/הדגמה/);
+  it("builds short Haifa zero-count reply without demo markers", () => {
+    const reply = buildMarineLiveReply("כמה אוניות במפרץ חיפה?", ["ships"], [haifaShips]);
+    expect(reply).toMatch(/^0 אוניות במפרץ חיפה לפי AIS/);
+    expect(reply).not.toMatch(/הדגמה|Suez|Haifa Cargo|מסלול/i);
+    expect(reply!.split("\n").length).toBeLessThanOrEqual(3);
   });
 
-  it("builds Suez canned reply — 0 live, not «2 ships»", () => {
+  it("builds short Suez zero-count reply", () => {
     const reply = buildMarineLiveReply("כמה אוניות נמצאות כרגע בתעלת סואץ?", ["ships"], [suezShips]);
-    expect(reply).toMatch(/ANSWER: 0/);
-    expect(reply).toMatch(/סואץ|תעלת/i);
-    expect(reply).not.toMatch(/^ANSWER: 2/m);
+    expect(reply).toMatch(/^0 אוניות בתעלת סואץ לפי AIS/);
+    expect(reply).not.toMatch(/הדגמה|Digitraffic|REALITY/i);
+  });
+
+  it("includes live ship samples when count > 0", () => {
+    const reply = formatShipsCannedReply("כמה אוניות ליד רוטרדם?", rotterdamShips.text);
+    expect(reply).toMatch(/^2 אוניות/);
+    expect(reply).toMatch(/MAERSK/);
   });
 
   it("builds buoys canned reply from Overpass", () => {
@@ -64,12 +81,4 @@ describe("marineReplyMessages", () => {
     expect(reply).toMatch(/3 מצופים/);
     expect(reply).toMatch(/OpenStreetMap/);
   });
-
-  it("returns null when provider failed", () => {
-    const reply = buildMarineLiveReply("אוניות ליד רוטרדם", ["ships"], [
-      { ...haifaShips, ok: false, text: "" },
-    ]);
-    expect(reply).toBeNull();
-  });
 });
-

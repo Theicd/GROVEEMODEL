@@ -45,14 +45,13 @@ const formatQuake = (f: UsgsFeature): string => {
 };
 
 const REGION_STOP_WORDS =
-  /^(?:רעיד|רעידת|רעידות|אדמה|האדמה|earthquake|recent|latest|היום|עכשיו|שעות|hours|האם|הייתה|שבוע|week|איפה|היכן|where|what|which|חזקה|החזקה|חזקות|strong|strongest|significant|major|largest|בעולם|עולם|world|worldwide|global|ברחבי|האחרונות|אחרונות|האחרונה|אחרונה|לאחרונה|last|above|over|מעל|כמה|מידע|למשל|התרחש|התרחשו|שהיו|ספר|show|display|most|לאחרונה)$/i;
+  /^(?:רעיד|רעידת|רעידות|אדמה|האדמה|earthquake|recent|latest|היום|עכשיו|שעות|hours|האם|הייתה|היו|שבוע|week|איפה|היכן|where|what|which|חזקה|החזקה|חזקות|strong|strongest|significant|major|largest|בעולם|עולם|world|worldwide|global|ברחבי|האחרונות|אחרונות|האחרונה|אחרונה|לאחרונה|last|above|over|מעל|כמה|מידע|למשל|התרחש|התרחשו|שהיו|ספר|show|display|most|בסולם|ריכט|ריכטר|richter|סולם|השעות|ימים|days|בין)$/i;
 
 const hasExplicitRegion = (query: string): boolean => {
   const qLower = query.toLowerCase();
   return Object.keys(REGION_ALIASES).some((key) => qLower.includes(key.toLowerCase()));
 };
 
-/** Parse minimum magnitude from queries like «מעל 5.0», «M5+», «above 5». */
 export const extractMinMagnitude = (query: string): number | null => {
   const patterns = [
     /מעל\s*(?:M\s*)?([\d.]+)/i,
@@ -71,6 +70,11 @@ export const extractMinMagnitude = (query: string): number | null => {
   return null;
 };
 
+/** USGS fetch threshold — explicit number or implicit M5 for «חזקה/strong». */
+export const resolveUsgsMinMagnitude = (query: string): number | null =>
+  extractMinMagnitude(query) ??
+  (/(?:חזקות|חזקה|משמעותיות|significant|major|strong)/i.test(query) ? 5 : null);
+
 const isGlobalEarthquakeQuery = (query: string): boolean => {
   if (
     /(?:בעולם|ברחבי\s+העולם|worldwide|global|around\s+the\s+world|החזקה|הכי\s+חזק|strongest|largest\s+mag)/i.test(
@@ -79,8 +83,9 @@ const isGlobalEarthquakeQuery = (query: string): boolean => {
   ) {
     return true;
   }
+  if (/24\s*שעות|24\s*hours|ב-?\s*24/i.test(query) && !hasExplicitRegion(query)) return true;
   const minMag = extractMinMagnitude(query);
-  const wantsLast = /(?:האחרונה|אחרונה|latest|last|most\s+recent)/i.test(query);
+  const wantsLast = /(?:האחרונות|האחרונה|אחרונה|latest|last|most\s+recent)/i.test(query);
   if (wantsLast && minMag != null && !hasExplicitRegion(query)) return true;
   if (wantsLast && !hasExplicitRegion(query) && !/(?:ב|ליד|near|around|close\s+to)\s+\S/i.test(query)) {
     return true;
@@ -102,7 +107,13 @@ const extractRegionMatchers = (query: string): string[] => {
 
   qLower
     .split(/[\s,.!?]+/)
-    .filter((w) => w.length >= 4 && !REGION_STOP_WORDS.test(w) && !/^[\d.]+$/.test(w))
+    .filter(
+      (w) =>
+        w.length >= 4 &&
+        !REGION_STOP_WORDS.test(w) &&
+        !/^[\d.]+$/.test(w) &&
+        !/^ב-?\d+/.test(w),
+    )
     .forEach((w) => matchers.add(w));
 
   return [...matchers];
@@ -114,8 +125,7 @@ export const fetchEarthquakeSearch = async (query: string): Promise<SearchSource
   const label = "רעידות אדמה (USGS)";
   try {
     const minMag =
-      extractMinMagnitude(query) ??
-      (/(?:חזקות|חזקה|משמעותיות|significant|major|strong)/i.test(query) ? 5 : null);
+      resolveUsgsMinMagnitude(query);
     const wantsLast = /(?:האחרונה|אחרונה|לאחרונה|latest|last|most\s+recent)/i.test(query);
     const useWeek =
       /(?:ה)?שבוע|this\s+week|48\s*(?:שעות|hours)|(?:7|שבע)\s*(?:ימים|days)|\bweek\b/i.test(query) ||

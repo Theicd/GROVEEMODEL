@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import type { GroveeNewsCard, NewsSummaryGemmaProgress } from "../groveeNews/types";
 
@@ -6,9 +6,15 @@ import { useUiLanguage } from "../ui/useUiLanguage";
 
 import { MediaResultsGrid } from "./MediaResultsGrid";
 
+import { LiveMediaResultsGrid } from "./LiveMediaResultsGrid";
+
 import { MediaSearchResultRow } from "./MediaSearchResultRow";
 
 import { ProductSearchResultRow, isProductHit } from "./ProductSearchResultRow";
+
+import { LiveDisasterSearchResultRow, isLiveDisasterHit } from "./LiveDisasterSearchResultRow";
+
+import { LiveShipSearchResultRow, isLiveShipHit } from "./LiveShipSearchResultRow";
 
 import { SearchResultRow } from "./SearchResultRow";
 
@@ -20,7 +26,11 @@ import { filterHits } from "./rankHits";
 
 import type { SearchResultsFilter, SearchResultsPayload } from "./types";
 
-import { useTranslatedSearchHits } from "./useTranslatedSearchHits";
+import { isAisStreamConfigured } from "../apiKeys/apiKeyStore";
+
+import { useTranslatedSearchHits, hitsNeedTranslation } from "./useTranslatedSearchHits";
+
+import { GroVeeSearchLogo } from "./GroVeeSearchLogo";
 
 import "./searchResults.css";
 
@@ -46,6 +56,8 @@ type Props = {
 
   ) => Promise<string>;
 
+  onHfAddedToRack?: () => void;
+
 };
 
 
@@ -56,43 +68,21 @@ const FILTERS: { id: SearchResultsFilter; labelHe: string; labelEn: string }[] =
 
   { id: "rss", labelHe: "חדשות", labelEn: "News" },
 
-  { id: "web", labelHe: "אתרים", labelEn: "Web" },
-
   { id: "images", labelHe: "תמונות", labelEn: "Images" },
 
   { id: "video", labelHe: "וידאו", labelEn: "Video" },
 
-  { id: "youtube", labelHe: "YouTube", labelEn: "YouTube" },
-
-  { id: "movies", labelHe: "סרטים", labelEn: "Movies" },
+  { id: "events", labelHe: "אירועים", labelEn: "Events" },
 
   { id: "products", labelHe: "מוצרים", labelEn: "Products" },
 
+  { id: "movies", labelHe: "סרטים", labelEn: "Movies" },
+
   { id: "hfmodels", labelHe: "מודל HF", labelEn: "HF Models" },
 
+  { id: "ships", labelHe: "אוניות / ים", labelEn: "Ships" },
+
 ];
-
-
-
-const initialFilter = (payload: SearchResultsPayload): SearchResultsFilter => {
-
-  if (payload.preferHfModelsFilter) return "hfmodels";
-
-  if (payload.preferRssFilter) return "rss";
-
-  if (payload.preferImagesFilter) return "images";
-
-  if (payload.preferVideoFilter) return "video";
-
-  if (payload.preferYouTubeFilter) return "youtube";
-
-  if (payload.preferMoviesFilter) return "movies";
-
-  if (payload.preferProductsFilter) return "products";
-
-  return "all";
-
-};
 
 
 
@@ -110,10 +100,60 @@ const emptyPanelMessage = (
 
     return uiLang === "he"
 
-      ? "הקלד שאילתה למעלה — חדשות, אתרים, תמונות, וידאו, סרטים ועוד."
+      ? "הקלד שאילתה למעלה — חדשות, רעידות אדמה, אסונות, אתרים, תמונות, וידאו, סרטים ועוד."
 
-      : "Type a query above — news, sites, images, video, movies, and more.";
+      : "Type a query above — news, earthquakes, disasters, sites, images, video, movies, and more.";
 
+  }
+
+  if (filter === "events" || filter === "earthquakes" || filter === "disasters" || filter === "weather") {
+    return uiLang === "he"
+      ? "אין נתוני אירועים כרגע — USGS/GDACS/Open-Meteo מתעדכנים ברקע. נסה שוב בעוד דקה."
+      : "No live events yet — USGS/GDACS/Open-Meteo refresh in the background. Try again shortly.";
+  }
+
+  if (filter === "ships") {
+    const shipErr = payload.providerErrors.find((e) => /AIS|Digitraffic|Overpass|ספינ|אוני/i.test(e));
+    if (shipErr) return shipErr.replace(/^[^:]+:\s*/, "");
+    if (uiLang === "he") {
+      if (!isAisStreamConfigured()) {
+        return "אין כלי שייט חיים — הוסף מפתח AISStream (🔑) והרץ npm run dev; Digitraffic מכסה בעיקר את הבלטי.";
+      }
+      return "טוען AIS חי… אם אין תוצאות אחרי ~20 שניות, לחץ «בדוק חיבור» במסך המפתחות ורענן את הדף.";
+    }
+    return isAisStreamConfigured()
+      ? "Loading live AIS… If empty after ~20s, test the key in API keys (🔑) and refresh."
+      : "No live vessels — add AISStream key (🔑) and run npm run dev; Digitraffic covers Baltic mainly.";
+  }
+
+  if (filter === "livetv" || filter === "radio") {
+    const liveErr = payload.providerErrors.find((e) => /TV LIVE|Radio|live-tv|קטלוג/i.test(e));
+    if (liveErr) return liveErr.replace(/^[^:]+:\s*/, "");
+    return uiLang === "he"
+      ? "אין תוצאות בערוצים/רדיו — לחץ «TV/רדיו» למעלה, סנכרן מקורות, והרץ בדיקת QA."
+      : "No live TV/radio matches — open «TV/Radio» control, sync sources, and run QA.";
+  }
+
+  if (filter === "rss") {
+    const newsErr = payload.providerErrors.find((e) => /GROVEE NEWS|חדשות|RSS|מאגר/i.test(e));
+    if (newsErr) return newsErr.replace(/^[^:]+:\s*/, "");
+    return uiLang === "he"
+      ? "אין כותרות RSS — המתן לסריקה חיה או בדוק חיבור לרשת."
+      : "No RSS headlines — wait for live scan or check network.";
+  }
+
+  if (filter === "companion") {
+    if (payload.companionWebError) {
+      return payload.companionWebError.replace(/^[^:]+:\s*/, "");
+    }
+    return uiLang === "he"
+      ? "אין תוצאות מ-OpenSERP — הפעל «Grove Search» משולחן העבודה ובדוק ב-🧩 תוספים → «בדוק חיפוש»."
+      : "No OpenSERP results — start Grove Search from Desktop and test in Plugins (🧩).";
+  }
+
+  if (filter === "web") {
+    const webErr = payload.providerErrors.find((e) => /Tavily|Scavio|SearXNG/i.test(e));
+    if (webErr) return webErr.replace(/^[^:]+:\s*/, "");
   }
 
   if (payload.hits.length && filter !== "all") {
@@ -144,6 +184,38 @@ const emptyPanelMessage = (
 
 
 
+/** One-line status — only for the active filter tab (keeps header compact). */
+const filterContextHint = (
+  payload: SearchResultsPayload,
+  filter: SearchResultsFilter,
+  uiLang: "he" | "en",
+): string | null => {
+  if (filter === "companion") {
+    if (payload.companionWebError) return payload.companionWebError.replace(/^[^:]+:\s*/, "");
+    if (payload.facets.companionWeb) {
+      return uiLang === "he"
+        ? `${payload.facets.companionWeb} תוצאות OpenSERP — כל כרטיס מסומן בירוק`
+        : `${payload.facets.companionWeb} OpenSERP results`;
+    }
+    return null;
+  }
+  if (filter === "rss" && payload.newsRssNote) return payload.newsRssNote;
+  if (
+    (filter === "earthquakes" || filter === "disasters" || filter === "events" || filter === "weather") &&
+    payload.liveDisastersNote
+  ) {
+    return payload.liveDisastersNote;
+  }
+  if (filter === "ships" && payload.liveShipsNote) return payload.liveShipsNote;
+  if (filter === "web") {
+    const webErr = payload.providerErrors.find((e) => /Tavily|Scavio|SearXNG/i.test(e));
+    if (webErr) return webErr.replace(/^[^:]+:\s*/, "");
+  }
+  return null;
+};
+
+
+
 export function SearchResultsPanel({
 
   payload,
@@ -156,6 +228,8 @@ export function SearchResultsPanel({
 
   onSummaryReady,
 
+  onHfAddedToRack,
+
 }: Props) {
 
   const uiLang = useUiLanguage();
@@ -164,39 +238,27 @@ export function SearchResultsPanel({
 
 
 
-  const [filter, setFilter] = useState<SearchResultsFilter>(initialFilter(payload));
+  const [filter, setFilter] = useState<SearchResultsFilter>("all");
 
   const [queryDraft, setQueryDraft] = useState(payload.query);
 
+  const filtersScrollRef = useRef<HTMLDivElement>(null);
 
+  const lastQueryRef = useRef(payload.query);
 
   useEffect(() => {
 
     setQueryDraft(payload.query);
 
-    setFilter(initialFilter(payload));
+    if (payload.query !== lastQueryRef.current) {
 
-  }, [
+      lastQueryRef.current = payload.query;
 
-    payload.query,
+      setFilter("all");
 
-    payload.generatedAt,
+    }
 
-    payload.preferRssFilter,
-
-    payload.preferMoviesFilter,
-
-    payload.preferImagesFilter,
-
-    payload.preferVideoFilter,
-
-    payload.preferYouTubeFilter,
-
-    payload.preferProductsFilter,
-
-    payload.preferHfModelsFilter,
-
-  ]);
+  }, [payload.query]);
 
 
 
@@ -208,41 +270,49 @@ export function SearchResultsPanel({
 
   );
 
+  const visibleNeedsTranslation = useMemo(
+    () => hitsNeedTranslation(visible, uiLang),
+    [visible, uiLang],
+  );
 
 
-  const isMediaGrid = filter === "images" || filter === "video" || filter === "youtube";
 
+  const isMediaGrid = filter === "images" || filter === "video";
 
+  const isLiveGrid = filter === "livetv" || filter === "radio";
 
-  const facetLine = [
+  const contextHint = filterContextHint(payload, filter, uiLang);
 
-    payload.facets.rss ? `RSS ${payload.facets.rss}` : "",
+  const allTabCount = useMemo(
+    () => filterHits(translatedHits, "all").length,
+    [translatedHits],
+  );
 
-    payload.facets.web ? `Web ${payload.facets.web}` : "",
+  const videoTabCount = useMemo(
+    () => filterHits(translatedHits, "video").length,
+    [translatedHits],
+  );
 
-    payload.facets.images ? `${uiLang === "he" ? "תמונות" : "Images"} ${payload.facets.images}` : "",
+  const eventsTabCount = useMemo(
+    () => filterHits(translatedHits, "events").length,
+    [translatedHits],
+  );
 
-    payload.facets.videos ? `${uiLang === "he" ? "וידאו" : "Video"} ${payload.facets.videos}` : "",
+  const tabTotal = useMemo(
+    () => (filter === "all" ? allTabCount : filterHits(translatedHits, filter).length),
+    [filter, allTabCount, translatedHits],
+  );
 
-    payload.facets.youtube ? `YouTube ${payload.facets.youtube}` : "",
+  const visibleCountLabel = String(tabTotal);
 
-    payload.facets.movies ? `${uiLang === "he" ? "סרטים" : "Movies"} ${payload.facets.movies}` : "",
-
-    payload.facets.products ? `${uiLang === "he" ? "מוצרים" : "Products"} ${payload.facets.products}` : "",
-
-    payload.facets.hfModels ? `HF ${payload.facets.hfModels}` : "",
-
-    payload.facets.papers ? `arXiv ${payload.facets.papers}` : "",
-
-    payload.facets.other ? `${uiLang === "he" ? "אחר" : "Other"} ${payload.facets.other}` : "",
-
-  ]
-
-    .filter(Boolean)
-
-    .join(" · ");
-
-
+  const scrollFilters = (toward: "start" | "end") => {
+    const el = filtersScrollRef.current;
+    if (!el) return;
+    const step = 160;
+    const rtl = uiLang === "he";
+    const delta = toward === "start" ? (rtl ? step : -step) : rtl ? -step : step;
+    el.scrollBy({ left: delta, behavior: "smooth" });
+  };
 
   const submitSearch = (e: FormEvent) => {
 
@@ -268,9 +338,9 @@ export function SearchResultsPanel({
 
           results: "תוצאות",
 
-          placeholder: "חפש מידע, תמונות, וידאו…",
+          placeholder: payload.query.trim() || "חפש…",
 
-          search: "חפש",
+          search: "חיפוש",
 
           searching: "מחפש…",
 
@@ -286,7 +356,7 @@ export function SearchResultsPanel({
 
           results: "results",
 
-          placeholder: "Search news, images, video…",
+          placeholder: payload.query.trim() || "Search…",
 
           search: "Search",
 
@@ -300,75 +370,127 @@ export function SearchResultsPanel({
 
 
 
+  const isLanding = !payload.query.trim() && !searching;
+
+  const searchForm = (variant: "landing" | "compact") => (
+    <div className={`serp-search-glow-wrap serp-search-glow-wrap--${variant}`}>
+      <div className="serp-search-glow" aria-hidden="true" />
+      <form
+        className={`serp-search-form serp-search-form--glow serp-search-form--${variant}`}
+        onSubmit={submitSearch}
+      >
+        <span className="serp-search-leading" aria-hidden="true">
+          ⌕
+        </span>
+        <input
+          type="search"
+          className={`serp-search-input serp-search-input--glow${variant === "landing" ? " serp-search-input--landing" : ""}`}
+          value={queryDraft}
+          onChange={(e) => setQueryDraft(e.target.value)}
+          placeholder={variant === "landing" ? (uiLang === "he" ? "חפש ב-GroVee" : "Search GroVee") : panelLabels.placeholder}
+          dir="auto"
+          disabled={searching || !onSearch}
+          aria-label={panelLabels.search}
+          autoFocus={variant === "landing"}
+        />
+        {variant === "compact" ? (
+          <button
+            type="submit"
+            className="serp-search-btn serp-search-btn--glow"
+            disabled={searching || !onSearch || !queryDraft.trim()}
+          >
+            {searching ? panelLabels.searching : panelLabels.search}
+          </button>
+        ) : null}
+      </form>
+    </div>
+  );
+
   return (
 
-    <div className="serp-panel-inner" dir={uiLang === "he" ? "rtl" : "ltr"}>
+    <div
+      className={`serp-panel-inner${isLanding ? " serp-panel-inner--landing" : " serp-panel-inner--results"}`}
+      dir={uiLang === "he" ? "rtl" : "ltr"}
+    >
 
-      <header className="serp-panel-head">
-
-        <div className="serp-panel-title">
-
-          <div className="serp-panel-title-row">
-
-            <span className="serp-panel-dot" aria-hidden="true" />
-
-            <span>{panelLabels.title}</span>
-
+      {isLanding ? (
+        <>
+          <button
+            type="button"
+            className="serp-panel-back serp-panel-back--landing"
+            onClick={onClose}
+            aria-label={uiLang === "he" ? "חזרה לשיחה" : "Back to chat"}
+            title={uiLang === "he" ? "חזרה" : "Back"}
+          >
+            <span className="serp-panel-back-icon" aria-hidden="true">
+              →
+            </span>
+          </button>
+        <div className="serp-landing">
+          <GroVeeSearchLogo />
+          {searchForm("landing")}
+          <p className="serp-landing-tagline">
+            {uiLang === "he"
+              ? "חדשות · תמונות · וידאו · אירועים · מוצרים · ועוד"
+              : "News · images · video · events · products · and more"}
+          </p>
+          <div className="serp-landing-actions">
+            <button
+              type="button"
+              className="serp-landing-btn serp-landing-btn--primary"
+              disabled={searching || !onSearch || !queryDraft.trim()}
+              onClick={() => {
+                const q = queryDraft.trim();
+                if (q && onSearch) void onSearch(q);
+              }}
+            >
+              {uiLang === "he" ? "חיפוש GroVee" : "GroVee Search"}
+            </button>
           </div>
-
-          <span className="serp-panel-meta">
-
-            {payload.hits.length} {panelLabels.results}
-
-            {facetLine ? ` · ${facetLine}` : ""}
-
-          </span>
-
         </div>
-
-        <button type="button" className="serp-panel-close" onClick={onClose} aria-label={panelLabels.close}>
-
-          ×
-
+        </>
+      ) : (
+        <>
+      <header className="serp-google-head">
+        <button
+          type="button"
+          className="serp-panel-back"
+          onClick={onClose}
+          aria-label={uiLang === "he" ? "חזרה לשיחה" : "Back to chat"}
+          title={uiLang === "he" ? "חזרה" : "Back"}
+        >
+          <span className="serp-panel-back-icon" aria-hidden="true">
+            →
+          </span>
         </button>
-
+        {searchForm("compact")}
       </header>
 
+      <div className="serp-google-meta">
+        <GroVeeSearchLogo compact />
+        <span className="serp-google-meta-count">
+          {uiLang === "he" ? `כ-${visibleCountLabel} תוצאות` : `About ${visibleCountLabel} results`}
+        </span>
+        {searching ? (
+          <span className="serp-google-meta-status">{panelLabels.searching}</span>
+        ) : null}
+      </div>
 
-
-      <form className="serp-search-form" onSubmit={submitSearch}>
-
-        <input
-
-          type="search"
-
-          className="serp-search-input"
-
-          value={queryDraft}
-
-          onChange={(e) => setQueryDraft(e.target.value)}
-
-          placeholder={panelLabels.placeholder}
-
-          dir="auto"
-
-          disabled={searching || !onSearch}
-
-          aria-label={panelLabels.search}
-
-        />
-
-        <button type="submit" className="serp-search-btn" disabled={searching || !onSearch || !queryDraft.trim()}>
-
-          {searching ? panelLabels.searching : panelLabels.search}
-
+      <div className="serp-filters-wrap">
+        <button
+          type="button"
+          className="serp-filters-scroll serp-filters-scroll--prev"
+          onClick={() => scrollFilters("start")}
+          aria-label={uiLang === "he" ? "לשוניות קודמות" : "Previous tabs"}
+        >
+          ‹
         </button>
-
-      </form>
-
-
-
-      <div className="serp-filters" role="tablist" aria-label={uiLang === "he" ? "סינון תוצאות" : "Filter results"}>
+        <div
+          className="serp-filters"
+          ref={filtersScrollRef}
+          role="tablist"
+          aria-label={uiLang === "he" ? "סינון תוצאות" : "Filter results"}
+        >
 
         {FILTERS.map((f) => (
 
@@ -390,19 +512,21 @@ export function SearchResultsPanel({
 
             {uiLang === "he" ? f.labelHe : f.labelEn}
 
-            {f.id === "rss" && payload.facets.rss ? ` (${payload.facets.rss})` : ""}
+            {f.id === "all" && allTabCount ? ` (${allTabCount})` : ""}
 
-            {f.id === "web" && payload.facets.web ? ` (${payload.facets.web})` : ""}
+            {f.id === "rss" && payload.facets.rss ? ` (${payload.facets.rss})` : ""}
 
             {f.id === "images" && payload.facets.images ? ` (${payload.facets.images})` : ""}
 
-            {f.id === "video" && payload.facets.videos ? ` (${payload.facets.videos})` : ""}
+            {f.id === "video" && videoTabCount ? ` (${videoTabCount})` : ""}
 
-            {f.id === "youtube" && payload.facets.youtube ? ` (${payload.facets.youtube})` : ""}
-
-            {f.id === "movies" && payload.facets.movies ? ` (${payload.facets.movies})` : ""}
+            {f.id === "events" && eventsTabCount ? ` (${eventsTabCount})` : ""}
 
             {f.id === "products" && payload.facets.products ? ` (${payload.facets.products})` : ""}
+
+            {f.id === "ships" && payload.facets.ships ? ` (${payload.facets.ships})` : ""}
+
+            {f.id === "movies" && payload.facets.movies ? ` (${payload.facets.movies})` : ""}
 
             {f.id === "hfmodels" && payload.facets.hfModels ? ` (${payload.facets.hfModels})` : ""}
 
@@ -410,13 +534,26 @@ export function SearchResultsPanel({
 
         ))}
 
+        </div>
+        <button
+          type="button"
+          className="serp-filters-scroll serp-filters-scroll--next"
+          onClick={() => scrollFilters("end")}
+          aria-label={uiLang === "he" ? "לשוניות הבאות" : "Next tabs"}
+        >
+          ›
+        </button>
       </div>
 
+      {contextHint ? (
+        <p className="serp-context-hint" role="status">
+          {contextHint}
+        </p>
+      ) : null}
 
+      <div className={`serp-panel-body${isMediaGrid || isLiveGrid ? " serp-panel-body--media" : ""}`}>
 
-      <div className={`serp-panel-body${isMediaGrid ? " serp-panel-body--media" : ""}`}>
-
-        {searching || translating ? (
+        {searching || (translating && visibleNeedsTranslation) ? (
 
           <div className="serp-panel-loading">{searching ? panelLabels.searching : panelLabels.loading}</div>
 
@@ -424,22 +561,34 @@ export function SearchResultsPanel({
 
 
 
-        {!visible.length && !searching && !translating ? (
+        {!visible.length && !searching && !(translating && visibleNeedsTranslation) ? (
 
           <div className="serp-panel-empty">{emptyPanelMessage(payload, filter, uiLang)}</div>
+
+        ) : isLiveGrid ? (
+
+          <LiveMediaResultsGrid
+            hits={visible}
+            uiLang={uiLang}
+            mode={filter === "radio" ? "radio" : "livetv"}
+          />
 
         ) : isMediaGrid ? (
 
           <MediaResultsGrid
             hits={visible}
             uiLang={uiLang}
-            mode={filter === "images" ? "image" : filter === "youtube" ? "youtube" : "video"}
+            mode={filter === "images" ? "image" : "video"}
           />
 
         ) : (
 
           visible.map((hit) =>
-            hit.kind === "image" || hit.kind === "video" || hit.kind === "youtube" ? (
+            isLiveDisasterHit(hit) ? (
+              <LiveDisasterSearchResultRow key={hit.id} hit={hit} uiLang={uiLang} />
+            ) : isLiveShipHit(hit) ? (
+              <LiveShipSearchResultRow key={hit.id} hit={hit} uiLang={uiLang} />
+            ) : hit.kind === "image" || hit.kind === "video" || hit.kind === "youtube" || hit.kind === "livetv" || hit.kind === "radio" ? (
               <MediaSearchResultRow key={hit.id} hit={hit} uiLang={uiLang} />
             ) : isWikiHitWithImage(hit) ? (
               <WikiSearchResultRow
@@ -451,7 +600,12 @@ export function SearchResultsPanel({
             ) : isProductHit(hit) ? (
               <ProductSearchResultRow key={hit.id} hit={hit} uiLang={uiLang} />
             ) : isHfModelHit(hit) ? (
-              <HfModelSearchResultRow key={hit.id} hit={hit} uiLang={uiLang} />
+              <HfModelSearchResultRow
+                key={hit.id}
+                hit={hit}
+                uiLang={uiLang}
+                onAddedToRack={onHfAddedToRack}
+              />
             ) : (
               <SearchResultRow
                 key={hit.id}
@@ -465,6 +619,9 @@ export function SearchResultsPanel({
         )}
 
       </div>
+
+        </>
+      )}
 
     </div>
 

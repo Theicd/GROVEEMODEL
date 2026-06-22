@@ -1,11 +1,13 @@
 import { useState } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 import { accessModeLabel, statusBadgeLabel } from "../webSearch/hf/hfConnectionSnippets";
+import { addHfHitToRack } from "../modelRack/modelRackScan";
 import type { UnifiedSearchHit } from "./types";
 
 type Props = {
   hit: UnifiedSearchHit;
   uiLang: ChatUiLanguage;
+  onAddedToRack?: () => void;
 };
 
 const labels = {
@@ -19,6 +21,8 @@ const labels = {
     copied: "הועתק",
     provider: "ספק",
     latency: "זמן תגובה",
+    addRack: "הוסף לשיחה",
+    addedRack: "נוסף",
   },
   en: {
     pill: "HF Model",
@@ -30,6 +34,8 @@ const labels = {
     copied: "Copied",
     provider: "Provider",
     latency: "Latency",
+    addRack: "Add to chat",
+    addedRack: "Added",
   },
 } as const;
 
@@ -37,11 +43,12 @@ export function isHfModelHit(hit: UnifiedSearchHit): boolean {
   return hit.kind === "hfmodel";
 }
 
-export function HfModelSearchResultRow({ hit, uiLang }: Props) {
+export function HfModelSearchResultRow({ hit, uiLang, onAddedToRack }: Props) {
   const L = labels[uiLang];
   const [showConnect, setShowConnect] = useState(false);
   const [tab, setTab] = useState<"curl" | "python">("curl");
   const [copied, setCopied] = useState(false);
+  const [rackAdded, setRackAdded] = useState(false);
 
   const status = hit.meta?.hfStatus || "NOT PROBED";
   const statusClass =
@@ -63,6 +70,32 @@ export function HfModelSearchResultRow({ hit, uiLang }: Props) {
     } catch {
       /* ignore */
     }
+  };
+
+  const onAddToRack = () => {
+    const modelId = (hit.titleOriginal || hit.title).trim();
+    if (!modelId.includes("/")) return;
+    const access = hit.meta?.hfAccess;
+    if (hit.meta?.hfStatus !== "WORKING" || access !== "FREE") return;
+    addHfHitToRack({
+      id: `hf-${modelId.replace(/\//g, "--")}`,
+      modelId,
+      url: hit.url,
+      title: modelId,
+      snippet: hit.snippetOriginal || hit.snippet,
+      pipelineTag: hit.meta?.hfPipeline,
+      category: hit.meta?.hfCategory,
+      status: hit.meta?.hfStatus || "NOT PROBED",
+      provider: hit.meta?.hfProvider || "Unknown",
+      accessMode: hit.meta?.hfAccess === "FREE" ? "FREE" : hit.meta?.hfAccess === "TOKEN" ? "TOKEN" : "UNKNOWN",
+      endpoint: "",
+      curlSnippet: hit.meta?.hfCurl || "",
+      pythonSnippet: hit.meta?.hfPython || "",
+      probed: !!hit.meta?.hfStatus,
+      probeSource: "none",
+    });
+    setRackAdded(true);
+    onAddedToRack?.();
   };
 
   return (
@@ -109,6 +142,18 @@ export function HfModelSearchResultRow({ hit, uiLang }: Props) {
         <a className="serp-btn" href={hit.url} target="_blank" rel="noopener noreferrer">
           {L.open}
         </a>
+        {hit.titleOriginal?.includes("/") &&
+        hit.meta?.hfStatus === "WORKING" &&
+        hit.meta?.hfAccess === "FREE" ? (
+          <button
+            type="button"
+            className="serp-btn serp-btn--ghost"
+            disabled={rackAdded}
+            onClick={onAddToRack}
+          >
+            {rackAdded ? L.addedRack : L.addRack}
+          </button>
+        ) : null}
         {hit.meta?.hfCurl ? (
           <button type="button" className="serp-btn serp-btn--ghost" onClick={() => setShowConnect((v) => !v)}>
             {L.connect}

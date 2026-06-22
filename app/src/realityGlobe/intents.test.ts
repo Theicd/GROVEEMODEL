@@ -1,9 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { shouldOpenGlobePanel, isGlobePresentationQuery } from "./intents";
+import { shouldOpenGlobeForStructuredGeo } from "./searchGlobeBridge";
 
 describe("shouldOpenGlobePanel", () => {
   it("does not open globe for weather-only query", () => {
     expect(shouldOpenGlobePanel("מה מזג האוויר בתל אביב", ["weather"])).toBe(false);
+  });
+
+  it("opens globe for places with structured geo intent", () => {
+    expect(
+      shouldOpenGlobeForStructuredGeo(
+        "מה תחנת הרכבet ליד BER",
+        ["places"],
+        [
+          {
+            provider: "nominatim-places",
+            label: "OSM",
+            ok: true,
+            text: "52.36, 13.50",
+            latencyMs: 1,
+            geo: { lat: 52.36, lon: 13.5 },
+          },
+        ],
+      ),
+    ).toBe(true);
   });
 
   it("does not open globe for worldtime-only query", () => {

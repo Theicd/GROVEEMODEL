@@ -24,6 +24,8 @@ const KNOWN_PLACES: Record<string, GeoPlace> = {
   jerusalem: { name: "Jerusalem", latitude: 31.7683, longitude: 35.2137, country_code: "IL" },
   "חיפה": { name: "Haifa", latitude: 32.794, longitude: 34.9896, country_code: "IL" },
   haifa: { name: "Haifa", latitude: 32.794, longitude: 34.9896, country_code: "IL" },
+  "ישראל": { name: "Israel", latitude: 31.5, longitude: 34.75, country_code: "IL" },
+  israel: { name: "Israel", latitude: 31.5, longitude: 34.75, country_code: "IL" },
   "רוטרדם": { name: "Rotterdam", latitude: 51.9225, longitude: 4.47917, country_code: "NL" },
   rotterdam: { name: "Rotterdam", latitude: 51.9225, longitude: 4.47917, country_code: "NL" },
   "יוון": { name: "Greece", latitude: 39.0742, longitude: 21.8243, country_code: "GR" },
@@ -60,14 +62,28 @@ const lookupKnownPlace = (name: string): GeoPlace | null => {
   return null;
 };
 
+const isIsraelPlaceQuery = (name: string): boolean => {
+  const key = normalizePlaceKey(name);
+  return key === "israel" || key === "ישראל" || normalizePlaceKey(normalizeCountrySearchName(name)) === "israel";
+};
+
+const pickBestGeoResult = (results: GeoPlace[] | undefined, queryName: string): GeoPlace | null => {
+  if (!results?.length) return null;
+  if (isIsraelPlaceQuery(queryName)) {
+    const il = results.find((r) => r.country_code === "IL");
+    if (il) return il;
+  }
+  return results[0];
+};
+
 const geocodeViaApi = async (name: string, language: "he" | "en"): Promise<GeoPlace | null> => {
   const encoded = encodeURIComponent(name.trim());
   const data = await fetchJson<GeoResult>(
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encoded}&count=3&language=${language}&format=json`,
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encoded}&count=5&language=${language}&format=json`,
     undefined,
     { timeoutMs: 6_000 },
   );
-  return data.results?.[0] ?? null;
+  return pickBestGeoResult(data.results, name);
 };
 
 /** Open-Meteo geocoding — shared by weather, marine, world time. */

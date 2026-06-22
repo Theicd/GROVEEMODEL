@@ -35,7 +35,24 @@ export function placeDisplayNameHe(raw: string): string {
 
 export function buildGlobePlaceReply(placeName: string): string {
   const label = placeDisplayNameHe(placeName);
-  return `הצגתי לך את ${label} על המפה בפאנל REALITY LIVE מימין — המפה ממוקדת שם עם סימון מהבהב. אפשר להדליק שכבות (מטוסים, מזג אוויר וכו') מהכפתורים למעלה אם תרצה.`;
+  return `הצגתי את ${label} על המפה בפאנל REALITY LIVE מימין.`;
+}
+
+export function buildPlacesMapReply(placeLabel: string, osmUrl?: string): string {
+  const label = placeDisplayNameHe(placeLabel);
+  const link = osmUrl ? `\nOpenStreetMap: ${osmUrl}` : "";
+  return `תחנת/מיקום: ${label}. המפה נפתחה מימין עם סימון OpenStreetMap.${link}\nSources: OpenStreetMap (Nominatim)`;
+}
+
+export function buildRouteMapReply(from: string, to: string, km?: string, driveTime?: string): string {
+  const parts = [
+    `מסלול: ${from} → ${to}.`,
+    km ? `מרחק: ${km} ק"מ.` : "",
+    driveTime ? `זמן נסיעה משוער: ${driveTime}.` : "",
+    "המסלול מוצג על המפה מימין (OSRM + OpenStreetMap).",
+    "Sources: OSRM · OpenStreetMap",
+  ].filter(Boolean);
+  return parts.join("\n");
 }
 
 export const GLOBE_PRESENTATION_APPEND = `REALITY LIVE MAP (mandatory when user asked to show a place on the map):

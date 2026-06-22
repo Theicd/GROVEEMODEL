@@ -1,7 +1,7 @@
 import { fetchJson } from "../fetchJson";
 import { isStaticWebHost } from "../proxyFetch";
 import type { SearchSourceResult } from "../types";
-import { extractCurrencyPair, type CurrencyPair } from "../queryExtract";
+import { extractCurrencyPairs, type CurrencyPair } from "../queryExtract";
 
 type FrankfurterLatest = {
   amount: number;
@@ -54,13 +54,26 @@ const fetchErApi = async (pair: CurrencyPair) => {
   return { rate, date, label: "open.er-api.com (ECB reference)" };
 };
 
+const fetchPairRate = async (pair: CurrencyPair): Promise<{ rate: number; date: string; label: string } | null> => {
+  const fetchers = isStaticWebHost() ? [fetchErApi, fetchFrankfurter] : [fetchFrankfurter, fetchErApi];
+  for (const fetcher of fetchers) {
+    try {
+      const hit = await fetcher(pair);
+      if (hit) return hit;
+    } catch {
+      /* try next source */
+    }
+  }
+  return null;
+};
+
 export const fetchCurrencySearch = async (query: string): Promise<SearchSourceResult> => {
   const started = performance.now();
   const provider = "frankfurter-fx" as const;
   const label = "שערי מטבע (Frankfurter)";
   try {
-    const pair = extractCurrencyPair(query);
-    if (!pair) {
+    const pairs = extractCurrencyPairs(query);
+    if (!pairs.length) {
       return {
         provider,
         label,
@@ -71,20 +84,19 @@ export const fetchCurrencySearch = async (query: string): Promise<SearchSourceRe
       };
     }
 
-    const fetchers = isStaticWebHost()
-      ? [fetchErApi, fetchFrankfurter]
-      : [fetchFrankfurter, fetchErApi];
-    let hit: { rate: number; date: string; label: string } | null = null;
-    for (const fetcher of fetchers) {
-      try {
-        hit = await fetcher(pair);
-        if (hit) break;
-      } catch {
-        /* try next source */
-      }
+    const blocks: string[] = [];
+    let lastDate = "";
+    let lastLabel = "European Central Bank via Frankfurter";
+
+    for (const pair of pairs) {
+      const hit = await fetchPairRate(pair);
+      if (!hit) continue;
+      lastDate = hit.date;
+      lastLabel = hit.label;
+      blocks.push(formatFxLines(pair, hit.rate, hit.date, hit.label).join("\n"));
     }
 
-    if (!hit) {
+    if (!blocks.length) {
       return {
         provider,
         label,
@@ -95,14 +107,19 @@ export const fetchCurrencySearch = async (query: string): Promise<SearchSourceRe
       };
     }
 
-    const lines = formatFxLines(pair, hit.rate, hit.date, hit.label);
+    const text =
+      blocks.length === 1
+        ? blocks[0]!
+        : [`שערי מטבע (${blocks.length} זוגות)`, ...blocks].join("\n\n");
+
+    const first = pairs[0]!;
 
     return {
       provider,
       label,
       ok: true,
-      text: lines.join("\n"),
-      url: `https://api.frankfurter.app/latest?from=${pair.from}&to=${pair.to}`,
+      text,
+      url: `https://api.frankfurter.app/latest?from=${first.from}&to=${first.to}`,
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

@@ -64,4 +64,23 @@ export const PRODUCT_ACCEPTANCE_QUERIES: ProductAcceptanceQuery[] = [
     expectPrice: true,
     notesHe: "ברקוד ישראלי ישיר",
   },
+  {
+    id: "P06",
+    query: "חלב",
+    expectIntents: ["products"],
+    expectProvider: "israeli-products",
+    expectTitleIncludes: "חלב",
+    expectImage: true,
+    expectPrice: true,
+    notesHe: "מילה בודדת — לשונית מוצרים",
+  },
+  {
+    id: "P07",
+    query: "לחם",
+    expectIntents: ["products"],
+    expectProvider: "israeli-products",
+    expectTitleIncludes: "לחם",
+    expectImage: true,
+    notesHe: "לחם — מחיר ותמונה בלשונית מוצרים",
+  },
 ];

@@ -3,9 +3,11 @@ import { fetchIssSearch } from "../realityData/providers/iss";
 import { fetchShipsSearch } from "../realityData/providers/ships";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
 import { fetchStarlinkCatalogSearch } from "../realityData/providers/satelliteCatalog";
+import { fetchGdacsDisastersForCache } from "../realityData/providers/disasters";
 import { fetchJson } from "../webSearch/fetchJson";
 import type { SearchSourceResult } from "../webSearch/types";
 import {
+  DISASTERS_CACHE_TTL_MS,
   getCachedLiveWorldSnapshot,
   getInflightSnapshotFetch,
   mergeLiveWorldSnapshot,
@@ -14,18 +16,29 @@ import {
 } from "./snapshotStore";
 import type { LiveEarthquakeItem, LiveIssPosition, LiveShipItem, LiveWorldSnapshot } from "./types";
 import { enrichAviationItem, formatAviationSampleLine } from "./militaryAviation";
+import { pingGlobeForLiveSnapshot } from "./bridge";
+import {
+  fetchLiveMarineInfraForCache,
+  fetchLiveShipLayerForCache,
+  mergeShipLayers,
+} from "./shipLayerCache";
 
 const parseEarthquakesFromText = (text: string, feedLabel: string): LiveWorldSnapshot["earthquake"] => {
   const items: LiveEarthquakeItem[] = [];
-  for (const line of text.split("\n")) {
-    const m = line.match(/M([\d.]+)\s*·\s*(.+?)\s*·\s*(\d{4}-\d{2}-\d{2})/);
-    if (m) {
-      items.push({
-        magnitude: parseFloat(m[1]),
-        place: m[2].trim(),
-        time: Date.parse(`${m[3]}T00:00:00Z`) || Date.now(),
-      });
-    }
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const m = line.match(/^-?\s*M([\d.]+)\s*·\s*(.+?)\s*·\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/);
+    if (!m) continue;
+    const urlLine = lines[i + 1]?.trim();
+    const url = urlLine?.startsWith("http") ? urlLine : undefined;
+    items.push({
+      magnitude: parseFloat(m[1]),
+      place: m[2].trim(),
+      time: Date.parse(`${m[3].replace(" ", "T")}Z`) || Date.now(),
+      url,
+      tsunami: /צונאמי|tsunami/i.test(line),
+    });
   }
   if (!items.length) return undefined;
   return { items, feedLabel };
@@ -47,19 +60,23 @@ const parseIssFromText = (text: string): LiveIssPosition | undefined => {
 
 const parseShipsFromText = (text: string): LiveWorldSnapshot["ships"] | undefined => {
   const region = text.match(/אזור:\s*(.+)/)?.[1]?.trim() ?? "ים תיכון";
-  const countMatch = text.match(/ספינות בטווח:\s*(\d+)/);
-  const count = countMatch ? parseInt(countMatch[1], 10) : 0;
+  const countMatch =
+    text.match(/ANSWER \(ships live\):\s*(\d+)/i)?.[1] ??
+    text.match(/ספינות בטווח:\s*(\d+)/)?.[1];
+  const count = countMatch ? parseInt(countMatch, 10) : 0;
   const items: LiveShipItem[] = [];
   for (const line of text.split("\n")) {
-    const m = line.match(/^\d+\.\s+(.+?)\s*·\s*.+?\s*·\s*([-\d.]+),([-\d.]+)/);
-    if (m) {
-      items.push({
-        name: m[1].trim(),
-        lat: parseFloat(m[2]),
-        lon: parseFloat(m[3]),
-        source: "ais",
-      });
-    }
+    const m = line.match(
+      /^\d+\.\s+(.+?)\s·\s*(AISStream|AIS|עולם חי|מסלול \(הדגמה\))\s·\s*([-\d.]+),([-\d.]+)/,
+    );
+    if (!m || /מסלול|הדגמה/i.test(m[2])) continue;
+    const source = /aisstream/i.test(m[2]) ? "aisstream" : /עולם חי/i.test(m[2]) ? "globe" : "ais";
+    items.push({
+      name: m[1].trim(),
+      lat: parseFloat(m[3]),
+      lon: parseFloat(m[4]),
+      source,
+    });
   }
   if (!count && !items.length) return undefined;
   return { regionLabel: region, count: count || items.length, items };
@@ -143,6 +160,7 @@ const buildSnapshotFromResults = (
 
 /** Parallel fetch of live-world layers for cache + fallback. */
 export async function fetchLiveWorldSnapshot(force = false): Promise<LiveWorldSnapshot | null> {
+  if (force) pingGlobeForLiveSnapshot();
   if (!force) {
     const cached = getCachedLiveWorldSnapshot();
     if (cached) return cached;
@@ -155,18 +173,45 @@ export async function fetchLiveWorldSnapshot(force = false): Promise<LiveWorldSn
     av: "כמה מטוסים נמצאים כרגע מעל ישראל?",
   };
 
-  const [eq, iss, ships, av, avItems] = await Promise.all([
+  const [eq, iss, ships, av, avItems, shipLayer, marineInfra] = await Promise.all([
     fetchEarthquakeSearch(queries.eq),
     fetchIssSearch(queries.iss),
     fetchShipsSearch(queries.ships),
     fetchAviationSearch(queries.av, []),
     fetchAviationItemsForCache(),
+    fetchLiveShipLayerForCache(),
+    fetchLiveMarineInfraForCache(),
   ]);
 
   const snapshot = buildSnapshotFromResults([eq, iss, ships, av], "fetch");
+  if (shipLayer?.items?.length) {
+    snapshot.ships = mergeShipLayers(snapshot.ships, shipLayer) ?? shipLayer;
+  }
+  if (marineInfra?.items?.length) {
+    snapshot.marineInfra = marineInfra;
+  }
   if (avItems) {
     snapshot.aviation = avItems;
   }
+
+  const prior = getCachedLiveWorldSnapshot(Number.POSITIVE_INFINITY);
+  const disastersFresh =
+    prior?.disasters && Date.now() - prior.disasters.fetchedAt < DISASTERS_CACHE_TTL_MS;
+  if (disastersFresh && prior.disasters) {
+    snapshot.disasters = prior.disasters;
+  } else {
+    const gdacs = await fetchGdacsDisastersForCache();
+    if (gdacs) {
+      snapshot.disasters = {
+        items: gdacs.items,
+        feedLabel: gdacs.feedLabel,
+        fetchedAt: Date.now(),
+      };
+    } else if (prior?.disasters) {
+      snapshot.disasters = prior.disasters;
+    }
+  }
+
   setLiveWorldSnapshot(snapshot);
   return snapshot;
 }
@@ -203,6 +248,7 @@ export function ingestGlobeLivePayload(payload: unknown): LiveWorldSnapshot | nu
           time: e.time ?? Date.now(),
           lat: e.geo?.lat,
           lon: e.geo?.lon,
+          url: (e as { url?: string }).url,
         };
       }),
     };
@@ -222,9 +268,11 @@ export function ingestGlobeLivePayload(payload: unknown): LiveWorldSnapshot | nu
     const mapped: LiveShipItem[] = shipItems
       .filter((s) => {
         const g = (s as { geo?: { lat?: number; lon?: number } }).geo;
+        const src = (s as { source?: string }).source;
+        if (src === "med-fallback" || src === "route-marker") return false;
         return g?.lat != null && g?.lon != null;
       })
-      .slice(0, 200)
+      .slice(0, 500)
       .map((s) => {
         const row = s as {
           name?: string;
@@ -242,11 +290,20 @@ export function ingestGlobeLivePayload(payload: unknown): LiveWorldSnapshot | nu
           source: row.source ?? "globe",
         };
       });
-    snapshot.ships = {
+    snapshot.ships = mergeShipLayers(getCachedLiveWorldSnapshot(Number.POSITIVE_INFINITY)?.ships, {
+      regionLabel: "עולם חי (AIS)",
+      count: mapped.length,
+      items: mapped,
+    }) ?? {
       regionLabel: "עולם חי (AIS)",
       count: mapped.length,
       items: mapped,
     };
+  }
+
+  const priorSnap = getCachedLiveWorldSnapshot(Number.POSITIVE_INFINITY);
+  if (priorSnap?.marineInfra && !snapshot.marineInfra) {
+    snapshot.marineInfra = priorSnap.marineInfra;
   }
 
   const avItems = (p.aviation as { items?: unknown[] } | undefined)?.items;

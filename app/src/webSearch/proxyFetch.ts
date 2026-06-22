@@ -92,6 +92,7 @@ const CORS_DIRECT_SUFFIXES = [
   "huggingface.co",
   "api-inference.huggingface.co",
   "router.huggingface.co",
+  ".hf.space",
   "meri.digitraffic.fi",
   "celestrak.org",
   "ll.thespacedevs.com",
@@ -107,6 +108,9 @@ const CORS_DIRECT_SUFFIXES = [
   "time.now",
   "ipapi.co",
   "posix4e.github.io",
+  "iptv-org.github.io",
+  "de1.api.radio-browser.info",
+  "api.radio-browser.info",
 ];
 
 type RelayFn = (target: string) => string;
@@ -160,6 +164,16 @@ const hostOf = (url: string): string => {
   } catch {
     return "";
   }
+};
+
+/** Invidious/Piped never send CORS — skip direct browser fetch to avoid console noise. */
+const isYouTubeRelayHost = (host: string): boolean => {
+  if (!host) return false;
+  if (host === "yewtu.be") return true;
+  if (/^pipedapi\./i.test(host) || /^api\.piped\./i.test(host)) return true;
+  if (/^invidious\./i.test(host) || /^inv\./i.test(host)) return true;
+  if (host.endsWith(".tux.pizza")) return true;
+  return false;
 };
 
 export const hasDirectCors = (url: string): boolean => {
@@ -258,6 +272,25 @@ export async function proxyAwareFetch(
     }
   }
 
+  if (method === "GET" && isYouTubeRelayHost(host)) {
+    if (import.meta.env.DEV) {
+      try {
+        const r = await fetch(buildDevProxyUrl(url), { ...init, method: "GET" });
+        if (r.ok) return r;
+      } catch {
+        /* no direct fallback for relay-only hosts */
+      }
+    }
+    if (isStaticWebHost()) {
+      try {
+        return await fetchViaRelays(url, init);
+      } catch {
+        throw new Error(`YouTube relay fetch failed (${host})`);
+      }
+    }
+    throw new Error(`YouTube relay unavailable (${host})`);
+  }
+
   if (import.meta.env.DEV && method === "POST") {
     return fetch(buildDevProxyUrl(url), init);
   }
@@ -271,7 +304,7 @@ export async function proxyAwareFetch(
     }
   }
 
-  const preferDirect = hasDirectCors(url) || !needsProxy(url);
+  const preferDirect = (hasDirectCors(url) || !needsProxy(url)) && !isYouTubeRelayHost(host);
   let directFailed = false;
   if (preferDirect) {
     try {

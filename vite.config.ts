@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -6,12 +7,18 @@ import { devRealityPlugin } from "./vite-plugins/devReality";
 import { aisStreamProxyPlugin } from "./vite-plugins/aisStreamProxy";
 import { tavilyProxyPlugin } from "./vite-plugins/tavilyProxy";
 import { scavioProxyPlugin } from "./vite-plugins/scavioProxy";
+import { openserpProxyPlugin } from "./vite-plugins/openserpProxy";
 import { fetchProxyPlugin } from "./vite/fetchProxyPlugin";
+import { hfScannerProxyPlugin } from "./vite/hfScannerProxyPlugin";
 import { translateProxyPlugin } from "./vite/translateProxyPlugin";
 import { liveMediaFavoritesSyncPlugin } from "./vite-plugins/liveMediaFavoritesSync";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoName = path.basename(__dirname);
+const webTxt2ImgInstalled = existsSync(
+  path.join(__dirname, "node_modules", "web-txt2img", "package.json"),
+);
+const webTxt2ImgStub = path.join(__dirname, "app/src/stubs/web-txt2img-stub.ts");
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -23,6 +30,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@grovee-news": path.join(__dirname, "app/src/groveeNews/engine"),
+      ...(!webTxt2ImgInstalled ? { "web-txt2img": webTxt2ImgStub } : {}),
     },
   },
   worker: {
@@ -37,7 +45,9 @@ export default defineConfig({
     aisStreamProxyPlugin(),
     tavilyProxyPlugin(),
     scavioProxyPlugin(),
+    openserpProxyPlugin(),
     fetchProxyPlugin(),
+    hfScannerProxyPlugin(),
     translateProxyPlugin(),
     liveMediaFavoritesSyncPlugin(),
     {

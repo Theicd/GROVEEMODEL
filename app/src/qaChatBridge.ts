@@ -2,6 +2,7 @@ import type { ModelActivityEntry } from "./modelActivityLog";
 
 export type QaReplySource =
   | "model"
+  | "rack"
   | "canned-live"
   | "canned-globe"
   | "canned-game"
@@ -103,7 +104,7 @@ export const qaChatBridge = {
     if (pending) throw new Error("Another QA turn is in progress");
     if (opts?.newChat) {
       handlers.newChat();
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => window.setTimeout(r, 300));
     }
     return new Promise<QaTurnResult>((resolve, reject) => {
       const timeoutMs = 360_000;

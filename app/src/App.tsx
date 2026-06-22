@@ -53,7 +53,7 @@ import { IntroScreen } from "./components/IntroScreen";
 import { GroveeInfoModal } from "./components/GroveeInfoModal";
 import { GroveeLogoMark } from "./GroveeLogoMark";
 import { ChatMessageAvatar } from "./ChatMessageAvatar";
-import { SidebarSettingsIcon } from "./SidebarSettingsIcon";
+import { SidebarGearMenu, type SidebarGearAction } from "./SidebarGearMenu";
 import { GlobeVisual } from "./GlobeVisual";
 import { ChatMarkdown } from "./chatMarkdown";
 import { ArtifactPanel, type Artifact } from "./ArtifactPanel";
@@ -154,7 +154,8 @@ import { PresentationQaPanel } from "./PresentationQaPanel";
 import { BUILTIN_PRESENTATION_QUERY_COUNT } from "./userPresentationQueries";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
 import { SituationSettingsPanel } from "./SituationSettingsPanel";
-import { ApiKeysPanel } from "./apiKeys/ApiKeysPanel";
+import { PluginsPanel, type PluginsHubTab } from "./plugins/PluginsPanel";
+import { usePluginHealthPoll } from "./plugins/usePluginHealthPoll";
 import {
   DEFAULT_VISION_SETTINGS,
   mergeVisionSettings,
@@ -184,11 +185,10 @@ import {
   saveChatProfileOverride,
   type ChatHardwareProfileId,
 } from "./chatHardwareProfile";
-import { runWebSearch, needsWebSearch, warmLiveWorldCache, buildCapabilityLiveReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, isNewsQuery, isCurrencyQuery, isEarthquakeQuery, isAviationQuery, isShipsQuery, isMarineInfraQuery, type SearchIntent, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
+import { runWebSearch, needsWebSearch, needsOpenWebEnrichment, wantsCinemaPlotSummaries, warmLiveWorldCache, buildCapabilityLiveReply, buildOpenWebTopicReply, buildWebFallbackNoDataReply, shouldDeliverStructuredLiveReply, isNewsQuery, isCurrencyQuery, isEarthquakeQuery, isDisasterQuery, isAviationQuery, isShipsQuery, isMarineInfraQuery, wantsNewsHeadlineBulletsInChat, clearQueryCache, type SearchIntent, type SearchSourceResult, type SearchBrief, type AnswerShape } from "./webSearch";
+import { hasPlaceholderReply } from "./webSearch/openWebQueryPlanner";
 import {
   startGroveeNewsBoot,
-  NewsEnginePanel,
-  NewsEngineRailHint,
   useNewsEngineStatus,
 } from "./groveeNews/boot";
 import { SearchResultsPanel } from "./searchResults/SearchResultsPanel";
@@ -214,8 +214,29 @@ import {
 } from "./groveeNews/gemmaNewsPolish";
 import { agentDebugLog } from "./debugAgentLog";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
+import { clearSharedRegionCache } from "./webSearch/sharedRegion";
 import { isStarlinkRegionalQuery } from "./webSearch/intents";
+import { buildWebTopicSearchPlan, planToSearchPlan } from "./webSearch/webTopicQueryPlan";
+import {
+  buildOpenWebPlannerUserPrompt,
+  OPEN_WEB_QUERY_PLANNER_SYSTEM,
+  parseOpenWebQueriesJson,
+} from "./webSearch/openWebQueryPlanner";
 import { getHfToken, setHfToken } from "./webSearch/hf/hfModelSettings";
+import { verifyHfToken } from "./webSearch/hf/verifyHfToken";
+import { ChatModelPicker } from "./ChatModelPicker";
+import {
+  GEMMA_RACK_ID,
+  getRackModelById,
+  getSelectedModelId,
+  loadModelRack,
+  pickableRackModels,
+  summarizeRackCounts,
+  setSelectedModelId as persistSelectedModelId,
+  type RackModelEntry,
+} from "./modelRack/modelRack";
+import { executeRackModel, rackModelRunsInChat } from "./modelRack/modelExecution";
+import { refreshCloudModelRack } from "./modelRack/modelRackScan";
 import {
   buildSearchPlannerUserPrompt,
   parseSearchPlanJson,
@@ -776,6 +797,8 @@ function SettingsModal({
   const [draft, setDraft] = useState<AppSettings>(() => settings);
   const [settingsTab, setSettingsTab] = useState<"gemma" | "vision">("gemma");
   const [hfTokenDraft, setHfTokenDraft] = useState(() => getHfToken() ?? "");
+  const [hfTokenStatus, setHfTokenStatus] = useState<string | null>(null);
+  const [hfTokenChecking, setHfTokenChecking] = useState(false);
   const [chatProfile, setChatProfile] = useState<ChatHardwareProfileId>(
     () => loadChatProfileOverride() ?? detectChatHardwareProfile(),
   );
@@ -970,7 +993,8 @@ function SettingsModal({
             Hugging Face API
           </h3>
           <p className="settings-danger-note" style={{ marginBottom: 12 }}>
-            אופציונלי — לבדיקת מודלים ב-Inference API של Hugging Face. נשמר מקומית בדפדפן.
+            אופציונלי — לחיפוש HF ולהרצת מודלים דרך Inference API (לא לסריקת הרשימה בלי מפתח).
+            נשמר מקומית בדפדפן.
           </p>
           <label className="settings-field settings-field--full">
             <span className="settings-field-label">HF Token</span>
@@ -979,10 +1003,57 @@ function SettingsModal({
               autoComplete="off"
               placeholder="hf_…"
               value={hfTokenDraft}
-              onChange={(e) => setHfTokenDraft(e.target.value)}
+              onChange={(e) => {
+                setHfTokenDraft(e.target.value);
+                setHfTokenStatus(null);
+              }}
               dir="ltr"
             />
           </label>
+          <div className="settings-hf-token-actions">
+            <button
+              type="button"
+              className="settings-btn-ghost"
+              disabled={hfTokenChecking}
+              onClick={() => {
+                setHfToken(hfTokenDraft.trim());
+                setHfTokenStatus(
+                  hfTokenDraft.trim() ? "✓ Token נשמר מקומית" : "Token נמחק מהדפדפן",
+                );
+              }}
+            >
+              שמור token
+            </button>
+            <button
+              type="button"
+              className="settings-btn-save settings-btn-save--compact"
+              disabled={hfTokenChecking || !hfTokenDraft.trim()}
+              onClick={() => {
+                void (async () => {
+                  setHfTokenChecking(true);
+                  setHfTokenStatus("בודק מול Hugging Face Hub…");
+                  const result = await verifyHfToken(hfTokenDraft);
+                  if (result.ok) {
+                    setHfToken(hfTokenDraft.trim());
+                    setHfTokenStatus(`✓ חיבור תקין — שלום ${result.username}`);
+                  } else {
+                    setHfTokenStatus(`✗ ${result.message}`);
+                  }
+                  setHfTokenChecking(false);
+                })();
+              }}
+            >
+              {hfTokenChecking ? "בודק…" : "בדוק חיבור"}
+            </button>
+          </div>
+          {hfTokenStatus ? (
+            <p
+              className={`settings-hf-token-status${hfTokenStatus.startsWith("✓") ? " is-ok" : hfTokenStatus.startsWith("✗") ? " is-err" : ""}`}
+              dir="auto"
+            >
+              {hfTokenStatus}
+            </p>
+          ) : null}
         </section>
 
         <section className="settings-card settings-card--danger">
@@ -1052,7 +1123,15 @@ function App() {
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsModalKey, setSettingsModalKey] = useState(0);
-  const [apiKeysOpen, setApiKeysOpen] = useState(false);
+  const [modelRack, setModelRack] = useState<RackModelEntry[]>(() => loadModelRack());
+  const [selectedRackModelId, setSelectedRackModelId] = useState(() => getSelectedModelId());
+  const modelRackRef = useRef(modelRack);
+  modelRackRef.current = modelRack;
+  const selectedRackModelRef = useRef(selectedRackModelId);
+  selectedRackModelRef.current = selectedRackModelId;
+  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [pluginsHubTab, setPluginsHubTab] = useState<PluginsHubTab>("plugins");
+  const pluginHealth = usePluginHealthPoll(true);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1123,7 +1202,6 @@ function App() {
   const [halConsciousness, setHalConsciousness] = useState<import("./vision2/types").ConsciousnessLayer | null>(null);
   const [halEntity, setHalEntity] = useState<import("./vision2/entityProfile").EntityProfile | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
-  const [newsEngineOpen, setNewsEngineOpen] = useState(false);
   const [presentationQaOpen, setPresentationQaOpen] = useState(
     () =>
       QA_BRIDGE_ENABLED &&
@@ -1234,6 +1312,7 @@ function App() {
   const pendingWebSearchRef = useRef<{
     sources: SearchSourceResult[];
     summary: string;
+    query?: string;
     answerShape?: AnswerShape;
     crossSource?: boolean;
   } | null>(null);
@@ -1831,8 +1910,57 @@ function App() {
     [isLoaded, pushActivity],
   );
 
+  const requestOpenWebQueryPlan = useCallback(
+    (query: string, ruleQueries: string[]): Promise<string | null> => {
+      return new Promise((resolve) => {
+        if (!workerRef.current || !isLoaded || workerInferenceBusyRef.current) {
+          resolve(null);
+          return;
+        }
+        const requestId = crypto.randomUUID();
+        const userPrompt = buildOpenWebPlannerUserPrompt(query, ruleQueries);
+        characterUtteranceResolversRef.current.set(requestId, resolve);
+        workerInferenceBusyRef.current = true;
+        pushActivity({
+          direction: "out",
+          kind: "web_search",
+          title: "Open-web query planner (Gemma)",
+          detail: userPrompt.slice(0, 800),
+        });
+        workerRef.current.postMessage({
+          type: "character_utterance",
+          requestId,
+          modelId: GEMMA_MODEL_ID,
+          systemPrompt: OPEN_WEB_QUERY_PLANNER_SYSTEM,
+          userPrompt,
+          maxNewTokens: 120,
+        });
+        window.setTimeout(() => {
+          if (characterUtteranceResolversRef.current.has(requestId)) {
+            characterUtteranceResolversRef.current.delete(requestId);
+            workerInferenceBusyRef.current = false;
+            resolve(null);
+          }
+        }, 18_000);
+      });
+    },
+    [isLoaded, pushActivity],
+  );
+
   const resolveSearchPlanForQuery = useCallback(
     async (query: string, recentUserText: string[]): Promise<SearchPlan | undefined> => {
+      const topicPlan = buildWebTopicSearchPlan(query);
+      if (topicPlan?.kind === "cinema_il") {
+        return planToSearchPlan(topicPlan);
+      }
+      if (topicPlan) {
+        const raw = await requestOpenWebQueryPlan(query, topicPlan.engineQueries);
+        const queries = parseOpenWebQueriesJson(raw, topicPlan.engineQueries);
+        return {
+          ...planToSearchPlan({ ...topicPlan, engineQueries: queries }),
+          reason: `open-web:${topicPlan.kind}${raw ? "+gemma" : ""}`,
+        };
+      }
       const regexPlan = regexPlanForQuery(query);
       if (regexPlan) return regexPlan;
       if (!shouldUseSearchPlanner(query)) return undefined;
@@ -1840,7 +1968,7 @@ function App() {
       if (!raw) return undefined;
       return parseSearchPlanJson(raw, query) ?? undefined;
     },
-    [requestSearchPlan],
+    [requestOpenWebQueryPlan, requestSearchPlan],
   );
 
   const stopCameraMode = useCallback(() => {
@@ -2200,18 +2328,19 @@ function App() {
           .map((m) => m.content);
         const searchPlan = await resolveSearchPlanForQuery(q, recentUserText);
         const panelPlan = buildPanelSearchPlan(q);
+        const planForSearch = searchPlan
+          ? {
+              queries: searchPlan.queries.length ? searchPlan.queries : panelPlan.queries,
+              answerShape: searchPlan.answerShape ?? panelPlan.answerShape,
+              useWebFallback: searchPlan.useWebFallback ?? true,
+              blendNewsWithWeb: searchPlan.blendNewsWithWeb ?? false,
+            }
+          : panelPlan;
         const liveSources: SearchSourceResult[] = [];
         const searchResult = await runWebSearch(q, {
           recentUserText,
           panelSearch: true,
-          plan: searchPlan
-            ? {
-                queries: searchPlan.queries.length ? searchPlan.queries : panelPlan.queries,
-                answerShape: searchPlan.answerShape ?? panelPlan.answerShape,
-                useWebFallback: true,
-                blendNewsWithWeb: true,
-              }
-            : panelPlan,
+          plan: planForSearch,
           onProgress: (ev) => {
             if (ev.type === "provider_done") {
               const rest = liveSources.filter((s) => s.provider !== ev.result.provider);
@@ -2245,6 +2374,71 @@ function App() {
     },
     [messages, resolveSearchPlanForQuery],
   );
+
+  const openPluginsHub = useCallback((tab: PluginsHubTab = "plugins") => {
+    setPluginsHubTab(tab);
+    setPluginsOpen(true);
+  }, []);
+
+  const handleGearMenuAction = useCallback(
+    (action: SidebarGearAction) => {
+      switch (action) {
+        case "settings":
+          setSettingsModalKey((k) => k + 1);
+          setSettingsOpen(true);
+          break;
+        case "plugins":
+          openPluginsHub("plugins");
+          break;
+        case "activity":
+          setActivityLogOpen(true);
+          break;
+        case "presentation-qa":
+          setPresentationQaOpen(true);
+          break;
+        case "vision":
+          setVisionInspectorOpen(true);
+          break;
+      }
+    },
+    [openPluginsHub],
+  );
+
+  const handleRackModelSelect = useCallback((id: string) => {
+    setSelectedRackModelId(id);
+    persistSelectedModelId(id);
+  }, []);
+
+  const handleRackUpdated = useCallback((_rack?: RackModelEntry[]) => {
+    setModelRack(loadModelRack());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rack = await refreshCloudModelRack((p) => {
+          if (p.phase !== "cloud-done") {
+            setStatus(`בודק מודלי תמונה: ${p.phase} (${p.cloud ?? p.found} פעילים)…`);
+          }
+        });
+        if (cancelled) return;
+        setModelRack(rack);
+        const pickable = pickableRackModels(rack);
+        if (!pickable.some((r) => r.id === selectedRackModelRef.current)) {
+          persistSelectedModelId(GEMMA_RACK_ID);
+          setSelectedRackModelId(GEMMA_RACK_ID);
+        }
+        const counts = summarizeRackCounts(rack);
+        setStatus(counts.cloud > 0 ? `Ready · GroVee + ${counts.cloud} תמונה` : "Ready");
+      } catch {
+        if (!cancelled) setModelRack(loadModelRack());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const openSearchPanelFull = useCallback(() => {
     setSearchResultsPayload(createEmptySearchPayload());
@@ -2389,7 +2583,37 @@ function App() {
           })
         : { content: "", artifact: null, thought: undefined };
 
-      if (!content.trim() && !artifact && !showGameCategories && !timeWidget) {
+      let finalContent = content;
+      if (
+        hasPlaceholderReply(finalContent) &&
+        searchMeta?.sources?.length &&
+        searchMeta.query &&
+        needsOpenWebEnrichment(searchMeta.query)
+      ) {
+        const fallback =
+          buildOpenWebTopicReply(searchMeta.query, searchMeta.sources) ??
+          buildCapabilityLiveReply(searchMeta.query, [], searchMeta.sources);
+        if (fallback?.trim()) finalContent = fallback;
+      }
+
+      if (
+        !finalContent.trim() &&
+        !artifact &&
+        !showGameCategories &&
+        !timeWidget &&
+        searchMeta?.sources?.length &&
+        searchMeta.query
+      ) {
+        const cannedFallback = buildCapabilityLiveReply(
+          searchMeta.query,
+          [],
+          searchMeta.sources,
+          { answerShape: searchMeta.answerShape },
+        );
+        if (cannedFallback?.trim()) finalContent = cannedFallback;
+      }
+
+      if (!finalContent.trim() && !artifact && !showGameCategories && !timeWidget) {
         setAssistantBuffer("");
         assistantBufferRef.current = "";
         pendingVisionContextRef.current = "";
@@ -2417,7 +2641,7 @@ function App() {
               if (next[i].role === "assistant") {
                 next[i] = {
                   ...next[i],
-                  content,
+                  content: finalContent,
                   thought: thought ?? next[i].thought,
                   visionContext: visionContext ?? next[i].visionContext,
                 };
@@ -2430,7 +2654,7 @@ function App() {
                 id: crypto.randomUUID(),
                 role: "assistant",
                 kind: "reply",
-                content,
+                content: finalContent,
                 ts: Date.now(),
                 thought,
                 visionContext,
@@ -2445,7 +2669,7 @@ function App() {
               if (next[i].role === "assistant") {
                 next[i] = {
                   ...next[i],
-                  content: artifact ? next[i].content || content : content,
+                  content: artifact ? next[i].content || finalContent : finalContent,
                   artifact: artifact ?? next[i].artifact,
                   thought: thought ?? next[i].thought,
                   visionContext: visionContext ?? next[i].visionContext,
@@ -2458,7 +2682,7 @@ function App() {
               {
                 id: crypto.randomUUID(),
                 role: "assistant" as const,
-                content,
+                content: finalContent,
                 artifact: artifact ?? undefined,
                 thought,
                 visionContext,
@@ -2474,7 +2698,7 @@ function App() {
         }
       } else if (generationCameraModeRef.current) {
         appendCameraAssistantMessage({
-          content,
+          content: finalContent,
           kind: "reply",
           modelLabel: "HAL",
           thought,
@@ -2496,7 +2720,7 @@ function App() {
           {
             id: crypto.randomUUID(),
             role: "assistant",
-            content,
+            content: finalContent,
             artifact: artifact ?? undefined,
             thought,
             visionContext,
@@ -2532,7 +2756,7 @@ function App() {
       qaTurnForceLlmRef.current = false;
       focusComposerInput();
       qaChatBridge.notifyTurnComplete(
-        content,
+        finalContent,
         searchMeta?.summary,
         searchMeta?.sources?.filter((s) => s.ok).map((s) => s.provider),
       );
@@ -3370,16 +3594,17 @@ function App() {
           .slice(-4)
           .map((t) => t.content);
         const searchPlan = await resolveSearchPlanForQuery(effectivePrompt, recentUserText);
+        const planHint = searchPlan
+          ? {
+              queries: searchPlan.queries,
+              answerShape: searchPlan.answerShape,
+              useWebFallback: searchPlan.useWebFallback ?? true,
+              blendNewsWithWeb: searchPlan.blendNewsWithWeb ?? false,
+            }
+          : undefined;
         const searchResult = await runWebSearch(effectivePrompt, {
           recentUserText,
-          plan: searchPlan
-            ? {
-                queries: searchPlan.queries,
-                answerShape: searchPlan.answerShape,
-                useWebFallback: searchPlan.useWebFallback,
-                blendNewsWithWeb: searchPlan.blendNewsWithWeb,
-              }
-            : undefined,
+          plan: planHint,
           onProgress: (ev) => {
             if (ev.type === "provider_done") {
               setStreamingSearchSources((prev) => {
@@ -3454,6 +3679,7 @@ function App() {
           );
         }
         const newsQueryTurn = isNewsQuery(effectivePrompt);
+        const newsHeadlineBulletsTurn = wantsNewsHeadlineBulletsInChat(effectivePrompt);
         const qaForceLlm = qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending();
         const shouldDeliverLive =
           !qaForceLlm &&
@@ -3463,7 +3689,7 @@ function App() {
           !continueCode &&
           !documentTurn &&
           !wantsGameSearch &&
-          !newsQueryTurn &&
+          (!newsQueryTurn || newsHeadlineBulletsTurn) &&
           (searchLiveOk || !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")) &&
           shouldDeliverStructuredLiveReply(
             effectivePrompt,
@@ -3493,6 +3719,7 @@ function App() {
         pendingWebSearchRef.current = {
           sources: searchResult.sources,
           summary: searchResult.summaryHe,
+          query: effectivePrompt,
           answerShape: searchPlan?.answerShape,
           crossSource:
             isCrossSourceQuery(effectivePrompt) ||
@@ -3514,7 +3741,23 @@ function App() {
           return;
         }
         if (
+          needsOpenWebEnrichment(effectivePrompt) &&
+          !wantsCinemaPlotSummaries(effectivePrompt) &&
+          marineLiveCannedReply &&
+          !cameraActive &&
+          !hasAttachments &&
+          !continueCode &&
+          !documentTurn &&
+          !wantsGameSearch &&
+          !qaTurnForceLlmRef.current &&
+          !qaChatBridge.isForceLlmPending() &&
+          deliverLiveCannedReply(marineLiveCannedReply, webContext, "Open web · canned reply")
+        ) {
+          return;
+        }
+        if (
           newsQueryTurn &&
+          !newsHeadlineBulletsTurn &&
           !cameraActive &&
           !hasAttachments &&
           !continueCode &&
@@ -3798,6 +4041,21 @@ function App() {
       !!marineLiveCannedReply;
     if (pureEarthquakeTurn && marineLiveCannedReply) {
       if (deliverLiveCannedReply(marineLiveCannedReply, webContext, "USGS · canned reply")) return;
+    }
+
+    const pureDisasterTurn =
+      !qaForceLlm &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      isDisasterQuery(effectivePrompt) &&
+      !isEarthquakeQuery(effectivePrompt) &&
+      lastSearchSources.some((s) => s.provider === "gdacs-disasters" && s.ok && s.text.trim()) &&
+      !!marineLiveCannedReply;
+    if (pureDisasterTurn && marineLiveCannedReply) {
+      if (deliverLiveCannedReply(marineLiveCannedReply, webContext, "GDACS · canned reply")) return;
     }
 
     const pureAviationTurn =
@@ -4199,9 +4457,52 @@ function App() {
     qaChatBridge.setReplySource("model");
   };
 
+  const runRackModelTurn = async (trimmed: string, effectivePrompt: string) => {
+    const rack = modelRackRef.current;
+    const model =
+      getRackModelById(selectedRackModelRef.current, rack) ??
+      getRackModelById(GEMMA_RACK_ID, rack)!;
+
+    isGeneratingRef.current = true;
+    setIsGenerating(true);
+    setStatus(`מריץ ${model.label}…`);
+
+    const result = await executeRackModel(model, trimmed || effectivePrompt, setStatus);
+
+    isGeneratingRef.current = false;
+    setIsGenerating(false);
+
+    if (!result.ok) {
+      setStatus(result.message);
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: `⚠️ ${result.message}` },
+      ]);
+      qaChatBridge.notifyTurnFailed(result.message);
+      focusComposerInput();
+      return;
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "assistant", content: result.content },
+    ]);
+    setStatus("Ready");
+    qaChatBridge.setReplySource("rack");
+    qaChatBridge.notifyTurnComplete(result.content);
+    focusComposerInput();
+  };
+
   const sendPrompt = async (e?: FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
-    if (!workerRef.current || !isLoadedRef.current) {
+    const rack = modelRackRef.current;
+    const activeRackModel =
+      getRackModelById(selectedRackModelRef.current, rack) ??
+      getRackModelById(GEMMA_RACK_ID, rack)!;
+    const usesExternalRack =
+      rackModelRunsInChat(activeRackModel) && !cameraModeRef.current;
+
+    if (!usesExternalRack && (!workerRef.current || !isLoadedRef.current)) {
       qaChatBridge.notifyTurnFailed("model not loaded");
       return;
     }
@@ -4300,6 +4601,10 @@ function App() {
     setPendingAttachments([]);
     setAttachError(null);
     focusComposerInput();
+    if (usesExternalRack) {
+      await runRackModelTurn(trimmed, effectivePrompt);
+      return;
+    }
     await beginGeneration({
       trimmed,
       effectivePrompt,
@@ -4390,6 +4695,11 @@ function App() {
       ready: () => isLoadedRef.current && !isGeneratingRef.current,
       newChat: () => {
         qaEmptyNextSendRef.current = true;
+        qaTurnForceLlmRef.current = false;
+        qaForceLlmRef.current = false;
+        clearQueryCache();
+        clearSharedRegionCache();
+        isGeneratingRef.current = false;
         const id = newChatSessionId();
         setChatSessionsState((s) => ({
           activeId: id,
@@ -4399,10 +4709,21 @@ function App() {
         assistantBufferRef.current = "";
         setStreamingSearchSources(null);
         pendingWebSearchRef.current = null;
+        pendingVisionContextRef.current = "";
+        pendingTimeWidgetRef.current = null;
+        pendingGameCategoryPickerRef.current = false;
+        pendingGameBrowseCategoryRef.current = null;
         setPrompt("");
         setEditingMessageId(null);
         setEditDraft("");
         setArtifactOpen(false);
+        setSearchResultsOpen(false);
+        setSearchResultsPayload(null);
+        setGlobePanelOpen(false);
+        setGlobeCommand(null);
+        setLiveMediaPanelOpen(false);
+        setGamesPanelOpen(false);
+        setIsGenerating(false);
       },
       submit: async (text, forceLlm) => {
         qaTurnForceLlmRef.current = forceLlm;
@@ -4451,18 +4772,13 @@ function App() {
         cacheClearing={cacheClearing}
       />
 
-      <ApiKeysPanel open={apiKeysOpen} onClose={() => setApiKeysOpen(false)} />
-
-      <ModelActivityPanel
-        open={activityLogOpen}
-        onClose={() => setActivityLogOpen(false)}
-        entries={activityLog}
-        onClear={() => setActivityLog([])}
-      />
-
-      <NewsEnginePanel
-        open={newsEngineOpen}
-        onClose={() => setNewsEngineOpen(false)}
+      <PluginsPanel
+        open={pluginsOpen}
+        onClose={() => setPluginsOpen(false)}
+        tab={pluginsHubTab}
+        onTabChange={setPluginsHubTab}
+        healthSnapshot={pluginHealth}
+        newsEngineStatus={newsEngineStatus}
         gemmaReady={isLoaded}
         gemmaLoading={isLoading}
         gemmaLoadPct={downloadProgressPercent(
@@ -4471,6 +4787,13 @@ function App() {
         )}
         gemmaLoadDetail={loadingByteLine}
         onRequestGemmaLoad={() => loadModel()}
+      />
+
+      <ModelActivityPanel
+        open={activityLogOpen}
+        onClose={() => setActivityLogOpen(false)}
+        entries={activityLog}
+        onClear={() => setActivityLog([])}
       />
 
       {QA_BRIDGE_ENABLED ? (
@@ -4652,96 +4975,15 @@ function App() {
                     <GlobeVisual size="xs" pulse tone="icon" />
                   </span>
                 </button>
-                <button
-                  type="button"
-                  className="sb-rail-btn sb-rail-btn--vision"
-                  aria-label="Vision Inspector"
-                  title="Vision Inspector — זיהוי חי, מודלים וזמני דגימה"
-                  onClick={() => setVisionInspectorOpen(true)}
-                  disabled={!cameraMode}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <path d="M6 18h8" />
-                    <path d="M10 22h4" />
-                    <path d="M12 16V4" />
-                    <circle cx="12" cy="12" r="4" />
-                    <path d="m19 3-2 2" />
-                    <path d="m21 5-2-2" />
-                  </svg>
-                </button>
-                {QA_BRIDGE_ENABLED ? (
-                  <button
-                    type="button"
-                    className="sb-rail-btn sb-rail-btn--qa"
-                    aria-label="בדיקות מצגת"
-                    title={`בדיקת ${BUILTIN_PRESENTATION_QUERY_COUNT} שאלות מצגת — עריכה, שליחה ודוח`}
-                    onClick={() => setPresentationQaOpen(true)}
-                  >
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <path d="m9 2 1 2 2 1-2 1-1 2-1-2-2-1 2-1z" />
-                      <path d="M5 21 19 7" />
-                    </svg>
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="sb-rail-btn sb-rail-btn--activity"
-                  aria-label="פעילות המודל"
-                  title="פעילות המודל"
-                  onClick={() => setActivityLogOpen(true)}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <rect x="8" y="2" width="8" height="4" rx="1" />
-                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                  </svg>
-                  {activityLog.length ? (
-                    <span className="sb-rail-count" aria-hidden="true">
-                      {activityLog.length > 99 ? "99+" : activityLog.length}
-                    </span>
-                  ) : null}
-                </button>
                 </div>
                 <div className="sidebar__rail-spacer" aria-hidden="true" />
-                <button
-                  type="button"
-                  className="sb-rail-btn"
-                  aria-label="מנוע חדשות ברקע"
-                  title="מנוע חדשות — סטטוס איסוף RSS ו-Qwen"
-                  onClick={() => setNewsEngineOpen(true)}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                    <path d="M4 19h16" />
-                    <path d="M5 6h14" />
-                    <path d="M7 6v13" />
-                    <path d="M12 6v13" />
-                    <path d="M17 6v13" />
-                    <path d="M3 6h18" />
-                  </svg>
-                  <NewsEngineRailHint status={newsEngineStatus} />
-                </button>
-                <button
-                  type="button"
-                  className="sb-rail-btn sb-rail-btn--keys"
-                  aria-label="מפתחות API"
-                  title="מפתחות API — AISStream ועוד"
-                  onClick={() => setApiKeysOpen(true)}
-                >
-                  <span className="sb-rail-key-icon" aria-hidden="true">
-                    🔑
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="sb-rail-btn sb-rail-settings-foot"
-                  aria-label="פתח הגדרות"
-                  title="הגדרות Gemma"
-                  onClick={() => {
-                    setSettingsModalKey((k) => k + 1);
-                    setSettingsOpen(true);
-                  }}
-                >
-                  <SidebarSettingsIcon size={20} />
-                </button>
+                <SidebarGearMenu
+                  variant="rail"
+                  onSelect={handleGearMenuAction}
+                  showPresentationQa={QA_BRIDGE_ENABLED}
+                  visionDisabled={!cameraMode}
+                  activityCount={activityLog.length}
+                />
               </nav>
             ) : (
               <div className="sidebar__body">
@@ -4839,73 +5081,6 @@ function App() {
                     </span>
                     <span>עולם חי</span>
                   </button>
-                  <button
-                    type="button"
-                    className="sb-nav-item sb-nav-item--vision"
-                    onClick={() => setVisionInspectorOpen(true)}
-                    title="Vision Inspector — זיהוי חי, מודלים וזמני דגימה"
-                    aria-label="Vision Inspector"
-                    disabled={!cameraMode}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <path d="M6 18h8" />
-                      <path d="M10 22h4" />
-                      <path d="M12 16V4" />
-                      <circle cx="12" cy="12" r="4" />
-                      <path d="m19 3-2 2" />
-                      <path d="m21 5-2-2" />
-                    </svg>
-                    <span>Vision</span>
-                  </button>
-                  {QA_BRIDGE_ENABLED ? (
-                    <button
-                      type="button"
-                      className="sb-nav-item sb-nav-item--qa"
-                      onClick={() => setPresentationQaOpen(true)}
-                      title={`בדיקת ${BUILTIN_PRESENTATION_QUERY_COUNT} שאלות מצגת — עריכה, שליחה ודוח`}
-                      aria-label="בדיקות מצגת"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                        <path d="m9 2 1 2 2 1-2 1-1 2-1-2-2-1 2-1z" />
-                        <path d="M5 21 19 7" />
-                      </svg>
-                      <span>בדיקות</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="sb-nav-item"
-                    onClick={() => setNewsEngineOpen(true)}
-                    title="סטטוס מנוע חדשות ברקע — RSS, אינדקס ו-Qwen"
-                    aria-label="מנוע חדשות"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <path d="M4 19h16" />
-                      <path d="M5 6h14" />
-                      <path d="M7 6v13" />
-                      <path d="M12 6v13" />
-                      <path d="M17 6v13" />
-                      <path d="M3 6h18" />
-                    </svg>
-                    <span>חדשות</span>
-                    <NewsEngineRailHint status={newsEngineStatus} countClassName="sb-nav-count" />
-                  </button>
-                  <button
-                    type="button"
-                    className="sb-nav-item"
-                    onClick={() => setActivityLogOpen(true)}
-                    title="הצג את כל פעילות המודל — הנחיות, בקשות ותשובות"
-                    aria-label="פעילות המודל"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <rect x="8" y="2" width="8" height="4" rx="1" />
-                      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                    </svg>
-                    <span>פעילות</span>
-                    {activityLog.length ? (
-                      <span className="sb-nav-count">{activityLog.length}</span>
-                    ) : null}
-                  </button>
                 </div>
                 {!cameraMode && visibleTextSessions.length > 0 ? (
                   <div className="sb-recents-label">אחרונות</div>
@@ -4966,27 +5141,13 @@ function App() {
                 <div className="user-foot">
                   <ChatMessageAvatar role="user" className="avatar" />
                   <span>אורח</span>
-                  <button
-                    type="button"
-                    className="sb-settings-btn"
-                    title="מפתחות API"
-                    aria-label="מפתחות API"
-                    onClick={() => setApiKeysOpen(true)}
-                  >
-                    🔑
-                  </button>
-                  <button
-                    type="button"
-                    className="sb-settings-btn"
-                    title="הגדרות Gemma"
-                    aria-label="פתח הגדרות"
-                    onClick={() => {
-                      setSettingsModalKey((k) => k + 1);
-                      setSettingsOpen(true);
-                    }}
-                  >
-                    <SidebarSettingsIcon size={16} />
-                  </button>
+                  <SidebarGearMenu
+                    variant="footer"
+                    onSelect={handleGearMenuAction}
+                    showPresentationQa={QA_BRIDGE_ENABLED}
+                    visionDisabled={!cameraMode}
+                    activityCount={activityLog.length}
+                  />
                 </div>
               </div>
             )}
@@ -5018,6 +5179,7 @@ function App() {
                   onSearch={handleSearchPanelQuery}
                   searching={searchPanelLoading}
                   onSummaryReady={handleNewsArticlePolish}
+                  onHfAddedToRack={handleRackUpdated}
                 />
               ) : showArtifactPanel ? (
                 <ArtifactPanel
@@ -5074,19 +5236,12 @@ function App() {
           <section className={`chat-area ${showLanding ? "chat-area--landing" : ""}`}>
             <header className="chat-header">
               {!cameraMode ? (
-                <div className="chat-header-brand" dir="ltr">
-                  <span className="chat-header-brand-name">GroVee</span>
-                  <svg
-                    className="chat-header-brand-chevron"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    aria-hidden="true"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </div>
+                <ChatModelPicker
+                  rack={modelRack}
+                  selectedId={selectedRackModelId}
+                  onSelect={handleRackModelSelect}
+                  disabled={isGenerating}
+                />
               ) : (
                 <div className="camera-mode-header" dir="rtl">
                   <span className="camera-mode-title">🎥 שיחת מצלמה</span>
@@ -5259,7 +5414,7 @@ function App() {
                 {showLanding ? <ChatLandingHeadline text={landingContent.headline} /> : null}
 
                 <div className="composer-modes">
-              {isLoaded && contextUsage ? (
+              {isLoaded && contextUsage && !showLanding ? (
                 <ContextRing usage={contextUsage} />
               ) : null}
               {showCameraInline ? (

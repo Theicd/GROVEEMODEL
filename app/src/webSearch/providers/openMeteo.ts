@@ -4,10 +4,13 @@ import { extractLocationPhrase, normalizeCountrySearchName } from "../queryExtra
 import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 import { getStartupContextSync } from "../../startupContext";
 
-const stripWeatherNoise = (raw: string): string =>
+const stripWeatherNoise = (raw: string, keepWeekly = false): string =>
   raw
     .replace(
-      /(?:weather|forecast|temperature|מזג\s*האוויר|תחזית|tomorrow|מחר|today|היום|now|עכשיו|כרגע)/gi,
+      new RegExp(
+        `(?:weather|forecast|temperature|מזג\\s*האוויר|תחזית|tomorrow|מחר|today|היום|now|עכשיו|כרגע${keepWeekly ? "" : "|שבוע|weekly|שבועי"})`,
+        "gi",
+      ),
       " ",
     )
     .replace(/\s{2,}/g, " ")
@@ -64,9 +67,15 @@ export const fetchWeatherSearch = async (
   const label = "מזג אוויר (Open-Meteo)";
   try {
     const wantsTomorrow = /(?:tomorrow|מחר)/i.test(query);
+    const wantsWeekly = /(?:שבוע|weekly|7\s*days?|שבועי)/i.test(query);
     let location = extractLocationPhrase(query);
     if (!location || location.length < 2) {
-      location = stripWeatherNoise(query);
+      location = stripWeatherNoise(query, wantsWeekly);
+    }
+    if ((!location || location.length < 2) && wantsWeekly) {
+      const ctx = getStartupContextSync();
+      if (ctx?.cityName) location = ctx.cityName;
+      else if (ctx?.countryName) location = ctx.countryName;
     }
     if (!location || location.length < 2) {
       const ctx = getStartupContextSync();
@@ -99,11 +108,12 @@ export const fetchWeatherSearch = async (
     }
 
     const { latitude, longitude } = place;
+    const forecastDays = wantsWeekly ? 7 : wantsTomorrow ? 2 : 3;
     const forecastUrl =
       `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
       `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure` +
       `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code,wind_speed_10m_max` +
-      `&timezone=auto&forecast_days=3`;
+      `&timezone=auto&forecast_days=${forecastDays}`;
 
     let forecast: ForecastResult;
     try {
@@ -141,10 +151,16 @@ export const fetchWeatherSearch = async (
 
     if (daily?.time?.length) {
       const wantsRain = /(?:גשם|rain|precipitation|ממטר)/i.test(query);
-      const forecastLabel = wantsTomorrow ? "תחזית למחר" : wantsRain ? "תחזית גשם (3 ימים)" : "תחזית 3 ימים";
+      const forecastLabel = wantsTomorrow
+        ? "תחזית למחר"
+        : wantsWeekly
+          ? "תחזית שבועית"
+          : wantsRain
+            ? "תחזית גשם (3 ימים)"
+            : "תחזית 3 ימים";
       lines.push(`${forecastLabel}:`);
       const startIdx = wantsTomorrow && daily.time.length > 1 ? 1 : 0;
-      const count = wantsTomorrow ? 1 : Math.min(3, daily.time.length);
+      const count = wantsTomorrow ? 1 : wantsWeekly ? Math.min(7, daily.time.length) : Math.min(3, daily.time.length);
       for (let i = startIdx; i < startIdx + count && i < daily.time.length; i++) {
         const dayTag = wantsTomorrow ? "מחר" : daily.time[i];
         const rainMm = daily.precipitation_sum?.[i] ?? 0;

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { classifyAircraft, isAwacsSuspect } from "../realityData/aviationClassifier";
-import { buildMilitaryAviationText } from "./militaryAviation";
+import {
+  buildMilitaryAviationText,
+  formatMilitaryAviationCannedReply,
+  isAwacsQuery,
+  isMilitaryAviationQuery,
+} from "./militaryAviation";
 import { setLiveWorldSnapshot, clearLiveWorldSnapshotCache } from "./snapshotStore";
 
 describe("aviationClassifier", () => {
@@ -12,6 +17,29 @@ describe("aviationClassifier", () => {
 
   it("detects AWACS callsign", () => {
     expect(isAwacsSuspect("SENTRY01", "", null)).toBe(true);
+  });
+});
+
+describe("military aviation query detection", () => {
+  it("detects Hebrew AWACS spellings", () => {
+    expect(isAwacsQuery("כמה מטוסי אוואקס פעילים?")).toBe(true);
+    expect(isAwacsQuery("כמה מטוסי AWACS פעילים?")).toBe(true);
+  });
+
+  it("detects Hebrew military aircraft queries", () => {
+    expect(isMilitaryAviationQuery("כמה מטוסים צבאיים מעל ישראל?")).toBe(true);
+    expect(isMilitaryAviationQuery("כמה מטוסים מעל ישראל?")).toBe(false);
+  });
+});
+
+describe("formatMilitaryAviationCannedReply", () => {
+  it("formats AWACS zero count in Hebrew", () => {
+    const reply = formatMilitaryAviationCannedReply(
+      "כמה מטוסי AWACS פעילים כרגע?",
+      "ANSWER (AWACS): 0 מטוסים מזוהים כ-AWACS במעקב עולם חי (זיהוי heuristic — לא כל AWACS משדר ADS-B).",
+    );
+    expect(reply).toMatch(/^0 מטוסי AWACS/);
+    expect(reply).not.toMatch(/ANSWER \(AWACS\)/);
   });
 });
 

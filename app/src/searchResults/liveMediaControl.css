@@ -1,0 +1,209 @@
+.serp-live-control-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.serp-live-control-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.serp-live-control {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  max-height: min(86vh, 720px);
+  overflow: auto;
+  background: #121820;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 16px 18px 20px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+.serp-live-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.serp-live-control-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.serp-live-control-close {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.serp-live-control-error {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 80, 80, 0.12);
+  color: #ffb4b4;
+  font-size: 0.82rem;
+}
+
+.serp-live-control-progress {
+  margin-bottom: 12px;
+}
+
+.serp-live-control-progress-label {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.75);
+  margin-bottom: 6px;
+}
+
+.serp-live-control-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.serp-live-control-progress-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2ecc71, #7ee787);
+  transition: width 0.25s ease;
+}
+
+.serp-live-control-progress-meta {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.serp-live-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.serp-live-control-btn {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.serp-live-control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.serp-live-control-btn--qa {
+  border-color: rgba(126, 231, 135, 0.35);
+  color: #b8f5c0;
+}
+
+.serp-live-control-meta {
+  margin: 0 0 12px;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.serp-live-control-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.serp-live-control-stat {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.serp-live-control-stat strong {
+  display: block;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.serp-live-control-stat span {
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 4px 0;
+}
+
+.serp-live-control-stat small {
+  display: block;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.35;
+}
+
+.serp-live-control-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.serp-live-control-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.serp-live-control-chip {
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.serp-live-control-chip em {
+  font-style: normal;
+  opacity: 0.65;
+  margin-inline-start: 4px;
+}
+
+.serp-live-control-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.serp-live-control-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.serp-live-control-source-name {
+  flex: 1;
+}
+
+.serp-live-control-source-meta {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.45);
+}

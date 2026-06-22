@@ -148,11 +148,14 @@ const isBerTrainStationQuery = (query: string): boolean =>
   /\bber\b|brandenburg|ברלין|berlin/i.test(query) && /רכ|train|railway|תחנ/i.test(query);
 
 const buildBerTrainStationFallback = (started: number): SearchSourceResult => {
+  const lat = 52.36399;
+  const lon = 13.50833;
   const lines = [
     "חיפוש: Berlin Brandenburg Airport railway station",
     "תוצאות (OpenStreetMap / ידע מקומי):",
     "1. Flughafen BER · railway station · Berlin Brandenburg Airport, Germany",
-    "   תחנת הרכבת Flughafen BER (FEX / RE7 / RB22) ממוקמת בטרמינלים 1–2 של שדה התעופה BER.",
+    "   תחנת הרכבת Flughafen BER (FEX / RE7 / RB22) בטרמינלים 1–2 של שדה התעופה BER.",
+    `   ${lat}, ${lon}`,
     "הערה: Nominatim לא זמין — תשובה ממאגר ידע מקומי לשאלת BER.",
   ];
   return {
@@ -160,7 +163,8 @@ const buildBerTrainStationFallback = (started: number): SearchSourceResult => {
     label: "מקומות (OpenStreetMap)",
     ok: true,
     text: lines.join("\n"),
-    url: "https://www.openstreetmap.org/search?query=Flughafen+BER+railway+station",
+    url: `https://www.openstreetmap.org/search?query=Flughafen+BER+Bahnhof#map=15/${lat}/${lon}&layers=P`,
+    geo: { lat, lon, label: "Flughafen BER Bahnhof" },
     latencyMs: Math.round(performance.now() - started),
   };
 };
@@ -215,6 +219,10 @@ export const fetchPlacesSearch = async (query: string): Promise<SearchSourceResu
       };
     }
 
+    const top = hits[0];
+    const lat = parseFloat(top.lat);
+    const lon = parseFloat(top.lon);
+
     const lines = [
       `חיפוש: ${searchQ}`,
       "תוצאות (OpenStreetMap / Nominatim):",
@@ -229,7 +237,8 @@ export const fetchPlacesSearch = async (query: string): Promise<SearchSourceResu
       label,
       ok: true,
       text: lines.join("\n"),
-      url: `https://www.openstreetmap.org/search?query=${encodeURIComponent(searchQ)}`,
+      url: `https://www.openstreetmap.org/search?query=${encodeURIComponent(searchQ)}#map=15/${lat}/${lon}&layers=P`,
+      geo: { lat, lon, label: top.display_name.split(",")[0]?.trim() },
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {
