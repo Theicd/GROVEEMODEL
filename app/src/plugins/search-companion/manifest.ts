@@ -6,26 +6,28 @@ export const OPENSERP_UPSTREAM_VERSION = "0.8.3";
 
 export const SEARCH_COMPANION_MANIFEST: GroveePluginManifest = {
   id: SEARCH_COMPANION_PLUGIN_ID,
-  nameHe: "Grove Search Companion",
-  shortNameHe: "מנוע חיפוש מקומי",
+  nameHe: "GROVEE Desktop",
+  shortNameHe: "ממשק מקומי + חיפוש",
   descriptionHe:
-    "שירות קטן על המחשב שלך (OpenSERP) — Google/Bing/DuckDuckGo/Yandex/Ecosia, תמונות מ-Google/Bing, וקישורי וידאו (Archive/Vimeo/PeerTube). GROVEEMODEL שולח אליו בקשות ו-Gemma מסכמת בדפדפן.",
+    "מתקין את GROVEE על המחשב — ממשק בדפדפן על פורט 5180, מנוע חיפוש OpenSERP על 7000. בלי Node.js: הורדה, התקנה, ולחיצה על אייקון «GROVEE» בשולחן העבודה.",
   icon: "🔎",
   category: "search",
-  version: "1.0.0",
+  version: "1.1.0",
   defaultBaseUrl: "http://127.0.0.1:7000",
   defaultPort: 7000,
   installStepsHe: [
-    "לחץ «הורדה ל-Windows» ושמור את הקובץ.",
-    "חלץ את ה-ZIP לתיקייה (למשל Downloads\\GroveSearch).",
-    "לחץ פעמיים על Install-GroveSearchCompanion.ps1 (או Run-Install.bat).",
-    "הפעל «Grove Search» משולחן העבודה — האייקון יהפוך לירוק כאן.",
+    "לחץ «הורדה ל-Windows» ושמור את GroveDesktop-Setup.exe.",
+    "הרץ את קובץ ההתקנה — בחר תיקייה (או השאר ברירת מחדל).",
+    "בסיום — לחץ על אייקון «GROVEE» בשולחן העבודה.",
+    "הממשק נפתח בדפדפן — חיפוש ושיחה מקומית (מודלים יורדים בפעם הראשונה).",
   ],
   download: {
     win: {
-      url: "./plugins/grove-search-companion-win.zip",
-      filename: "GroveSearchCompanion-win.zip",
-      sizeHintHe: "~2 MB (+ OpenSERP ~25 MB בהתקנה)",
+      url: "./plugins/GroveDesktop-Setup-1.0.0.exe",
+      filename: "GroveDesktop-Setup-1.0.0.exe",
+      sizeHintHe: "~120 MB (+ OpenSERP ~25 MB בהתקנה)",
+      fallbackUrl: "./plugins/grove-desktop-win.zip",
+      fallbackFilename: "grove-desktop-win.zip",
     },
   },
   upstream: {

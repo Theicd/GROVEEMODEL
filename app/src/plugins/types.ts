@@ -8,6 +8,9 @@ export type PluginDownloadInfo = {
   url: string;
   filename: string;
   sizeHintHe: string;
+  /** Used when primary installer exe is not published (e.g. Inno Setup missing on build machine). */
+  fallbackUrl?: string;
+  fallbackFilename?: string;
 };
 
 export type PluginHealthResult = {

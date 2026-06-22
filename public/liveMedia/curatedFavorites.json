@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
-  "updatedAt": 1782080852789,
+  "updatedAt": 1782171397228,
   "channels": [
     {
       "id": "3czxxt",
@@ -69,6 +69,19 @@
       ]
     },
     {
+      "id": "alzugs",
+      "name": "Antiques Roadshow PBS (1080p)",
+      "country": "",
+      "language": "",
+      "category": "series",
+      "stream": "https://amg00953-pbsusa-antiroadshow-xumo-x6ud5.amagi.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Series"
+      ]
+    },
+    {
       "id": "a9keq8",
       "name": "BBC Top Gear (1080p)",
       "country": "",
@@ -79,6 +92,32 @@
       "type": "tv",
       "tags": [
         "Undefined"
+      ]
+    },
+    {
+      "id": "5684ev",
+      "name": "bon appétit (1080p)",
+      "country": "",
+      "language": "",
+      "category": "cooking",
+      "stream": "https://bonappetit-samsung.amagi.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Cooking"
+      ]
+    },
+    {
+      "id": "1ud8xw",
+      "name": "Bounce XL (1080p)",
+      "country": "",
+      "language": "",
+      "category": "entertainment",
+      "stream": "https://cdn-uw2-prod.tsv2.amagi.tv/linear/amg01438-ewscrippscompan-bouncexl-tablo/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Entertainment"
       ]
     },
     {
@@ -134,6 +173,19 @@
       ]
     },
     {
+      "id": "89w9r1",
+      "name": "COPS",
+      "country": "",
+      "language": "",
+      "category": "series",
+      "stream": "https://a7d6af1c184e465db4f39316a5181c1f.mediatailor.us-east-1.amazonaws.com/v1/master/0fb304b2320b25f067414d481a779b77db81760d/RakutenTV-eu_COPS/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Series"
+      ]
+    },
+    {
       "id": "13bocd",
       "name": "CW FOREVER (1080p)",
       "country": "",
@@ -144,6 +196,19 @@
       "type": "tv",
       "tags": [
         "Undefined"
+      ]
+    },
+    {
+      "id": "23fs34",
+      "name": "Dark Matter TV (720p)",
+      "country": "",
+      "language": "",
+      "category": "series",
+      "stream": "https://tricoast-tv-dark-matter-01-us.ono.wurl.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Series"
       ]
     },
     {
@@ -160,6 +225,32 @@
       ]
     },
     {
+      "id": "b5hqan",
+      "name": "Deluxe Music (720p)",
+      "country": "",
+      "language": "",
+      "category": "music",
+      "stream": "https://sdn-global-live-streaming-packager-cache.3qsdn.com/13456/13456_264_live.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Music"
+      ]
+    },
+    {
+      "id": "63utyx",
+      "name": "DiscoverFilm (720p)",
+      "country": "",
+      "language": "",
+      "category": "movies",
+      "stream": "https://discoverfilm-discoverfilm-1-gb.samsung.wurl.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Movies"
+      ]
+    },
+    {
       "id": "63jm5p",
       "name": "Documentary+ (1080p)",
       "country": "",
@@ -170,6 +261,19 @@
       "type": "tv",
       "tags": [
         "Documentary"
+      ]
+    },
+    {
+      "id": "2cstin",
+      "name": "E! (1080p)",
+      "country": "",
+      "language": "",
+      "category": "entertainment",
+      "stream": "http://23.237.104.106:8080/USA_E/index.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Entertainment"
       ]
     },
     {
@@ -275,6 +379,19 @@
       "type": "tv",
       "tags": [
         "Comedy"
+      ]
+    },
+    {
+      "id": "6efreo",
+      "name": "like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0\" group-title=\"Movies\",24 Hour Free Movies (720p)",
+      "country": "",
+      "language": "",
+      "category": "movies",
+      "stream": "https://d1b5mlajbmvkjv.cloudfront.net/v1/master/9d062541f2ff39b5c0f48b743c6411d25f62fc25/UDU-DistroTV/145.m3u8?ads.vf=7FhdsxqVxOi",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Movies"
       ]
     },
     {

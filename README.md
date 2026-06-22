@@ -35,6 +35,18 @@ npm run dev
 
 Open: **`http://127.0.0.1:5180/`** — top bar shows **`HAL·5180`**. Intro button: **«טען מודל לדפדפן»** (space / Earth fly-by).
 
+### GROVEE Desktop (Windows end users)
+
+For users without Node.js — full local install (UI + search):
+
+```bash
+npm run build:desktop
+```
+
+Produces `public/plugins/GroveDesktop-Setup-1.0.0.exe` (requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) on the build machine) and `grove-desktop-win.zip`. The plugins panel download button points to the installer.
+
+After install: desktop icon **GROVEE** → opens `http://127.0.0.1:5180` with search on `7000`.
+
 If you see the old centered logo and **«טען מודל מקומי»**, you are on the wrong port, wrong folder, or stale GitHub Pages cache — hard-refresh or use the URL above.
 
 ## Production build

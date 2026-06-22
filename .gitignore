@@ -19,6 +19,11 @@ ar_game/
 # Built by GitHub Actions (sync-docs-folder.yml)
 docs/
 
+# Desktop installer staging (build-desktop-package.ps1)
+desktop-staging/
+desktop/Output/
+desktop/bin/
+
 # Local push / debug artifacts
 push-all-result.txt
 push-grovee-ui-result.txt

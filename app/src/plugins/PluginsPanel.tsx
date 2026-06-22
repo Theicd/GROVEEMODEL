@@ -97,11 +97,14 @@ function PluginCard({
     void runHealthCheck();
   };
 
-  const triggerDownload = () => {
-    if (!download?.url) return;
+  const triggerDownload = (useFallback = false) => {
+    const target = useFallback && download?.fallbackUrl ? download.fallbackUrl : download?.url;
+    const name =
+      useFallback && download?.fallbackFilename ? download.fallbackFilename : download?.filename;
+    if (!target) return;
     const a = document.createElement("a");
-    a.href = download.url;
-    a.download = download.filename;
+    a.href = target;
+    a.download = name ?? "download";
     a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
@@ -144,9 +147,22 @@ function PluginCard({
 
       {download ? (
         <div className="grovee-plugin-download">
-          <button type="button" className="grovee-plugin-btn grovee-plugin-btn--primary" onClick={triggerDownload}>
-            ⬇ הורדה ל-Windows
+          <button
+            type="button"
+            className="grovee-plugin-btn grovee-plugin-btn--primary"
+            onClick={() => triggerDownload(false)}
+          >
+            ⬇ הורדה ל-Windows (מתקין)
           </button>
+          {download.fallbackUrl ? (
+            <button
+              type="button"
+              className="grovee-plugin-btn"
+              onClick={() => triggerDownload(true)}
+            >
+              חבילת ZIP
+            </button>
+          ) : null}
           <span className="grovee-plugin-download-hint">{download.sizeHintHe}</span>
         </div>
       ) : null}
