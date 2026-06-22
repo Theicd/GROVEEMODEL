@@ -9,7 +9,12 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // Relative base — assets load as ./assets/... from docs/index.html (see README).
 process.env.VITE_BASE = "./";
-execSync("npm run build", { stdio: "inherit", env: process.env, cwd: root });
+execSync("node scripts/sync-reality-ui.mjs && node scripts/sync-grovee-news.mjs && npx vite build", {
+  stdio: "inherit",
+  env: process.env,
+  cwd: root,
+  shell: true,
+});
 
 console.log("[build-pages-docs] building RSS cache for static hosting…");
 execSync("node --import tsx scripts/build-rss-cache.mjs --out=dist", {
