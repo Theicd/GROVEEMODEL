@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCapabilitiesOnlyFallbackMessage,
+  buildCapabilitiesWelcomeMessage,
   pickCapabilitiesDefaultRackId,
 } from "./capabilitiesOnlyMode";
 import type { RackModelEntry } from "./modelRack/modelRack";
@@ -22,6 +23,14 @@ describe("capabilitiesOnlyMode", () => {
     expect(msg).toContain("WebGPU failed");
     expect(msg).toContain("משחקים");
     expect(msg).toContain("תמונות");
+  });
+
+  it("builds Hebrew welcome toast ending with no-chat note", () => {
+    const msg = buildCapabilitiesWelcomeMessage("WebGPU failed");
+    expect(msg).toContain("ברוך הבא");
+    expect(msg).toContain("משחקים");
+    expect(msg).toContain("ללא מודל שיחה");
+    expect(msg).toContain("WebGPU failed");
   });
 
   it("picks image rack model for capabilities default", () => {

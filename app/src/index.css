@@ -3529,6 +3529,95 @@ button:disabled {
   line-height: 1.45;
 }
 
+/* Capabilities-only welcome — floating toast (not a persistent error banner) */
+.grovee-capabilities-toast {
+  position: fixed;
+  z-index: 3800;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 24px));
+  padding: 14px 16px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(129, 140, 248, 0.55);
+  background: linear-gradient(165deg, rgba(38, 34, 92, 0.97), rgba(12, 16, 28, 0.98));
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 0 28px rgba(99, 102, 241, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: #dce4f8;
+  animation: grovee-capabilities-toast-in 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: auto;
+}
+
+.grovee-capabilities-toast-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at 20% 0%, rgba(129, 140, 248, 0.35), transparent 58%);
+  pointer-events: none;
+  animation: game-dock-pulse 3.2s ease-in-out infinite;
+}
+
+.grovee-capabilities-toast-close {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  border: none;
+  background: transparent;
+  color: rgba(220, 228, 248, 0.65);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.grovee-capabilities-toast-icon {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-family: Orbitron, system-ui, sans-serif;
+  letter-spacing: 2px;
+  color: #a5b4fc;
+  margin-bottom: 6px;
+}
+
+.grovee-capabilities-toast-body {
+  margin: 0 0 10px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: #e8eeff;
+  position: relative;
+}
+
+.grovee-capabilities-toast-ok {
+  display: block;
+  width: 100%;
+  border: 1px solid rgba(167, 139, 250, 0.45);
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.18);
+  color: #c4b5fd;
+  font-size: 0.8rem;
+  font-weight: 650;
+  padding: 8px 12px;
+  cursor: pointer;
+  position: relative;
+}
+
+.grovee-capabilities-toast-ok:hover {
+  background: rgba(99, 102, 241, 0.28);
+}
+
+@keyframes grovee-capabilities-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 .fatal-boot-error {
   min-height: 100vh;
   display: flex;
@@ -3753,6 +3842,27 @@ button:disabled {
 
   .settings-footer {
     flex-direction: column-reverse;
+  }
+
+  .grovee-capabilities-toast {
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 20px);
+    max-width: none;
+  }
+
+  .chat-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .chat-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .side-panel--games .games-panel-inner,
+  .side-panel--livemedia .lm-panel-inner {
+    min-height: 0;
   }
 }
 
@@ -6787,8 +6897,59 @@ button:disabled {
 }
 
 @media (max-width: 768px) {
+  .grovee-capabilities-toast {
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    width: calc(100vw - 20px);
+    max-width: none;
+    padding: 12px 14px 10px;
+  }
+
+  .grovee-capabilities-toast-body {
+    font-size: 0.8rem;
+    padding-inline-end: 4px;
+  }
+
+  .games-panel-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .games-panel-title {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .games-panel-head-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .games-panel-search-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .games-panel-search-bar input,
+  .games-panel-search-bar button {
+    width: 100%;
+  }
+
+  .games-panel-categories {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+
+  .games-panel-cat {
+    flex-shrink: 0;
+  }
+
   .game-spotlight-dock {
-    bottom: 88px;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    z-index: 35;
   }
 
   .game-spotlight-dock-tab {

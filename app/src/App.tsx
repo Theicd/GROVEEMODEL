@@ -256,10 +256,10 @@ import {
 } from "./startupModelProfile";
 import {
   buildCapabilitiesOnlyFallbackMessage,
-  CAPABILITIES_ONLY_BANNER_HE,
   pickCapabilitiesDefaultRackId,
   type ChatModelAvailability,
 } from "./capabilitiesOnlyMode";
+import { CapabilitiesWelcomeToast } from "./components/CapabilitiesWelcomeToast";
 import {
   GEMMA_RACK_ID,
   getRackModelById,
@@ -5546,14 +5546,7 @@ function App() {
   return (
     <main className="app">
       {chatModelAvailability === "none" ? (
-        <div className="worker-boot-banner capabilities-only-banner" role="status">
-          {CAPABILITIES_ONLY_BANNER_HE}
-          {capabilitiesFailureReason ? (
-            <span style={{ display: "block", marginTop: 6, opacity: 0.85 }}>
-              סיבה: {capabilitiesFailureReason}
-            </span>
-          ) : null}
-        </div>
+        <CapabilitiesWelcomeToast failureReason={capabilitiesFailureReason} />
       ) : null}
 
       {workerBootError && phase !== "ready" ? (

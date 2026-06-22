@@ -5,6 +5,17 @@ export type ChatModelAvailability = "gemma" | "local-text" | "none";
 export const CAPABILITIES_ONLY_BANNER_HE =
   "אין מודל שיחה פעיל — חיפוש, משחקים, רדיו, טלוויזיה, התרעות ומפות עדיין זמינים. ליצירת תמונה בחר מודל תמונה בבורר.";
 
+export function buildCapabilitiesWelcomeMessage(failureReason?: string | null): string {
+  const features =
+    "חיפוש, משחקים, רדיו, טלוויזיה, התרעות בזמן אמת ומפות — הכול זמין. אפשר גם ליצור תמונות דרך בורר המודלים.";
+  const tail = "ללא מודל שיחה.";
+  const reason = failureReason?.trim();
+  if (reason) {
+    return `ברוך הבא ל-GROVEE — ${features} (${reason}) · ${tail}`;
+  }
+  return `ברוך הבא ל-GROVEE — ${features} · ${tail}`;
+}
+
 export function buildCapabilitiesOnlyFallbackMessage(failureHint?: string): string {
   const lead = failureHint?.trim()
     ? `לא הצלחנו לטעון מודל שיחה במכשיר זה (${failureHint.trim()}).`
