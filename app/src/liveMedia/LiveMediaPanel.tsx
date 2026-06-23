@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 import { channelToSearchHit, radioToSearchHit } from "./adapters";
+import {
+  curatedSnapshotToChannel,
+  fetchCuratedFavoritesFromRepo,
+} from "./curatedFavorites";
 import { LIVE_MEDIA_CATEGORIES, LIVE_MEDIA_COUNTRIES } from "./catalogs";
 import {
   ensureLiveMediaLibrary,
@@ -51,6 +55,8 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   const [language, setLanguage] = useState("");
   const [page, setPage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [curatedTvHits, setCuratedTvHits] = useState<UnifiedSearchHit[] | null>(null);
+  const [curatedReady, setCuratedReady] = useState(false);
   const rtl = uiLang === "he";
 
   const L =
@@ -152,6 +158,21 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   }, [refreshLibrary]);
 
   useEffect(() => {
+    let alive = true;
+    void fetchCuratedFavoritesFromRepo().then((file) => {
+      if (!alive) return;
+      const hits = (file?.channels ?? []).map((snap) =>
+        channelToSearchHit(curatedSnapshotToChannel(snap)),
+      );
+      setCuratedTvHits(hits);
+      setCuratedReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
     setPage(1);
   }, [view, query, category, country, language]);
 
@@ -197,6 +218,11 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
       .sort((a, b) => channelQualityScore(b) - channelQualityScore(a));
     return list.map((c) => channelToSearchHit(c));
   }, [channels, userPrefs?.favoriteChannelIds]);
+
+  const tunerFavorites = useMemo(() => {
+    if (curatedTvHits && curatedTvHits.length > 0) return curatedTvHits;
+    return favoriteTvHits;
+  }, [curatedTvHits, favoriteTvHits]);
 
   const favoriteRadioHits = useMemo(() => {
     let list = radio.filter((r) => r.favorite);
@@ -290,7 +316,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   }, [refreshLibrary]);
 
   const nav: { id: HubView; label: string; badge?: number }[] = [
-    { id: "watch", label: L.watch, badge: favoriteTvHits.length || undefined },
+    { id: "watch", label: L.watch, badge: tunerFavorites.length || undefined },
     { id: "browse", label: L.browse },
     { id: "radio", label: L.radio },
     { id: "settings", label: L.settings },
@@ -392,9 +418,9 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
       {view === "watch" ? (
         <div className="lm-panel-body lm-panel-body--watch">
           <CableTunerView
-            favorites={favoriteTvHits}
+            favorites={tunerFavorites}
             uiLang={uiLang}
-            loading={loading}
+            loading={!curatedReady && loading}
             onOpenBrowse={() => setView("browse")}
             onRemoveFavorite={handleToggleFavorite}
           />
@@ -447,7 +473,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
               {view === "browse" && !loading ? (
                 <>
                   <p className="lm-count">
-                    {tvListFull.length} {L.channels} · ★ {favoriteTvHits.length} {L.favorites}
+                    {tvListFull.length} {L.channels} · ★ {tunerFavorites.length} {L.favorites}
                   </p>
                   <LiveMediaResultsGrid hits={tvHits} uiLang={uiLang} mode="livetv" {...gridFavProps} />
                   {tvListFull.length > page * PAGE ? (

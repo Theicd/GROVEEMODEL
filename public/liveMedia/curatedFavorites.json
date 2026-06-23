@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
-  "updatedAt": 1782183423866,
+  "updatedAt": 1782186604100,
   "channels": [
     {
       "id": "3czxxt",
@@ -101,19 +101,6 @@
       "language": "",
       "category": "movies",
       "stream": "https://fast-channels.sinclairstoryline.com/CHARGE/index.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Movies"
-      ]
-    },
-    {
-      "id": "9t7rxi",
-      "name": "Classic Cinema (240p) [Not 24/7]",
-      "country": "",
-      "language": "",
-      "category": "movies",
-      "stream": "https://rpn.bozztv.com/gusa/gusa-classiccinema/index.m3u8",
       "source": "iptv-org-all",
       "type": "tv",
       "tags": [
@@ -235,19 +222,6 @@
       "type": "tv",
       "tags": [
         "Documentary"
-      ]
-    },
-    {
-      "id": "2cstin",
-      "name": "E! (1080p)",
-      "country": "",
-      "language": "",
-      "category": "entertainment",
-      "stream": "http://23.237.104.106:8080/USA_E/index.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Entertainment"
       ]
     },
     {
@@ -734,19 +708,6 @@
       "type": "tv",
       "tags": [
         "Kids"
-      ]
-    },
-    {
-      "id": "34dz4m",
-      "name": "Viasat Kino [Not 24/7]",
-      "country": "",
-      "language": "",
-      "category": "movies",
-      "stream": "http://c3921155.edmonst.net/iptv/42L7TCH8YYKLBRHNPV52HBRN/31765/index.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Movies"
       ]
     },
     {

@@ -79,6 +79,37 @@ export function channelToCuratedSnapshot(channel: Channel): CuratedFavoriteChann
   };
 }
 
+/** Build a catalog channel from the git-deployed favorites snapshot (GitHub Pages / static). */
+export function curatedSnapshotToChannel(snap: CuratedFavoriteChannel): Channel {
+  return {
+    id: snap.id,
+    name: snap.name,
+    logo: "",
+    country: snap.country,
+    language: snap.language,
+    category: snap.category,
+    stream: snap.stream,
+    source: snap.source,
+    type: snap.type,
+    status: "unknown",
+    lastCheck: 0,
+    favorite: true,
+    tags: snap.tags,
+    addedAt: Date.now(),
+  };
+}
+
+export function injectCuratedChannels(channels: Channel[], curated: CuratedFavoritesFile | null): Channel[] {
+  if (!curated?.channels.length) return channels;
+  const byId = new Map(channels.map((c) => [c.id, c]));
+  for (const snap of curated.channels) {
+    if (!byId.has(snap.id)) {
+      byId.set(snap.id, curatedSnapshotToChannel(snap));
+    }
+  }
+  return [...byId.values()];
+}
+
 export function radioToCuratedSnapshot(station: RadioStation): CuratedFavoriteRadio {
   return {
     id: station.id,

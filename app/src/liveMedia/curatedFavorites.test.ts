@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCuratedFavoritesFile,
+  curatedSnapshotToChannel,
+  injectCuratedChannels,
   mergeCuratedFavoritesIntoPrefs,
 } from "./curatedFavorites";
 import { emptyUserPrefs } from "./userPrefs";
@@ -64,5 +66,28 @@ describe("curatedFavorites", () => {
     expect(file.channels.map((c) => c.id)).toEqual(["a"]);
     expect(file.radio.map((r) => r.id)).toEqual(["r1"]);
     expect(file.channels[0]?.name).toBe("Alpha");
+  });
+
+  it("injects curated snapshots when catalog is still empty", () => {
+    const snap = {
+      id: "repo-tv",
+      name: "Repo TV",
+      country: "il",
+      language: "heb",
+      category: "news",
+      stream: "https://example/stream.m3u8",
+      source: "iptv-org-all",
+      type: "tv" as const,
+    };
+    const injected = injectCuratedChannels([], {
+      version: 1,
+      updatedAt: 1,
+      channels: [snap],
+      radio: [],
+    });
+    expect(injected).toHaveLength(1);
+    expect(injected[0]?.id).toBe("repo-tv");
+    expect(injected[0]?.favorite).toBe(true);
+    expect(curatedSnapshotToChannel(snap).stream).toBe(snap.stream);
   });
 });

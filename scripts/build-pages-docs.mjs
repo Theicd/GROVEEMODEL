@@ -28,6 +28,14 @@ if (existsSync(docs)) rmSync(docs, { recursive: true, force: true });
 mkdirSync(docs, { recursive: true });
 cpSync(dist, docs, { recursive: true, force: true });
 
+const publicLiveMedia = path.join(root, "public/liveMedia");
+const docsLiveMedia = path.join(docs, "liveMedia");
+if (existsSync(publicLiveMedia)) {
+  mkdirSync(docsLiveMedia, { recursive: true });
+  cpSync(publicLiveMedia, docsLiveMedia, { recursive: true, force: true });
+  console.log("[build-pages-docs] synced public/liveMedia → docs/liveMedia");
+}
+
 execSync("node scripts/prune-docs-assets.mjs", { stdio: "inherit", cwd: root });
 
 console.log("[build-pages-docs] synced dist/ → docs/ (clean, single bundle)");

@@ -41,6 +41,7 @@ import {
 import { channelQualityScore, radioQualityScore } from "./ranking";
 import {
   fetchCuratedFavoritesFromRepo,
+  injectCuratedChannels,
   mergeCuratedFavoritesIntoPrefs,
   persistCuratedFavoritesToRepo,
 } from "./curatedFavorites";
@@ -417,8 +418,14 @@ export async function ensureLiveMediaLibrary(): Promise<{
     channels = (await dbGetAllChannels()).map(enrichChannel);
     radio = (await dbGetAllRadio()).map(enrichRadio);
   }
+  const curated = await fetchCuratedFavoritesFromRepo();
+  channels = injectCuratedChannels(channels, curated).map(enrichChannel);
   let prefs = await loadUserPrefs();
-  prefs = await mergeRepoCuratedFavorites(prefs);
+  const mergedPrefs = mergeCuratedFavoritesIntoPrefs(prefs, curated);
+  if (mergedPrefs.changed) {
+    await saveUserPrefs(mergedPrefs.prefs);
+    prefs = mergedPrefs.prefs;
+  }
   prefs = await migrateLegacyFavoritesIntoPrefs(channels, radio, prefs);
   const repaired = releaseBlacklistedFavorites(prefs);
   if (
