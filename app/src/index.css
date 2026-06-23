@@ -2040,6 +2040,22 @@ body {
   flex-shrink: 0;
 }
 
+.chat-header-menu-btn {
+  display: none;
+}
+
+.chat-header-context-mobile {
+  display: none;
+}
+
+.chat-header-primary {
+  min-width: 0;
+}
+
+.sb-sidebar-lang {
+  display: none;
+}
+
 .sidebar-toggle {
   display: none;
 }
@@ -3757,8 +3773,135 @@ button:disabled {
 
 @media (max-width: 768px) {
   .app-container {
-    padding-left: var(--sidebar-rail-width);
+    padding-left: 0;
     box-sizing: border-box;
+  }
+
+  .chat-header-menu-btn {
+    position: absolute;
+    left: max(10px, env(safe-area-inset-left, 0px));
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+
+  .chat-header-menu-btn:hover {
+    background: var(--surface-hover);
+  }
+
+  .chat-header {
+    position: relative;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px 0 52px;
+    min-height: 52px;
+    height: auto;
+  }
+
+  .chat-header-context-mobile {
+    display: inline-flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.7rem;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .chat-header-context-mobile.local-context-bar--header {
+    gap: 5px;
+  }
+
+  .chat-header-context-mobile .local-context-time,
+  .chat-header-context-mobile .local-context-date {
+    font-size: 0.68rem;
+  }
+
+  .chat-header-context-desktop,
+  .chat-header-lang-desktop {
+    display: none !important;
+  }
+
+  .chat-header-primary {
+    flex-shrink: 0;
+    margin-inline-start: auto;
+  }
+
+  .chat-header-actions {
+    display: none;
+  }
+
+  .chat-header-actions:has(.artifact-reopen-btn, .activity-log-btn) {
+    display: flex;
+    margin-inline-start: auto;
+  }
+
+  .sb-sidebar-lang {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 14px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    direction: rtl;
+  }
+
+  .sb-sidebar-lang-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .sb-sidebar-lang-toggle.ui-lang-toggle {
+    display: flex;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .sb-sidebar-lang-toggle .ui-lang-toggle-btn {
+    flex: 1;
+    text-align: center;
+  }
+
+  .chat-area--landing .chat-landing-suggestions {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .chat-area--landing .chat-landing-chip {
+    flex: 1 1 calc(50% - 6px);
+    max-width: calc(50% - 6px);
+    min-width: 0;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .sidebar:not(.active) {
+    width: 0 !important;
+    min-width: 0 !important;
+    overflow: hidden;
+    border: none;
+    pointer-events: none;
+  }
+
+  .sidebar:not(.active) .sidebar__rail {
+    display: none;
   }
 
   .sidebar {
@@ -3766,20 +3909,23 @@ button:disabled {
     left: 0;
     top: 0;
     bottom: 0;
-    width: var(--sidebar-rail-width) !important;
-    min-width: var(--sidebar-rail-width) !important;
+    width: 0 !important;
+    min-width: 0 !important;
     max-width: none;
     transform: none !important;
     direction: ltr;
-    border-right: 1px solid var(--border-subtle);
+    border-right: none;
     background: var(--bg-deep);
     z-index: 110;
+    overflow: hidden;
   }
 
   .sidebar.active {
     width: min(280px, 85vw) !important;
     min-width: min(280px, 85vw) !important;
+    border-right: 1px solid var(--border-subtle);
     z-index: 120;
+    pointer-events: auto;
   }
 
   .sidebar__body {
@@ -3871,16 +4017,6 @@ button:disabled {
     bottom: calc(72px + env(safe-area-inset-bottom, 0px));
     width: calc(100vw - 20px);
     max-width: none;
-  }
-
-  .chat-header {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .chat-header-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
   }
 
   .side-panel--games .games-panel-inner,
@@ -4337,11 +4473,6 @@ button:disabled {
 }
 
 @media (max-width: 720px) {
-  .local-context-date,
-  .local-context-bar > .local-context-sep:first-of-type {
-    display: none;
-  }
-
   .time-clock-widget-body {
     padding: 14px 14px;
     gap: 12px;

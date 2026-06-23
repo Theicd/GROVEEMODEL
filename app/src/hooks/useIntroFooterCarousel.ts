@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   INTRO_FOOTER_MESSAGES,
@@ -6,14 +6,21 @@ import {
   type IntroFooterMessage,
 } from "../introFooterMessages";
 
-/** Minimum time each line stays fully visible after typing finishes. */
 const HOLD_MS = 5000;
-const EXIT_MS = 450;
+const TAG_ENTER_DELAY_MS = 80;
+const TAG_TO_TEXT_MS = 520;
+const TEXT_EXIT_MS = 300;
+const TAG_SWAP_MS = 360;
 const CHAR_MS = 46;
 const CHAR_MS_PUNCT = 140;
 const BUTTON_ROTATE_MS = 3600;
 
-type CarouselPhase = "typing" | "holding" | "exiting";
+type CarouselPhase =
+  | "tag-enter"
+  | "tag-swap"
+  | "typing"
+  | "holding"
+  | "text-exit";
 
 function charDelay(ch: string | undefined): number {
   if (!ch) return CHAR_MS;
@@ -32,10 +39,14 @@ export function useIntroFooterCarousel(active: boolean, webgpu: boolean) {
   }, [webgpu]);
 
   const [index, setIndex] = useState(0);
-  const [phase, setPhase] = useState<CarouselPhase>("typing");
+  const [phase, setPhase] = useState<CarouselPhase>("tag-enter");
   const [typedText, setTypedText] = useState("");
-  const [chipIn, setChipIn] = useState(false);
+  const [tagSlotReady, setTagSlotReady] = useState(false);
+  const [tagAnim, setTagAnim] = useState<"enter" | "idle" | "swap-out" | "swap-in">("enter");
+  const [textIn, setTextIn] = useState(false);
+  const [textWarpOut, setTextWarpOut] = useState(false);
   const [altButtonLabel, setAltButtonLabel] = useState(false);
+  const firstCycleRef = useRef(true);
 
   const current = messages[index] ?? messages[0];
   const fullText = current.text;
@@ -44,24 +55,51 @@ export function useIntroFooterCarousel(active: boolean, webgpu: boolean) {
   useEffect(() => {
     if (!active) {
       setIndex(0);
-      setPhase("typing");
+      setPhase("tag-enter");
       setTypedText("");
-      setChipIn(false);
+      setTagSlotReady(false);
+      setTagAnim("enter");
+      setTextIn(false);
+      setTextWarpOut(false);
       setAltButtonLabel(false);
+      firstCycleRef.current = true;
       return;
     }
+
+    setPhase("tag-enter");
     setTypedText("");
-    setPhase("typing");
-    setChipIn(false);
-    const enter = window.setTimeout(() => setChipIn(true), 80);
-    return () => window.clearTimeout(enter);
+    setTextIn(false);
+    setTextWarpOut(false);
+    setTagAnim(firstCycleRef.current ? "enter" : "swap-in");
+
+    const showTag = window.setTimeout(() => {
+      setTagSlotReady(true);
+      if (!firstCycleRef.current) setTagAnim("swap-in");
+    }, firstCycleRef.current ? TAG_ENTER_DELAY_MS : 0);
+
+    const settleTag = window.setTimeout(() => {
+      setTagAnim("idle");
+      firstCycleRef.current = false;
+    }, (firstCycleRef.current ? TAG_ENTER_DELAY_MS : 0) + TAG_SWAP_MS);
+
+    const startText = window.setTimeout(() => {
+      setTextIn(true);
+      setPhase("typing");
+    }, (firstCycleRef.current ? TAG_ENTER_DELAY_MS : 0) + TAG_SWAP_MS + TAG_TO_TEXT_MS);
+
+    return () => {
+      window.clearTimeout(showTag);
+      window.clearTimeout(settleTag);
+      window.clearTimeout(startText);
+    };
   }, [active, index, current.id]);
 
   useEffect(() => {
     if (!active || phase !== "typing") return;
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) {
+    const mobile = window.matchMedia("(max-width: 820px)").matches;
+    if (reduced || mobile) {
       setTypedText(fullText);
       setPhase("holding");
       return;
@@ -83,17 +121,33 @@ export function useIntroFooterCarousel(active: boolean, webgpu: boolean) {
   useEffect(() => {
     if (!active || phase !== "holding") return;
 
-    const id = window.setTimeout(() => setPhase("exiting"), HOLD_MS);
+    const id = window.setTimeout(() => setPhase("text-exit"), HOLD_MS);
     return () => window.clearTimeout(id);
   }, [active, phase, index]);
 
   useEffect(() => {
-    if (!active || phase !== "exiting") return;
+    if (!active || phase !== "text-exit") return;
 
-    setChipIn(false);
+    setTextWarpOut(true);
+    setTextIn(false);
+
+    const id = window.setTimeout(() => {
+      setTextWarpOut(false);
+      setTypedText("");
+      setTagAnim("swap-out");
+      setPhase("tag-swap");
+    }, TEXT_EXIT_MS);
+
+    return () => window.clearTimeout(id);
+  }, [active, phase]);
+
+  useEffect(() => {
+    if (!active || phase !== "tag-swap") return;
+
     const id = window.setTimeout(() => {
       setIndex((i) => (i + 1) % messages.length);
-    }, EXIT_MS);
+    }, TAG_SWAP_MS);
+
     return () => window.clearTimeout(id);
   }, [active, phase, messages.length]);
 
@@ -106,10 +160,13 @@ export function useIntroFooterCarousel(active: boolean, webgpu: boolean) {
   return {
     current,
     typedText: active ? typedText : "",
-    chipIn,
+    tagSlotReady,
+    tagAnim,
+    textIn,
     phase,
     isTyping,
-    showCursor: active && (phase === "typing" || phase === "holding"),
+    textWarpOut,
+    showCursor: active && textIn && (phase === "typing" || phase === "holding"),
     altButtonLabel,
   };
 }

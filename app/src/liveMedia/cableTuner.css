@@ -130,6 +130,61 @@
   pointer-events: none;
 }
 
+.lm-cable-tile-osd--tr {
+  top: 8px;
+  right: 10px;
+  bottom: auto;
+  left: auto;
+  inset-inline-end: auto;
+}
+
+.lm-cable-tile-jump {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(255, 77, 94, 0.96) 0%, rgba(160, 28, 48, 0.96) 100%);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  white-space: nowrap;
+  animation: lm-cable-jump-in 0.18s ease;
+}
+
+.lm-cable-tile-jump:hover {
+  filter: brightness(1.08);
+}
+
+.lm-cable-tile-jump:active {
+  transform: translate(-50%, -48%);
+}
+
+@keyframes lm-cable-jump-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -42%) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.lm-cable-osd-btn--quad {
+  min-width: 48px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  padding: 10px 12px;
+  border-color: rgba(120, 200, 255, 0.45);
+  background: linear-gradient(180deg, #2a3d52 0%, #152030 100%);
+}
+
 .lm-cable-tile-ch {
   font-family: "Orbitron", monospace;
   font-size: 0.85rem;
@@ -178,66 +233,103 @@
   outline-offset: -2px;
 }
 
-.lm-cable-top-bar {
+.lm-cable-header {
   position: absolute;
   top: 0;
+  left: 0;
   right: 0;
-  left: auto;
-  z-index: 22;
-  padding: 14px 16px;
+  z-index: 21;
+  padding: max(14px, env(safe-area-inset-top)) 16px 18px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.94) 0%, rgba(0, 0, 0, 0.55) 70%, transparent 100%);
   transition: opacity 0.45s ease, transform 0.45s ease;
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
 }
 
-.lm-cable-top-bar.is-hidden {
+.lm-cable-header.is-hidden {
   opacity: 0;
-  transform: translateY(-10px);
+  transform: translateY(-12px);
   pointer-events: none;
 }
 
-.lm-cable-top-btn {
+.lm-cable-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.lm-cable-header-slot {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+}
+
+.lm-cable-channel-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.lm-cable-osd-btn--back {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgba(255, 77, 94, 0.4);
-  border-radius: 999px;
-  background: rgba(24, 10, 14, 0.82);
-  color: #ff9aaa;
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 8px 14px;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+  min-height: 44px;
 }
 
-.lm-cable-top-btn:hover:not(:disabled) {
-  background: rgba(48, 16, 22, 0.92);
-  border-color: rgba(255, 77, 94, 0.65);
-  color: #ffc8cf;
-}
-
-.lm-cable-top-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.lm-cable-top-btn-icon {
+.lm-cable-osd-btn-glyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(255, 77, 94, 0.2);
-  font-size: 0.85rem;
+  min-width: 1.1rem;
+  font-size: 1rem;
+  font-weight: 800;
   line-height: 1;
 }
 
-.lm-cable-top-btn-label {
-  white-space: nowrap;
+.lm-cable-osd-btn--menu {
+  min-width: 44px;
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: -1px;
+  line-height: 1;
+}
+
+.lm-cable-channel-menu-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  min-width: min(220px, 72vw);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgba(14, 20, 30, 0.97);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  padding: 6px;
+  z-index: 30;
+}
+
+.lm-cable-channel-menu-item {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #e8eef8;
+  text-align: start;
+  padding: 11px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lm-cable-channel-menu-item--danger {
+  color: #ff9aaa;
+}
+
+.lm-cable-channel-menu-item--danger:hover {
+  background: rgba(255, 77, 94, 0.14);
 }
 
 .lm-cable-confirm-backdrop {
@@ -485,21 +577,45 @@
 }
 
 .lm-cable-volume {
+  position: relative;
   display: flex;
+  flex-direction: column-reverse;
   align-items: center;
-  gap: 6px;
-  padding: 0 4px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  width: 44px;
+  min-height: 44px;
 }
 
 .lm-cable-volume-mute {
   flex-shrink: 0;
 }
 
+.lm-cable-volume-rail {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 72px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(12, 18, 28, 0.92);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
 .lm-cable-volume-slider {
-  width: 92px;
-  height: 4px;
+  width: 72px;
+  height: 28px;
+  margin: 0;
   accent-color: #ff6b7a;
   cursor: pointer;
+  transform: rotate(-90deg);
+  transform-origin: center center;
 }
 
 .lm-cable-osd-quad-summary {
@@ -588,16 +704,8 @@
 }
 
 @media (max-width: 768px) {
-  .lm-cable-top-bar {
-    padding: 10px 12px;
-  }
-
-  .lm-cable-top-btn-label {
-    display: none;
-  }
-
-  .lm-cable-top-btn {
-    padding: 8px 10px;
+  .lm-cable-header {
+    padding: max(12px, env(safe-area-inset-top)) 12px 14px;
   }
 
   .lm-cable-confirm-actions {

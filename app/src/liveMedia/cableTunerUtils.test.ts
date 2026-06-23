@@ -13,9 +13,11 @@ import {
   nextWorkingFavoriteIndex,
   pageIndexForFavorite,
   pickCableQuadFromSlots,
+  pickNextQuadIndex,
   prevFavoriteIndex,
   quadOsdChannelRange,
   singleFavoriteIndex,
+  spreadQuadSlots,
   targetFavoriteAfterStep,
 } from "./cableTunerUtils";
 
@@ -24,22 +26,35 @@ function hit(id: string): UnifiedSearchHit {
 }
 
 describe("cableTunerUtils", () => {
-  it("page 0 is quad only", () => {
+  it("page 0 is quad with spread slots, not 1–4 sequential", () => {
     expect(isQuadPage(0)).toBe(true);
     expect(isQuadPage(1)).toBe(false);
-    expect(initialQuadSlots(66)).toEqual([0, 1, 2, 3]);
-    expect(initialRotationCursor(66)).toBe(4);
+    expect(initialQuadSlots(66)).toEqual(spreadQuadSlots(66));
+    expect(spreadQuadSlots(55)).toEqual([19, 25, 39, 52]);
+    expect(spreadQuadSlots(66)).not.toEqual([0, 1, 2, 3]);
   });
 
-  it("quad rotation advances one slot at a time through all favorites", () => {
-    let slots = initialQuadSlots(6);
-    let cursor = initialRotationCursor(6);
-    ({ slots, cursor } = advanceQuadRotation(slots, 0, cursor, 6));
-    expect(slots).toEqual([4, 1, 2, 3]);
-    expect(cursor).toBe(5);
-    ({ slots, cursor } = advanceQuadRotation(slots, 1, cursor, 6));
-    expect(slots).toEqual([4, 5, 2, 3]);
-    expect(cursor).toBe(0);
+  it("quad rotation avoids on-screen duplicates and spreads injections", () => {
+    const total = 55;
+    let slots = spreadQuadSlots(total);
+    let cursor = initialRotationCursor(total, slots);
+    expect(new Set(slots).size).toBe(4);
+
+    for (let round = 0; round < 4; round += 1) {
+      const before = [...slots];
+      ({ slots, cursor } = advanceQuadRotation(slots, round, cursor, total));
+      expect(new Set(slots).size).toBe(4);
+      expect(slots[round]).not.toBe(before[round]);
+      for (let i = 0; i < 4; i += 1) {
+        if (i !== round) expect(slots[i]).toBe(before[i]);
+      }
+    }
+  });
+
+  it("pickNextQuadIndex never picks a channel already on another tile", () => {
+    const slots = [19, 24, 39, 52];
+    const next = pickNextQuadIndex(slots, 0, initialRotationCursor(55, slots), 55);
+    expect([24, 39, 52]).not.toContain(next);
   });
 
   it("pages after 0 are single channel in favorites order", () => {

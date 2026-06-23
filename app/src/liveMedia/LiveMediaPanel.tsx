@@ -423,6 +423,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
             loading={!curatedReady && loading}
             onOpenBrowse={() => setView("browse")}
             onRemoveFavorite={handleToggleFavorite}
+            onBack={isFullLayout ? undefined : onClose}
           />
         </div>
       ) : (

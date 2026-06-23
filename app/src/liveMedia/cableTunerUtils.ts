@@ -3,6 +3,8 @@ import type { UnifiedSearchHit } from "../searchResults/types";
 export type CableTile = UnifiedSearchHit | null;
 
 const QUAD_TILES = 4;
+/** Spread initial quad tiles across the lineup (not 1–4 sequential). */
+const QUAD_SPREAD_FRACS = [0.35, 0.455, 0.718, 0.963];
 export const QUAD_ROTATE_MS = 30_000;
 /** If a tile never reaches playable state, skip to the next favorite. */
 export const CABLE_STREAM_LOAD_MS = 11_000;
@@ -48,19 +50,96 @@ export function cableOsdRangeLabel(pageIndex: number, total: number, quadSlots?:
   return quadOsdChannelRange(initialQuadSlots(total));
 }
 
-/** Starting favorite indices for the quad grid (wraps). */
-export function initialQuadSlots(total: number): number[] {
+/** Evenly spread favorite indices for the opening quad (e.g. ch 20, 26, 40, 53 on a long list). */
+export function spreadQuadSlots(total: number): number[] {
   if (total <= 0) return [0, 0, 0, 0];
-  return Array.from({ length: QUAD_TILES }, (_, i) => i % total);
+  if (total <= 4) return Array.from({ length: QUAD_TILES }, (_, i) => i % total);
+  const raw = QUAD_SPREAD_FRACS.map((f) => Math.min(total - 1, Math.floor(f * total)));
+  const unique: number[] = [];
+  for (const idx of raw) {
+    let n = idx;
+    let guard = 0;
+    while (unique.includes(n) && guard < total) {
+      n = (n + 1) % total;
+      guard += 1;
+    }
+    unique.push(n);
+  }
+  const step = quadSpreadStep(total);
+  while (unique.length < QUAD_TILES) {
+    const seed = unique[unique.length - 1] ?? 0;
+    let n = (seed + step) % total;
+    let guard = 0;
+    while (unique.includes(n) && guard < total) {
+      n = (n + 1) % total;
+      guard += 1;
+    }
+    unique.push(n);
+  }
+  return unique.slice(0, QUAD_TILES);
+}
+
+/** Jump size when injecting the next quad channel. */
+export function quadSpreadStep(total: number): number {
+  if (total <= 4) return 1;
+  return Math.max(1, Math.round(total / 5));
+}
+
+/** Starting favorite indices for the quad grid (spread, not sequential). */
+export function initialQuadSlots(total: number): number[] {
+  return spreadQuadSlots(total);
 }
 
 /** Index of the next favorite to inject into the quad rotation. */
-export function initialRotationCursor(total: number): number {
+export function initialRotationCursor(total: number, slots?: number[]): number {
   if (total <= 0) return 0;
-  return QUAD_TILES % total;
+  const s = slots ?? spreadQuadSlots(total);
+  const step = quadSpreadStep(total);
+  const maxIdx = Math.max(...s);
+  let cursor = (maxIdx + step) % total;
+  const occupied = new Set(s);
+  for (let n = 0; n < total; n++) {
+    const candidate = (maxIdx + step + n) % total;
+    if (!occupied.has(candidate)) {
+      cursor = candidate;
+      break;
+    }
+  }
+  return cursor;
 }
 
-/** Replace one quad tile with the next favorite in the lineup. */
+function occupiedExcept(slots: number[], slotToUpdate: number): Set<number> {
+  const set = new Set<number>();
+  for (let i = 0; i < slots.length; i += 1) {
+    if (i !== slotToUpdate) set.add(slots[i]);
+  }
+  return set;
+}
+
+/** Next favorite for a quad tile — must not duplicate another on-screen tile. */
+export function pickNextQuadIndex(slots: number[], slotToUpdate: number, cursor: number, total: number): number {
+  if (total <= 0) return 0;
+  const occupied = occupiedExcept(slots, slotToUpdate);
+  for (let n = 0; n < total; n += 1) {
+    const candidate = (cursor + n) % total;
+    if (!occupied.has(candidate)) return candidate;
+  }
+  return cursor % total;
+}
+
+/** Advance cursor in spread steps, skipping channels still on screen. */
+export function nextQuadCursor(slots: number[], injected: number, total: number): number {
+  if (total <= 0) return 0;
+  const step = quadSpreadStep(total);
+  const occupied = new Set(slots);
+  for (let n = 1; n <= total; n += 1) {
+    const candidate = (injected + step * n) % total;
+    if (!occupied.has(candidate)) return candidate;
+  }
+  return (injected + 1) % total;
+}
+
+/** Replace one quad tile; each slot rotates in turn before any repeats on that tile. */
 export function advanceQuadRotation(
   slots: number[],
   slotToUpdate: number,
@@ -68,9 +147,10 @@ export function advanceQuadRotation(
   total: number,
 ): { slots: number[]; cursor: number } {
   if (total <= 0) return { slots, cursor };
+  const nextIdx = pickNextQuadIndex(slots, slotToUpdate, cursor, total);
   const nextSlots = [...slots];
-  nextSlots[slotToUpdate % QUAD_TILES] = cursor % total;
-  return { slots: nextSlots, cursor: (cursor + 1) % total };
+  nextSlots[slotToUpdate % QUAD_TILES] = nextIdx;
+  return { slots: nextSlots, cursor: nextQuadCursor(nextSlots, nextIdx, total) };
 }
 
 export function quadOsdChannelRange(slotIndices: number[]): { from: number; to: number } {

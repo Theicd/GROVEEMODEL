@@ -99,10 +99,17 @@ export type LandingContent = {
   rotationKey: number;
 };
 
+function landingSuggestionCount(): number {
+  if (typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches) {
+    return 2;
+  }
+  return 3;
+}
+
 function pickLandingContent(): LandingContent {
   return {
     headline: pickLandingHeadline(),
-    suggestions: pickRotatingLandingSuggestions(3),
+    suggestions: pickRotatingLandingSuggestions(landingSuggestionCount()),
     rotationKey: 0,
   };
 }
@@ -114,7 +121,7 @@ export function useLandingContent(rotateMs = LANDING_ROTATION_MS): LandingConten
     const id = window.setInterval(() => {
       setContent((prev) => ({
         headline: prev.headline,
-        suggestions: pickRotatingLandingSuggestions(3),
+        suggestions: pickRotatingLandingSuggestions(landingSuggestionCount()),
         rotationKey: prev.rotationKey + 1,
       }));
     }, rotateMs);

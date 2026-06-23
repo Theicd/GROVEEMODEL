@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { GroveeHudCanvas } from "../GroveeHudCanvas";
 import { formatBytes } from "../storageReport";
@@ -40,6 +40,18 @@ type IntroScreenProps = {
 };
 
 const STANDBY = "> STANDBY";
+const HINT_DISMISS_KEY = "grovee-intro-hints-dismissed";
+
+function readDismissedHints(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(HINT_DISMISS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
 
 export function IntroScreen({
   phase,
@@ -62,6 +74,7 @@ export function IntroScreen({
   recommendedReasonHe,
 }: IntroScreenProps) {
   const [webgpu, setWebgpu] = useState(false);
+  const [dismissedHints, setDismissedHints] = useState<Set<string>>(readDismissedHints);
   const [consoleLines, setConsoleLines] = useState<string[]>([STANDBY]);
   const lastLogRef = useRef("");
   const isStart = phase === "start";
@@ -108,6 +121,21 @@ export function IntroScreen({
     startupTarget === "local-text" ? SMOLLM_ESTIMATED_BYTES : GEMMA_ESTIMATED_BYTES;
   const landingSubtitle = startupTarget === "local-text" ? "SMOLLM2 360M" : "GEMMA 4 E2B";
 
+  const dismissHint = useCallback((id: string) => {
+    setDismissedHints((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      try {
+        sessionStorage.setItem(HINT_DISMISS_KEY, JSON.stringify([...next]));
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  }, []);
+
+  const showWebgpuHint = !webgpu && !dismissedHints.has("webgpu-warn");
+
   return (
     <div
       id="intro-screen"
@@ -149,16 +177,6 @@ export function IntroScreen({
                   {landingSubtitle}
                 </p>
 
-                {recommendedReasonHe ? (
-                  <p
-                    className={`hal-warn hal-warn--float hal-float__line${stageAtLeast(stage, "subtitle") ? " hal-float__line--in" : ""}`}
-                    dir="rtl"
-                    style={{ marginTop: 8, fontSize: "0.9rem" }}
-                  >
-                    מומלץ: {modelLabel} — {recommendedReasonHe}
-                  </p>
-                ) : null}
-
                 <div
                   className={`hal-landing__command-row${stageAtLeast(stage, "typewriter") ? " hal-landing__command-row--in" : ""}`}
                   dir="rtl"
@@ -171,10 +189,20 @@ export function IntroScreen({
                   </p>
                 </div>
 
-                {!webgpu ? (
-                  <p className="hal-warn hal-warn--float hal-float__line hal-float__line--in" role="alert">
-                    WebGPU לא זמין — הטעינה תמשיך ב-WASM (CPU), איטי יותר.
-                  </p>
+                {showWebgpuHint ? (
+                  <div className="hal-hint-banner hal-hint-banner--warn hal-float__line hal-float__line--in" role="alert">
+                    <p className="hal-hint-banner__text" dir="rtl">
+                      WebGPU לא זמין — הטעינה תמשיך ב-WASM (CPU), איטי יותר.
+                    </p>
+                    <button
+                      type="button"
+                      className="hal-hint-banner__close"
+                      onClick={() => dismissHint("webgpu-warn")}
+                      aria-label="סגור אזהרה"
+                    >
+                      ×
+                    </button>
+                  </div>
                 ) : null}
               </div>
             </div>

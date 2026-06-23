@@ -17,7 +17,12 @@ type Props = {
   volume?: number;
   multiView?: boolean;
   loadTimeoutMs?: number;
+  channelBadgeTopRight?: boolean;
+  quadJumpOpen?: boolean;
+  quadJumpLabel?: string;
   onSelect?: () => void;
+  onQuadJump?: () => void;
+  onDoubleActivate?: () => void;
   onStreamReady?: () => void;
   onStreamFail?: () => void;
 };
@@ -35,7 +40,12 @@ export function CableStreamSlot({
   volume = 1,
   multiView = false,
   loadTimeoutMs = CABLE_STREAM_LOAD_MS,
+  channelBadgeTopRight = false,
+  quadJumpOpen = false,
+  quadJumpLabel = "",
   onSelect,
+  onQuadJump,
+  onDoubleActivate,
   onStreamReady,
   onStreamFail,
 }: Props) {
@@ -103,6 +113,14 @@ export function CableStreamSlot({
     <div
       className={`lm-cable-tile${single ? " lm-cable-tile--single" : ""}${selected ? " is-selected" : ""}${audioFocus ? " is-audio-focus" : ""}${onSelect ? " is-selectable" : ""}${showSnow ? " is-tuning" : " is-locked"}`}
       onClick={onSelect}
+      onDoubleClick={
+        onDoubleActivate
+          ? (e) => {
+              e.preventDefault();
+              onDoubleActivate();
+            }
+          : undefined
+      }
       onKeyDown={
         onSelect
           ? (e) => {
@@ -136,9 +154,21 @@ export function CableStreamSlot({
           </div>
         ) : null}
         {osdVisible && channelNum > 0 ? (
-          <div className="lm-cable-tile-osd">
+          <div className={`lm-cable-tile-osd${channelBadgeTopRight ? " lm-cable-tile-osd--tr" : ""}`}>
             <span className="lm-cable-tile-ch">{String(channelNum).padStart(2, "0")}</span>
           </div>
+        ) : null}
+        {quadJumpOpen && onQuadJump && !showSnow ? (
+          <button
+            type="button"
+            className="lm-cable-tile-jump"
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuadJump();
+            }}
+          >
+            {quadJumpLabel}
+          </button>
         ) : null}
       </div>
     </div>

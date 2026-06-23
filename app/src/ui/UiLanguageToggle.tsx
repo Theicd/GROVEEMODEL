@@ -1,6 +1,10 @@
 import { useUiLanguage, setChatUiLanguage, type ChatUiLanguage } from "./useUiLanguage";
 
-export function UiLanguageToggle() {
+type UiLanguageToggleProps = {
+  className?: string;
+};
+
+export function UiLanguageToggle({ className }: UiLanguageToggleProps = {}) {
   const lang = useUiLanguage();
 
   const pick = (next: ChatUiLanguage) => {
@@ -8,7 +12,7 @@ export function UiLanguageToggle() {
   };
 
   return (
-    <div className="ui-lang-toggle" role="group" aria-label="שפת ממשק">
+    <div className={`ui-lang-toggle${className ? ` ${className}` : ""}`} role="group" aria-label="שפת ממשק">
       <button
         type="button"
         className={`ui-lang-toggle-btn${lang === "he" ? " ui-lang-toggle-btn--active" : ""}`}

@@ -173,6 +173,16 @@ function collectFadeMaterials(root: THREE.Object3D): THREE.Material[] {
   return mats;
 }
 
+function getHudCameraFrame(viewWidth: number, viewHeight: number) {
+  const aspect = viewWidth / Math.max(viewHeight, 1);
+  const narrow = viewWidth < 820 || aspect < 0.95;
+  if (!narrow) {
+    return { x: 0, lookX: 0, y: 0.05 };
+  }
+  const pan = -2.15 - Math.max(0, 0.88 - aspect) * 3.2;
+  return { x: pan, lookX: pan * 0.42, y: 0.05 };
+}
+
 export function GroveeHudCanvas({ contained = false }: { contained?: boolean }) {
   const mountRef = useRef<HTMLDivElement>(null);
 
@@ -194,13 +204,17 @@ export function GroveeHudCanvas({ contained = false }: { contained?: boolean }) 
     let { width, height } = measure();
     if (width <= 0 || height <= 0) return;
 
+    let viewWidth = width;
+    let viewHeight = height;
+
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(SPACE_FOG);
     scene.fog = new THREE.Fog(SPACE_FOG, 45, 190);
 
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.05, 220);
-    camera.position.set(0, 0.05, 2.85);
-    camera.lookAt(0, 0, -20);
+    const initialFrame = getHudCameraFrame(width, height);
+    camera.position.set(initialFrame.x, initialFrame.y, 2.85);
+    camera.lookAt(initialFrame.lookX, 0, -20);
 
     const renderer = new THREE.WebGLRenderer({ alpha: false, antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -359,7 +373,11 @@ export function GroveeHudCanvas({ contained = false }: { contained?: boolean }) 
         craft.rotation.z = Math.sin(spinT * 0.15) * 0.04;
 
         for (const layer of warpStars) advanceWarpLayer(layer, dt);
+        const camFrame = getHudCameraFrame(viewWidth, viewHeight);
+        camera.position.x = camFrame.x;
+        camera.position.y = camFrame.y;
         camera.position.z = 2.85 + Math.sin(spinT * 0.08) * 0.015;
+        camera.lookAt(camFrame.lookX, 0, -20);
       }
 
       const pulse = 0.5 + 0.5 * Math.sin(spinT * 1.8);
@@ -413,6 +431,8 @@ export function GroveeHudCanvas({ contained = false }: { contained?: boolean }) 
       if (next.width <= 0 || next.height <= 0) return;
       width = next.width;
       height = next.height;
+      viewWidth = width;
+      viewHeight = height;
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height);

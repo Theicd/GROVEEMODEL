@@ -193,6 +193,7 @@ import {
 } from "./groveeNews/boot";
 import { SearchResultsPanel } from "./searchResults/SearchResultsPanel";
 import { UiLanguageToggle } from "./ui/UiLanguageToggle";
+import { useUiLanguage } from "./ui/useUiLanguage";
 import {
   buildPanelSearchPlan,
   buildUnifiedSearchPayload,
@@ -1563,6 +1564,7 @@ function App() {
   const [desktopLayout, setDesktopLayout] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 769px)").matches,
   );
+  const uiLang = useUiLanguage();
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 769px)");
@@ -1812,6 +1814,7 @@ function App() {
       setCameraStore(fresh);
       characterBrainRef.current.reset();
       setSidebarOpen(false);
+      setLiveMediaPanelOpen(false);
       return;
     }
     const id = newChatSessionId();
@@ -1831,6 +1834,7 @@ function App() {
     setEditDraft("");
     setSidebarOpen(false);
     setArtifactOpen(false);
+    setLiveMediaPanelOpen(false);
   }, [cameraMode, isGenerating]);
 
   const setMessages = useCallback((updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
@@ -2838,6 +2842,14 @@ function App() {
     setGamesPanelOpen(false);
     setGamesEmbedGame(null);
   }, []);
+
+  const toggleLiveMediaPanel = useCallback(() => {
+    if (liveMediaPanelOpen) {
+      setLiveMediaPanelOpen(false);
+      return;
+    }
+    openLiveMediaPanelFull();
+  }, [liveMediaPanelOpen, openLiveMediaPanelFull]);
 
   const closeLiveMediaPanel = useCallback(() => {
     setLiveMediaPanelOpen(false);
@@ -5761,9 +5773,9 @@ function App() {
                   type="button"
                   className={`sb-rail-btn sb-rail-btn--livemedia${showLiveMediaPanel ? " is-active" : ""}`}
                   aria-label="TV LIVE / רדיו"
-                  title="פתח TV LIVE / רדיו"
+                  title={showLiveMediaPanel ? "סגור TV LIVE / רדיו" : "פתח TV LIVE / רדיו"}
                   aria-pressed={showLiveMediaPanel}
-                  onClick={openLiveMediaPanelFull}
+                  onClick={toggleLiveMediaPanel}
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <rect x="2" y="5" width="20" height="14" rx="2" />
@@ -5832,6 +5844,10 @@ function App() {
                     </svg>
                   </button>
                 </div>
+                <div className="sb-sidebar-lang" dir="rtl">
+                  <span className="sb-sidebar-lang-label">שפת ממשק</span>
+                  <UiLanguageToggle className="sb-sidebar-lang-toggle" />
+                </div>
                 <div className="sidebar__scroll">
                 <div className="sb-nav">
                   <button
@@ -5863,8 +5879,8 @@ function App() {
                   <button
                     type="button"
                     className={`sb-nav-item sb-nav-item--livemedia${showLiveMediaPanel ? " is-active" : ""}`}
-                    onClick={openLiveMediaPanelFull}
-                    title="פתח TV LIVE / רדיו"
+                    onClick={toggleLiveMediaPanel}
+                    title={showLiveMediaPanel ? "סגור TV LIVE / רדיו" : "פתח TV LIVE / רדיו"}
                     aria-label="TV LIVE / רדיו"
                     aria-pressed={showLiveMediaPanel}
                   >
@@ -6060,6 +6076,22 @@ function App() {
             aria-hidden={showLiveMediaFullscreen}
           >
             <header className="chat-header">
+              <button
+                type="button"
+                className="chat-header-menu-btn"
+                aria-label="פתח תפריט GroVee"
+                title="פתח תפריט"
+                onClick={() => setSidebarOpen(true)}
+              >
+                <GroveeLogoMark size="sm" />
+              </button>
+              <LocalContextBar
+                context={startupContext}
+                uiLang={uiLang}
+                variant="header"
+                className="chat-header-context-mobile"
+              />
+              <div className="chat-header-primary">
               {!cameraMode ? (
                 <ChatModelPicker
                   rack={pickerModelRack}
@@ -6081,9 +6113,14 @@ function App() {
                   </span>
                 </div>
               )}
+              </div>
               <div className="chat-header-actions">
-                <UiLanguageToggle />
-                <LocalContextBar context={startupContext} />
+                <UiLanguageToggle className="chat-header-lang-desktop" />
+                <LocalContextBar
+                  context={startupContext}
+                  uiLang={uiLang}
+                  className="chat-header-context-desktop"
+                />
                 {activeArtifact && !artifactOpen ? (
                   <button
                     type="button"

@@ -35,10 +35,16 @@ export function IntroMarqueeFooter({
   onContinueWithoutChat,
 }: IntroMarqueeFooterProps) {
   const isStart = phase === "start";
-  const { current, typedText, chipIn, phase: carouselPhase, showCursor } =
-    useIntroFooterCarousel(isStart, webgpu);
-  const chipWarpOut = carouselPhase === "exiting";
-  const chipWarpJump = !chipIn || chipWarpOut;
+  const {
+    current,
+    typedText,
+    tagSlotReady,
+    tagAnim,
+    textIn,
+    textWarpOut,
+    showCursor,
+  } = useIntroFooterCarousel(isStart, webgpu);
+  const textWarpJump = textWarpOut;
   const pctLabel = indeterminate || compilePulse ? "…" : `${formatDownloadPercent(displayPct)}%`;
 
   return (
@@ -60,7 +66,7 @@ export function IntroMarqueeFooter({
 
       <div className="lcars-footer__main">
         <div
-          className={`lcars-footer__info-stage${chipWarpJump ? " lcars-footer__info-stage--jump" : ""}`}
+          className={`lcars-footer__info-stage${textWarpJump ? " lcars-footer__info-stage--jump" : ""}`}
           aria-live="polite"
         >
           <div className="lcars-footer__warp" aria-hidden="true">
@@ -70,23 +76,41 @@ export function IntroMarqueeFooter({
           </div>
           {isStart ? (
             <div
-              key={current.id}
-              className={`lcars-footer__chip lcars-footer__chip--solo${chipIn ? " lcars-footer__chip--in" : ""}${chipWarpOut ? " lcars-footer__chip--warp-out" : ""}${current.warn ? " lcars-footer__chip--warn" : ""}`}
+              className={`lcars-footer__chip lcars-footer__chip--solo${current.warn ? " lcars-footer__chip--warn" : ""}`}
             >
-              <span className="lcars-footer__chip-tag">{current.tag}</span>
-              <span className="lcars-footer__chip-text">
-                {typedText}
-                {showCursor ? (
-                  <span className="lcars-footer__cursor" aria-hidden="true">
-                    ▌
-                  </span>
-                ) : null}
-              </span>
+              <div className="lcars-footer__tag-slot" aria-hidden={!tagSlotReady}>
+                <span
+                  key={current.id}
+                  className={`lcars-footer__chip-tag lcars-footer__chip-tag--${tagAnim}${tagSlotReady ? " lcars-footer__chip-tag--ready" : ""}`}
+                >
+                  {current.tag}
+                </span>
+              </div>
+              <div className="lcars-footer__text-slot">
+                <span
+                  className={`lcars-footer__chip-text${textIn ? " lcars-footer__chip-text--in" : ""}${textWarpOut ? " lcars-footer__chip-text--out" : ""}`}
+                >
+                  {typedText}
+                  {showCursor ? (
+                    <span className="lcars-footer__cursor" aria-hidden="true">
+                      ▌
+                    </span>
+                  ) : null}
+                </span>
+              </div>
             </div>
           ) : (
-            <div className="lcars-footer__chip lcars-footer__chip--solo lcars-footer__chip--in">
-              <span className="lcars-footer__chip-tag">טעינה</span>
-              <span className="lcars-footer__chip-text">מוריד ומאתחל Gemma 4 E2B…</span>
+            <div className="lcars-footer__chip lcars-footer__chip--solo">
+              <div className="lcars-footer__tag-slot">
+                <span className="lcars-footer__chip-tag lcars-footer__chip-tag--ready lcars-footer__chip-tag--idle">
+                  טעינה
+                </span>
+              </div>
+              <div className="lcars-footer__text-slot">
+                <span className="lcars-footer__chip-text lcars-footer__chip-text--in">
+                  מוריד ומאתחל Gemma 4 E2B…
+                </span>
+              </div>
             </div>
           )}
         </div>

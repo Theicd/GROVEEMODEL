@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 
-const BUTTON_ROTATE_MS = 3600;
+const VOYAGE_STEP_MS = 3200;
+
+const VOYAGE_LINES = [
+  { id: "engage", text: "ENGAGE", dir: "ltr" as const, code: true },
+  { id: "start", text: "התחל", dir: "rtl" as const, code: false },
+  { id: "load", text: "טען מודל לדפדפן", dir: "rtl" as const, code: false },
+];
 
 type IntroEngageTabProps = {
   active: boolean;
@@ -17,14 +23,16 @@ export function IntroEngageTab({
   isGenerating,
   onLoad,
 }: IntroEngageTabProps) {
-  const [altButtonLabel, setAltButtonLabel] = useState(false);
+  const [voyageIdx, setVoyageIdx] = useState(0);
 
   useEffect(() => {
     if (!active) {
-      setAltButtonLabel(false);
+      setVoyageIdx(0);
       return;
     }
-    const id = window.setInterval(() => setAltButtonLabel((v) => !v), BUTTON_ROTATE_MS);
+    const id = window.setInterval(() => {
+      setVoyageIdx((i) => (i + 1) % VOYAGE_LINES.length);
+    }, VOYAGE_STEP_MS);
     return () => window.clearInterval(id);
   }, [active]);
 
@@ -56,18 +64,16 @@ export function IntroEngageTab({
             aria-label="טען מודל לדפדפן / התחל"
           >
             <span className="lcars-btn__shine" aria-hidden="true" />
-            <span className="lcars-btn__code" dir="ltr">
-              ENGAGE
-            </span>
-            <span className="lcars-btn__label" aria-live="polite">
-              <span className={`lcars-btn__label-line${altButtonLabel ? "" : " is-visible"}`}>
-                טען מודל לדפדפן
-              </span>
-              <span
-                className={`lcars-btn__label-line lcars-btn__label-line--alt${altButtonLabel ? " is-visible" : ""}`}
-              >
-                התחל
-              </span>
+            <span className="lcars-btn__voyage" aria-live="polite">
+              {VOYAGE_LINES.map((line, i) => (
+                <span
+                  key={line.id}
+                  className={`lcars-btn__voyage-line${line.code ? " lcars-btn__voyage-line--code" : ""}${voyageIdx === i ? " is-visible" : ""}`}
+                  dir={line.dir}
+                >
+                  {line.text}
+                </span>
+              ))}
             </span>
           </button>
         </div>

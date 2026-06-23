@@ -22,6 +22,9 @@ const WMO_ICON: Record<number, string> = {
 type Props = {
   context: StartupContext | null;
   uiLang?: "he" | "en";
+  /** Compact row for mobile chat header: network icon + time + date only */
+  variant?: "full" | "header";
+  className?: string;
 };
 
 function browserTimezone(): string {
@@ -32,7 +35,8 @@ function browserTimezone(): string {
   }
 }
 
-export function LocalContextBar({ context, uiLang = "he" }: Props) {
+export function LocalContextBar({ context, uiLang = "he", variant = "full", className }: Props) {
+  const isHeader = variant === "header";
   const networkStatus = useNetworkStatus();
   const [now, setNow] = useState(() => new Date());
 
@@ -76,25 +80,29 @@ export function LocalContextBar({ context, uiLang = "he" }: Props) {
 
   return (
     <div
-      className="local-context-bar"
+      className={`local-context-bar${isHeader ? " local-context-bar--header" : ""}${className ? ` ${className}` : ""}`}
       dir="ltr"
       title={context ? `${context.timezone} · ${context.countryName}` : tz}
     >
-      <NetworkStatusIcon status={networkStatus} uiLang={uiLang} />
+      <NetworkStatusIcon status={networkStatus} uiLang={uiLang} iconOnly={isHeader} />
       <span className="local-context-sep" aria-hidden="true" />
       <span className="local-context-time">{timeLabel}</span>
       <span className="local-context-sep" aria-hidden="true" />
       <span className="local-context-date">{dateLabel}</span>
-      <span className="local-context-sep" aria-hidden="true" />
-      <span className="local-context-place">{place}</span>
-      {wx ? (
+      {!isHeader ? (
         <>
           <span className="local-context-sep" aria-hidden="true" />
-          <span
-            className={`local-context-weather${context?.localTempC != null ? " local-context-weather--live" : ""}`}
-          >
-            {wx}
-          </span>
+          <span className="local-context-place">{place}</span>
+          {wx ? (
+            <>
+              <span className="local-context-sep" aria-hidden="true" />
+              <span
+                className={`local-context-weather${context?.localTempC != null ? " local-context-weather--live" : ""}`}
+              >
+                {wx}
+              </span>
+            </>
+          ) : null}
         </>
       ) : null}
     </div>

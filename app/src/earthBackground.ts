@@ -1,11 +1,22 @@
 import * as THREE from "three";
 
-import { hidePlanet, updatePlanetApproach } from "./planetApproach";
+import { hidePlanet, planetEaseDwell, updatePlanetApproach, type PlanetApproachConfig } from "./planetApproach";
 
 export { EARTH_CYCLE_SEC } from "./solarJourney";
 
 /** Negative X = left side of screen, positive = right. */
 export const EARTH_SIDE = -1;
+
+const EARTH_APPROACH: PlanetApproachConfig = {
+  zFar: -68,
+  zNear: -18,
+  xFar: 13,
+  xNear: 6,
+  yFar: 1.1,
+  yNear: 0.04,
+  scaleFar: 3.6,
+  scaleNear: 8.4,
+};
 
 const TEXTURES = {
   map: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
@@ -183,6 +194,8 @@ export function updateEarthApproach(
       { material: system.cloudsMesh.material as THREE.Material, baseOpacity: 0.88 },
       { material: system.moonMesh.material as THREE.Material, baseOpacity: 1 },
     ],
+    EARTH_APPROACH,
+    planetEaseDwell,
   );
 }
 
