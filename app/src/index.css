@@ -3730,6 +3730,29 @@ button:disabled {
     align-self: stretch;
     text-align: center;
   }
+
+  /* TV LIVE: full workspace on desktop — hide chat, expand panel */
+  .app-container--livemedia-full .chat-area--hidden-livemedia {
+    display: none !important;
+  }
+
+  .app-container--livemedia-full .artifact-panel.side-panel--livemedia-full.open {
+    order: 2;
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none;
+    border-left: none;
+  }
+
+  .side-panel--livemedia-full .lm-panel-inner--full {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .app-container--livemedia-full .artifact-panel.side-panel--livemedia-full.open {
+    height: 100vh;
+  }
 }
 
 @media (max-width: 768px) {

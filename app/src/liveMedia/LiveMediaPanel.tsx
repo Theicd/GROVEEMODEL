@@ -23,19 +23,24 @@ import { subscribeLiveMediaSummary } from "./runtimeState";
 import { LiveMediaResultsGrid } from "../searchResults/LiveMediaResultsGrid";
 import { LiveMediaControlPanel, LiveMediaStatusBadge } from "../searchResults/LiveMediaControlPanel";
 import type { UnifiedSearchHit } from "../searchResults/types";
+import { CableTunerView } from "./CableTunerView";
+import { channelQualityScore } from "./ranking";
 import "./liveMediaPanel.css";
 
-type HubView = "home" | "tv" | "radio" | "favorites" | "settings";
+type HubView = "watch" | "browse" | "radio" | "settings";
 
 type Props = {
   uiLang: ChatUiLanguage;
   onClose: () => void;
+  /** Desktop: full workspace between sidebar and edge; mobile: side drawer */
+  layout?: "side" | "full";
 };
 
 const PAGE = 48;
 
-export function LiveMediaPanel({ uiLang, onClose }: Props) {
-  const [view, setView] = useState<HubView>("home");
+export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
+  const isFullLayout = layout === "full";
+  const [view, setView] = useState<HubView>("watch");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [radio, setRadio] = useState<RadioStation[]>([]);
   const [userPrefs, setUserPrefs] = useState<LiveMediaUserPrefs | null>(null);
@@ -52,6 +57,8 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
     uiLang === "he"
       ? {
           title: "TV LIVE / רדיו",
+          watch: "שידור",
+          browse: "חיפוש ערוצים",
           home: "בית",
           tv: "טלוויזיה",
           radio: "רדיו",
@@ -82,9 +89,14 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
           favSaved: "מועדפים",
           langFilter: "שפה",
           langUnknown: "לא מזוהה",
+          backChat: "חזרה לצ'אט",
+          brandLive: "שידור חי",
+          brandTag: "ערוצים · רדיו · מועדפים",
         }
       : {
           title: "TV LIVE / Radio",
+          watch: "Watch",
+          browse: "Browse channels",
           home: "Home",
           tv: "TV",
           radio: "Radio",
@@ -115,6 +127,9 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
           favSaved: "Favorites",
           langFilter: "Language",
           langUnknown: "Unknown",
+          backChat: "Back to chat",
+          brandLive: "LIVE",
+          brandTag: "Channels · Radio · Favorites",
         };
 
   const refreshLibrary = useCallback(async () => {
@@ -172,10 +187,16 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
   );
 
   const favoriteTvHits = useMemo(() => {
-    let list = channels.filter((c) => c.favorite && (c.type === "tv" || c.type === "youtube"));
-    if (query.trim()) list = searchLiveMediaChannels(list, query.trim(), 500);
+    const favIds = new Set(userPrefs?.favoriteChannelIds ?? []);
+    const list = channels
+      .filter(
+        (c) =>
+          (c.favorite || favIds.has(c.id)) &&
+          (c.type === "tv" || c.type === "youtube"),
+      )
+      .sort((a, b) => channelQualityScore(b) - channelQualityScore(a));
     return list.map((c) => channelToSearchHit(c));
-  }, [channels, query]);
+  }, [channels, userPrefs?.favoriteChannelIds]);
 
   const favoriteRadioHits = useMemo(() => {
     let list = radio.filter((r) => r.favorite);
@@ -193,8 +214,6 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
     }
     return ids;
   }, [channels, radio]);
-
-  const favCount = favoriteTvHits.length + favoriteRadioHits.length;
 
   const handleToggleFavorite = useCallback(async (hit: UnifiedSearchHit) => {
     if (hit.kind === "livetv") {
@@ -271,10 +290,9 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
   }, [refreshLibrary]);
 
   const nav: { id: HubView; label: string; badge?: number }[] = [
-    { id: "home", label: L.home },
-    { id: "tv", label: L.tv },
+    { id: "watch", label: L.watch, badge: favoriteTvHits.length || undefined },
+    { id: "browse", label: L.browse },
     { id: "radio", label: L.radio },
-    { id: "favorites", label: L.favorites, badge: favCount || undefined },
     { id: "settings", label: L.settings },
   ];
 
@@ -285,34 +303,77 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
   };
 
   return (
-    <div className="lm-panel-inner" dir={rtl ? "rtl" : "ltr"}>
-      <header className="lm-panel-head">
-        <div className="lm-panel-title">
-          <span className="lm-panel-dot" aria-hidden="true" />
-          <span>{L.title}</span>
-          <span className="lm-panel-meta">
-            {channels.length} {L.tv} · {radio.length} {L.radio}
-            <LiveMediaStatusBadge uiLang={uiLang} />
-          </span>
-        </div>
-        <div className="lm-panel-head-actions">
-          <button type="button" className="lm-panel-btn" onClick={() => void runSync()} disabled={loading}>
-            ↻ {L.sync}
-          </button>
-          <button
-            type="button"
-            className="lm-panel-btn lm-panel-btn--primary"
-            onClick={() => setSettingsOpen(true)}
-            title={L.openSettings}
-          >
-            📺 {L.liveControl}
-          </button>
-          <button type="button" className="lm-panel-close" onClick={onClose} aria-label={L.close}>
-            ×
-          </button>
-        </div>
+    <div
+      className={`lm-panel-inner${isFullLayout && view !== "watch" ? " lm-panel-inner--full" : ""}${view === "watch" ? " lm-panel-inner--tuner-only" : ""}`}
+      dir={rtl ? "rtl" : "ltr"}
+    >
+      {view !== "watch" ? (
+      <header className={isFullLayout ? "lm-hero" : "lm-panel-head"}>
+        {isFullLayout ? (
+          <>
+            <div className="lm-hero-brand">
+              <span className="lm-hero-eyebrow">GROVEE</span>
+              <span className="lm-hero-title">{L.brandLive}</span>
+              <span className="lm-hero-sub">{L.brandTag}</span>
+            </div>
+            <div className="lm-hero-stats">
+              <span>
+                <strong>{channels.length}</strong> {L.tv}
+              </span>
+              <span>
+                <strong>{radio.length}</strong> {L.radio}
+              </span>
+              <LiveMediaStatusBadge uiLang={uiLang} />
+            </div>
+            <div className="lm-hero-actions">
+              <button type="button" className="lm-panel-btn" onClick={() => void runSync()} disabled={loading}>
+                ↻ {L.sync}
+              </button>
+              <button
+                type="button"
+                className="lm-panel-btn lm-panel-btn--primary"
+                onClick={() => setSettingsOpen(true)}
+                title={L.openSettings}
+              >
+                📺 {L.liveControl}
+              </button>
+              <button type="button" className="lm-back-chat" onClick={onClose}>
+                ← {L.backChat}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="lm-panel-title">
+              <span className="lm-panel-dot" aria-hidden="true" />
+              <span>{L.title}</span>
+              <span className="lm-panel-meta">
+                {channels.length} {L.tv} · {radio.length} {L.radio}
+                <LiveMediaStatusBadge uiLang={uiLang} />
+              </span>
+            </div>
+            <div className="lm-panel-head-actions">
+              <button type="button" className="lm-panel-btn" onClick={() => void runSync()} disabled={loading}>
+                ↻ {L.sync}
+              </button>
+              <button
+                type="button"
+                className="lm-panel-btn lm-panel-btn--primary"
+                onClick={() => setSettingsOpen(true)}
+                title={L.openSettings}
+              >
+                📺 {L.liveControl}
+              </button>
+              <button type="button" className="lm-panel-close" onClick={onClose} aria-label={L.close}>
+                ×
+              </button>
+            </div>
+          </>
+        )}
       </header>
+      ) : null}
 
+      {view !== "watch" ? (
       <nav className="lm-nav" aria-label={L.title}>
         {nav.map((n) => (
           <button
@@ -326,218 +387,164 @@ export function LiveMediaPanel({ uiLang, onClose }: Props) {
           </button>
         ))}
       </nav>
+      ) : null}
 
-      {(view === "tv" || view === "radio" || view === "home" || view === "favorites") && (
-        <div className="lm-toolbar">
-          <input
-            type="search"
-            className="lm-search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={L.search}
-            dir="auto"
+      {view === "watch" ? (
+        <div className="lm-panel-body lm-panel-body--watch">
+          <CableTunerView
+            favorites={favoriteTvHits}
+            uiLang={uiLang}
+            loading={loading}
+            onOpenBrowse={() => setView("browse")}
+            onRemoveFavorite={handleToggleFavorite}
           />
-          {view !== "radio" && view !== "favorites" ? (
-            <select
-              className="lm-select"
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                if (e.target.value) setView("tv");
-              }}
-            >
-              <option value="">{L.all}</option>
-              {browsableCategories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {rtl ? c.nameHe : c.name} ({categoryCounts.get(c.id) ?? 0})
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {view !== "favorites" ? (
-            <select className="lm-select" value={country} onChange={(e) => setCountry(e.target.value)}>
-              <option value="">{L.all}</option>
-              {LIVE_MEDIA_COUNTRIES.filter((c) => (countryCounts.get(c.code) ?? 0) > 0).map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.flag} {rtl ? c.nameHe : c.name} ({countryCounts.get(c.code) ?? 0})
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {view !== "favorites" ? (
-            <select className="lm-select" value={language} onChange={(e) => setLanguage(e.target.value)}>
-              <option value="">{L.all}</option>
-              {languageOptions.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.label} ({l.count})
-                </option>
-              ))}
-            </select>
-          ) : null}
         </div>
-      )}
-
-      <div className="lm-panel-body">
-        {loading ? <div className="lm-loading">…</div> : null}
-
-        {view === "home" && !loading ? (
-          <div className="lm-home">
-            <section>
-              <h3>{L.categories}</h3>
-              <div className="lm-chips">
-                {browsableCategories.filter((c) => (categoryCounts.get(c.id) ?? 0) > 0).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="lm-chip"
-                    onClick={() => {
-                      setCategory(c.id);
-                      setView("tv");
-                    }}
-                  >
-                    {rtl ? c.nameHe : c.name} <em>{categoryCounts.get(c.id)}</em>
-                  </button>
-                ))}
-              </div>
-            </section>
-            {tvHits.length > 0 ? (
-              <section>
-                <h3>{L.tv}</h3>
-                <LiveMediaResultsGrid hits={tvHits.slice(0, 12)} uiLang={uiLang} mode="livetv" {...gridFavProps} />
-              </section>
-            ) : null}
-            {radioHits.length > 0 ? (
-              <section>
-                <h3>{L.radio}</h3>
-                <LiveMediaResultsGrid hits={radioHits.slice(0, 12)} uiLang={uiLang} mode="radio" {...gridFavProps} />
-              </section>
-            ) : null}
-          </div>
-        ) : null}
-
-        {view === "tv" && !loading ? (
-          <>
-            <p className="lm-count">
-              {tvListFull.length} {L.channels}
-            </p>
-            <LiveMediaResultsGrid hits={tvHits} uiLang={uiLang} mode="livetv" {...gridFavProps} />
-            {tvListFull.length > page * PAGE ? (
-              <button type="button" className="lm-load-more" onClick={() => setPage((p) => p + 1)}>
-                {L.loadMore}
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
-        {view === "radio" && !loading ? (
-          <>
-            <p className="lm-count">
-              {radioListFull.length} {L.stations}
-            </p>
-            <LiveMediaResultsGrid hits={radioHits} uiLang={uiLang} mode="radio" {...gridFavProps} />
-            {radioListFull.length > page * PAGE ? (
-              <button type="button" className="lm-load-more" onClick={() => setPage((p) => p + 1)}>
-                {L.loadMore}
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
-        {view === "favorites" && !loading ? (
-          favCount === 0 ? (
-            <p className="lm-empty-favorites">{L.noFavorites}</p>
-          ) : (
-            <div className="lm-favorites">
-              {favoriteTvHits.length > 0 ? (
-                <section>
-                  <h3>
-                    {L.tv} · {favoriteTvHits.length}
-                  </h3>
-                  <LiveMediaResultsGrid hits={favoriteTvHits} uiLang={uiLang} mode="livetv" {...gridFavProps} />
-                </section>
+      ) : (
+        <>
+          {(view === "browse" || view === "radio") && (
+            <div className="lm-toolbar">
+              <input
+                type="search"
+                className="lm-search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={L.search}
+                dir="auto"
+              />
+              {view === "browse" ? (
+                <select className="lm-select" value={category} onChange={(e) => setCategory(e.target.value)}>
+                  <option value="">{L.all}</option>
+                  {browsableCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {rtl ? c.nameHe : c.name} ({categoryCounts.get(c.id) ?? 0})
+                    </option>
+                  ))}
+                </select>
               ) : null}
-              {favoriteRadioHits.length > 0 ? (
-                <section>
-                  <h3>
-                    {L.radio} · {favoriteRadioHits.length}
-                  </h3>
-                  <LiveMediaResultsGrid hits={favoriteRadioHits} uiLang={uiLang} mode="radio" {...gridFavProps} />
-                </section>
+              <select className="lm-select" value={country} onChange={(e) => setCountry(e.target.value)}>
+                <option value="">{L.all}</option>
+                {LIVE_MEDIA_COUNTRIES.filter((c) => (countryCounts.get(c.code) ?? 0) > 0).map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} {rtl ? c.nameHe : c.name} ({countryCounts.get(c.code) ?? 0})
+                  </option>
+                ))}
+              </select>
+              <select className="lm-select" value={language} onChange={(e) => setLanguage(e.target.value)}>
+                <option value="">{L.all}</option>
+                {languageOptions.map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.label} ({l.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="lm-content-shell">
+            <div className="lm-panel-body">
+              {loading ? <div className="lm-loading">…</div> : null}
+
+              {view === "browse" && !loading ? (
+                <>
+                  <p className="lm-count">
+                    {tvListFull.length} {L.channels} · ★ {favoriteTvHits.length} {L.favorites}
+                  </p>
+                  <LiveMediaResultsGrid hits={tvHits} uiLang={uiLang} mode="livetv" {...gridFavProps} />
+                  {tvListFull.length > page * PAGE ? (
+                    <button type="button" className="lm-load-more" onClick={() => setPage((p) => p + 1)}>
+                      {L.loadMore}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+
+              {view === "radio" && !loading ? (
+                <>
+                  <p className="lm-count">
+                    {radioListFull.length} {L.stations}
+                  </p>
+                  <LiveMediaResultsGrid hits={radioHits} uiLang={uiLang} mode="radio" {...gridFavProps} />
+                  {radioListFull.length > page * PAGE ? (
+                    <button type="button" className="lm-load-more" onClick={() => setPage((p) => p + 1)}>
+                      {L.loadMore}
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+
+              {view === "settings" && !loading ? (
+                <div className="lm-settings">
+                  <section>
+                    <h3>{L.prefsTitle}</h3>
+                    <p>{L.prefsHint}</p>
+                    <p className="lm-settings-note">{L.repoSyncHint}</p>
+                    <div className="lm-settings-stat">
+                      ★ {L.favSaved}: {userPrefs?.favoriteChannelIds.length ?? 0} TV ·{" "}
+                      {userPrefs?.favoriteRadioIds.length ?? 0} {L.radio}
+                      <br />
+                      ✕ {L.blacklisted}: {userPrefs?.blacklistChannelIds.length ?? 0} TV ·{" "}
+                      {userPrefs?.blacklistRadioIds.length ?? 0} {L.radio}
+                    </div>
+                    <div className="lm-settings-actions">
+                      <button
+                        type="button"
+                        className="lm-panel-btn"
+                        onClick={() => {
+                          void exportLiveMediaUserPrefs().then((json) => {
+                            void navigator.clipboard.writeText(json);
+                          });
+                        }}
+                      >
+                        {L.exportPrefs}
+                      </button>
+                      <label className="lm-panel-btn">
+                        {L.importPrefs}
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          hidden
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            void file.text().then((raw) => importLiveMediaUserPrefs(raw)).then(() => refreshLibrary());
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      <button type="button" className="lm-panel-btn lm-panel-btn--primary" onClick={() => setSettingsOpen(true)}>
+                        📺 {L.liveControl}
+                      </button>
+                    </div>
+                  </section>
+                  {(userPrefs?.blacklistChannelIds.length ?? 0) + (userPrefs?.blacklistRadioIds.length ?? 0) > 0 ? (
+                    <section>
+                      <h3>{L.blacklisted}</h3>
+                      <ul className="lm-blacklist-list">
+                        {(userPrefs?.blacklistChannelIds ?? []).slice(0, 40).map((id) => (
+                          <li key={`tv-${id}`}>
+                            <span>TV · {id.slice(0, 12)}…</span>
+                            <button type="button" onClick={() => void restoreHiddenChannel(id).then(() => refreshLibrary())}>
+                              {L.restore}
+                            </button>
+                          </li>
+                        ))}
+                        {(userPrefs?.blacklistRadioIds ?? []).slice(0, 20).map((id) => (
+                          <li key={`rd-${id}`}>
+                            <span>{L.radio} · {id.slice(0, 12)}…</span>
+                            <button type="button" onClick={() => void restoreHiddenRadio(id).then(() => refreshLibrary())}>
+                              {L.restore}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-          )
-        ) : null}
-
-        {view === "settings" && !loading ? (
-          <div className="lm-settings">
-            <section>
-              <h3>{L.prefsTitle}</h3>
-              <p>{L.prefsHint}</p>
-              <p className="lm-settings-note">{L.repoSyncHint}</p>
-              <div className="lm-settings-stat">
-                ★ {L.favSaved}: {userPrefs?.favoriteChannelIds.length ?? 0} TV ·{" "}
-                {userPrefs?.favoriteRadioIds.length ?? 0} {L.radio}
-                <br />
-                ✕ {L.blacklisted}: {userPrefs?.blacklistChannelIds.length ?? 0} TV ·{" "}
-                {userPrefs?.blacklistRadioIds.length ?? 0} {L.radio}
-              </div>
-              <div className="lm-settings-actions">
-                <button
-                  type="button"
-                  className="lm-panel-btn"
-                  onClick={() => {
-                    void exportLiveMediaUserPrefs().then((json) => {
-                      void navigator.clipboard.writeText(json);
-                    });
-                  }}
-                >
-                  {L.exportPrefs}
-                </button>
-                <label className="lm-panel-btn">
-                  {L.importPrefs}
-                  <input
-                    type="file"
-                    accept="application/json,.json"
-                    hidden
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      void file.text().then((raw) => importLiveMediaUserPrefs(raw)).then(() => refreshLibrary());
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-                <button type="button" className="lm-panel-btn lm-panel-btn--primary" onClick={() => setSettingsOpen(true)}>
-                  📺 {L.liveControl}
-                </button>
-              </div>
-            </section>
-            {(userPrefs?.blacklistChannelIds.length ?? 0) + (userPrefs?.blacklistRadioIds.length ?? 0) > 0 ? (
-              <section>
-                <h3>{L.blacklisted}</h3>
-                <ul className="lm-blacklist-list">
-                  {(userPrefs?.blacklistChannelIds ?? []).slice(0, 40).map((id) => (
-                    <li key={`tv-${id}`}>
-                      <span>TV · {id.slice(0, 12)}…</span>
-                      <button type="button" onClick={() => void restoreHiddenChannel(id).then(() => refreshLibrary())}>
-                        {L.restore}
-                      </button>
-                    </li>
-                  ))}
-                  {(userPrefs?.blacklistRadioIds ?? []).slice(0, 20).map((id) => (
-                    <li key={`rd-${id}`}>
-                      <span>{L.radio} · {id.slice(0, 12)}…</span>
-                      <button type="button" onClick={() => void restoreHiddenRadio(id).then(() => refreshLibrary())}>
-                        {L.restore}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
           </div>
-        ) : null}
-      </div>
+        </>
+      )}
 
       <LiveMediaControlPanel uiLang={uiLang} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

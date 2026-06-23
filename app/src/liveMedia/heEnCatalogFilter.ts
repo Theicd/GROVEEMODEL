@@ -31,6 +31,9 @@ const RELIGIOUS_CLUTTER =
 const FOREIGN_LATIN_HINT =
   /\b(french|german|deutsch|italian|turkish|türk|russian|ukrainian|polish|czech|slovak|hungarian|romanian|arabic|chinese|japanese|korean|hindi|persian|farsi|vietnamese|thai|indonesian|malay|filipino|tagalog|dutch|nederlands|swedish|norwegian|danish|finnish|greek|bulgarian|serbian|croatian|slovenian|latvian|lithuanian|estonian)\b/i;
 
+/** Pluto TV repackages many feeds — hide the whole brand from browse/search. */
+const PLUTO_TV_NAME_HINT = /\bpluto\s*tv\b/i;
+
 function normCountry(code: string | undefined): string {
   return (code ?? "").trim().toLowerCase();
 }
@@ -86,6 +89,18 @@ function isPortugueseMedia(hay: string, country: string, langs: string[]): boole
   });
 }
 
+export function isPlutoTvChannel(c: Channel): boolean {
+  const hay = channelHay(c);
+  if (PLUTO_TV_NAME_HINT.test(hay)) return true;
+  const stream = (c.stream ?? "").toLowerCase();
+  if (stream.includes("pluto.tv") || stream.includes("pluto.tv/")) return true;
+  const tvgId = (c.tvgId ?? "").toLowerCase();
+  if (tvgId.includes("pluto")) return true;
+  const source = (c.source ?? "").toLowerCase();
+  if (source.includes("pluto")) return true;
+  return false;
+}
+
 export function isNewsMediaChannel(c: Channel): boolean {
   if (c.category === "news") return true;
   const hay = channelHay(c);
@@ -138,6 +153,7 @@ export function radioHasEnglish(r: RadioStation): boolean {
 }
 
 export function channelPassesHeEnCatalog(c: Channel): boolean {
+  if (isPlutoTvChannel(c)) return false;
   if (c.category === "religious") return false;
   if (isNewsMediaChannel(c)) return false;
 

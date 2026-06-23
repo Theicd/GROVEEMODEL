@@ -1,0 +1,146 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { UnifiedSearchHit } from "../searchResults/types";
+import { HlsStreamPlayer } from "../searchResults/HlsStreamPlayer";
+import { CABLE_STREAM_LOAD_MS } from "./cableTunerUtils";
+import { TvStaticOverlay } from "./TvStaticOverlay";
+
+type Props = {
+  hit: UnifiedSearchHit | null;
+  globalSnow: boolean;
+  osdVisible: boolean;
+  channelNum: number;
+  preload?: boolean;
+  single?: boolean;
+  selected?: boolean;
+  audioFocus?: boolean;
+  muted?: boolean;
+  volume?: number;
+  multiView?: boolean;
+  loadTimeoutMs?: number;
+  onSelect?: () => void;
+  onStreamReady?: () => void;
+  onStreamFail?: () => void;
+};
+
+export function CableStreamSlot({
+  hit,
+  globalSnow,
+  osdVisible,
+  channelNum,
+  preload = false,
+  single = false,
+  selected = false,
+  audioFocus = false,
+  muted = true,
+  volume = 1,
+  multiView = false,
+  loadTimeoutMs = CABLE_STREAM_LOAD_MS,
+  onSelect,
+  onStreamReady,
+  onStreamFail,
+}: Props) {
+  const [signalReady, setSignalReady] = useState(false);
+  const failedRef = useRef(false);
+  const src = hit?.mediaPlayUrl || hit?.url || "";
+
+  useEffect(() => {
+    failedRef.current = false;
+    if (!hit || !src) {
+      setSignalReady(false);
+      return;
+    }
+    setSignalReady(false);
+  }, [hit, src]);
+
+  const onStreamReadyInternal = useCallback(() => {
+    setSignalReady(true);
+    onStreamReady?.();
+  }, [onStreamReady]);
+
+  const onStreamFailInternal = useCallback(() => {
+    if (failedRef.current) return;
+    failedRef.current = true;
+    onStreamFail?.();
+  }, [onStreamFail]);
+
+  useEffect(() => {
+    if (!hit || signalReady || globalSnow || failedRef.current) return;
+    const failTimer = window.setTimeout(() => {
+      if (!signalReady) onStreamFailInternal();
+    }, loadTimeoutMs);
+    return () => window.clearTimeout(failTimer);
+  }, [globalSnow, hit, loadTimeoutMs, onStreamFailInternal, signalReady, src]);
+
+  if (!hit) {
+    return (
+      <div className="lm-cable-tile lm-cable-tile--empty">
+        <div className="lm-cable-tile-screen" />
+      </div>
+    );
+  }
+
+  if (preload) {
+    return (
+      <div className="lm-cable-preload-slot" aria-hidden="true">
+        <HlsStreamPlayer
+          key={`${hit.id}-${src}`}
+          src={src}
+          muted
+          controls={false}
+          autoPlay
+          multiView
+          className="lm-cable-preload-video"
+          onCanPlay={onStreamReadyInternal}
+          onStreamFail={onStreamFailInternal}
+        />
+      </div>
+    );
+  }
+
+  const showSnow = globalSnow || !signalReady;
+
+  return (
+    <div
+      className={`lm-cable-tile${single ? " lm-cable-tile--single" : ""}${selected ? " is-selected" : ""}${audioFocus ? " is-audio-focus" : ""}${onSelect ? " is-selectable" : ""}${showSnow ? " is-tuning" : " is-locked"}`}
+      onClick={onSelect}
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect();
+              }
+            }
+          : undefined
+      }
+      role={onSelect ? "button" : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+    >
+      <div className="lm-cable-tile-screen">
+        <HlsStreamPlayer
+          key={`${hit.id}-${src}`}
+          src={src}
+          muted={muted}
+          volume={volume}
+          controls={false}
+          autoPlay
+          multiView={multiView}
+          className="lm-cable-tile-video"
+          onCanPlay={onStreamReadyInternal}
+          onStreamFail={onStreamFailInternal}
+        />
+        <TvStaticOverlay active={showSnow} />
+        {audioFocus && !showSnow ? (
+          <div className="lm-cable-tile-audio" aria-hidden="true">
+            🔊
+          </div>
+        ) : null}
+        {osdVisible && channelNum > 0 ? (
+          <div className="lm-cable-tile-osd">
+            <span className="lm-cable-tile-ch">{String(channelNum).padStart(2, "0")}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

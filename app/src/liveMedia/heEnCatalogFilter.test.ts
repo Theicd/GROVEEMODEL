@@ -4,6 +4,7 @@ import {
   channelHasHebrew,
   channelPassesHeEnCatalog,
   isNewsMediaChannel,
+  isPlutoTvChannel,
   radioPassesHeEnCatalog,
 } from "./heEnCatalogFilter";
 import type { Channel, RadioStation } from "./types";
@@ -76,5 +77,14 @@ describe("heEnCatalogFilter", () => {
     expect(radioPassesHeEnCatalog(baseRadio({ name: "גלגלצ", countrycode: "IL", language: "heb" }))).toBe(true);
     expect(radioPassesHeEnCatalog(baseRadio({ name: "BBC Radio 1", countrycode: "GB", language: "eng" }))).toBe(true);
     expect(radioPassesHeEnCatalog(baseRadio({ name: "Radio France", countrycode: "FR", language: "fra" }))).toBe(false);
+  });
+
+  it("blocks all Pluto TV channels", () => {
+    expect(isPlutoTvChannel(baseChannel({ name: "Pluto TV Comedy" }))).toBe(true);
+    expect(isPlutoTvChannel(baseChannel({ name: "PlutoTV Movies", groupTitle: "US" }))).toBe(true);
+    expect(isPlutoTvChannel(baseChannel({ name: "Comedy Central", tags: ["Pluto TV"] }))).toBe(true);
+    expect(isPlutoTvChannel(baseChannel({ name: "Hidden", stream: "https://service.pluto.tv/live/xyz" }))).toBe(true);
+    expect(channelPassesHeEnCatalog(baseChannel({ name: "Pluto TV Action", language: "eng", country: "us" }))).toBe(false);
+    expect(channelPassesHeEnCatalog(baseChannel({ name: "Movie Sphere", country: "us", category: "movies" }))).toBe(true);
   });
 });

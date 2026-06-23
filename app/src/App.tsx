@@ -2640,8 +2640,15 @@ function App() {
   const showCameraSidePanel =
     cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
   const showCameraInline = cameraMode && !desktopLayout;
-  const rightPanelOpen =
-    showArtifactPanel || showCameraSidePanel || showGamesPanel || showGlobePanel || showSearchResultsPanel || showLiveMediaPanel;
+  const showLiveMediaFullscreen = showLiveMediaPanel && desktopLayout;
+  const sidePanelBesideChat =
+    showArtifactPanel ||
+    showCameraSidePanel ||
+    showGamesPanel ||
+    showGlobePanel ||
+    showSearchResultsPanel ||
+    (showLiveMediaPanel && !desktopLayout);
+  const anySidePanelOpen = sidePanelBesideChat || showLiveMediaFullscreen;
 
   const closeSearchResultsPanel = useCallback(() => {
     setSearchResultsOpen(false);
@@ -5703,7 +5710,7 @@ function App() {
       {phase === "ready" && (
         <div
           id="app-container"
-          className={`app-container app-container--visible ${rightPanelOpen ? "app-container--artifact-open" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
+          className={`app-container app-container--visible ${sidePanelBesideChat ? "app-container--artifact-open" : ""}${showLiveMediaFullscreen ? " app-container--livemedia-full" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
         >
           <div
             className={`sb-overlay ${sidebarOpen ? "active" : ""}`}
@@ -5968,9 +5975,9 @@ function App() {
             )}
           </aside>
 
-          {rightPanelOpen ? (
+          {anySidePanelOpen ? (
             <aside
-              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}${showLiveMediaPanel ? " side-panel--livemedia" : ""}`}
+              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}${showLiveMediaPanel ? " side-panel--livemedia" : ""}${showLiveMediaFullscreen ? " side-panel--livemedia-full" : ""}`}
               aria-label={
                 showLiveMediaPanel
                   ? "TV LIVE / רדיו"
@@ -5986,7 +5993,7 @@ function App() {
               }
             >
               {showLiveMediaPanel ? (
-                <LiveMediaPanel uiLang="he" onClose={closeLiveMediaPanel} />
+                <LiveMediaPanel uiLang="he" onClose={closeLiveMediaPanel} layout={desktopLayout ? "full" : "side"} />
               ) : showSearchResultsPanel && searchResultsPayload ? (
                 <SearchResultsPanel
                   payload={searchResultsPayload}
@@ -6048,7 +6055,10 @@ function App() {
             </aside>
           ) : null}
 
-          <section className={`chat-area ${showLanding ? "chat-area--landing" : ""}`}>
+          <section
+            className={`chat-area ${showLanding ? "chat-area--landing" : ""}${showLiveMediaFullscreen ? " chat-area--hidden-livemedia" : ""}`}
+            aria-hidden={showLiveMediaFullscreen}
+          >
             <header className="chat-header">
               {!cameraMode ? (
                 <ChatModelPicker

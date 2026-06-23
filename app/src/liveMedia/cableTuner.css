@@ -1,0 +1,639 @@
+.lm-cable {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #000;
+}
+
+.lm-cable--fullscreen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.lm-cable-loading,
+.lm-cable-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #8fa8c4;
+  text-align: center;
+  padding: 24px;
+  height: 100%;
+  background: #000;
+}
+
+.lm-cable-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  gap: 2px;
+  background: #000;
+}
+
+.lm-cable-grid--4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+}
+
+.lm-cable-grid .lm-cable-tile {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.lm-cable-grid .lm-cable-tile-screen {
+  position: absolute;
+  inset: 0;
+}
+
+.lm-cable-single {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.lm-cable-tile--single {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.lm-cable-tile--single .lm-cable-tile-screen {
+  height: 100%;
+}
+
+.lm-cable-osd-quad {
+  font-size: 0.72rem;
+  color: #ff8a9a;
+  border: 1px solid rgba(255, 77, 94, 0.35);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.lm-cable-tile {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.lm-cable-tile--empty .lm-cable-tile-screen {
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.lm-cable-tile-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+.lm-cable-tile-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+  pointer-events: none;
+}
+
+.lm-cable-tile.is-tuning .lm-cable-tile-video {
+  opacity: 0;
+}
+
+.lm-cable-tile.is-locked .lm-cable-tile-video {
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+.lm-cable-tile-osd {
+  position: absolute;
+  bottom: 8px;
+  inset-inline-end: 10px;
+  z-index: 4;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+}
+
+.lm-cable-tile-ch {
+  font-family: "Orbitron", monospace;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ff4d5e;
+}
+
+.lm-static-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 1;
+}
+
+.lm-cable-tile.is-selectable {
+  cursor: pointer;
+}
+
+.lm-cable-tile.is-selected {
+  outline: 2px solid #ff4d5e;
+  outline-offset: -2px;
+  z-index: 2;
+}
+
+.lm-cable-tile.is-audio-focus {
+  box-shadow: inset 0 0 0 2px rgba(74, 222, 128, 0.85);
+}
+
+.lm-cable-tile-audio {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+  font-size: 0.9rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.lm-cable-tile.is-selectable:focus-visible {
+  outline: 2px solid #ff4d5e;
+  outline-offset: -2px;
+}
+
+.lm-cable-top-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: auto;
+  z-index: 22;
+  padding: 14px 16px;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.lm-cable-top-bar.is-hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+}
+
+.lm-cable-top-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 77, 94, 0.4);
+  border-radius: 999px;
+  background: rgba(24, 10, 14, 0.82);
+  color: #ff9aaa;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 8px 14px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+
+.lm-cable-top-btn:hover:not(:disabled) {
+  background: rgba(48, 16, 22, 0.92);
+  border-color: rgba(255, 77, 94, 0.65);
+  color: #ffc8cf;
+}
+
+.lm-cable-top-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.lm-cable-top-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 77, 94, 0.2);
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.lm-cable-top-btn-label {
+  white-space: nowrap;
+}
+
+.lm-cable-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.lm-cable-confirm {
+  width: min(100%, 420px);
+  border: 1px solid rgba(255, 77, 94, 0.35);
+  border-radius: 16px;
+  padding: 22px 22px 18px;
+  background: linear-gradient(165deg, rgba(32, 18, 24, 0.98) 0%, rgba(12, 14, 22, 0.98) 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.lm-cable-confirm-kicker {
+  margin: 0 0 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ff8a9a;
+}
+
+.lm-cable-confirm-title {
+  margin: 0 0 10px;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #fff;
+}
+
+.lm-cable-confirm-channel {
+  margin: 0 0 12px;
+  font-family: "Orbitron", "Rajdhani", sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #ffd4dc;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.lm-cable-confirm-body {
+  margin: 0 0 18px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: #a8b8cc;
+}
+
+.lm-cable-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.lm-cable-confirm-btn {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.lm-cable-confirm-btn--ghost {
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8e4f4;
+}
+
+.lm-cable-confirm-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.lm-cable-confirm-btn--danger {
+  border-color: rgba(255, 77, 94, 0.55);
+  background: linear-gradient(180deg, #c42d42 0%, #8f1f30 100%);
+  color: #fff;
+}
+
+.lm-cable-confirm-btn--danger:hover {
+  filter: brightness(1.08);
+}
+
+.lm-cable-osd {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px 20px;
+  padding: 18px 16px max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.55) 30%, rgba(0, 0, 0, 0.94) 100%);
+  transition: opacity 0.45s ease, transform 0.45s ease;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.lm-cable-osd.is-hidden {
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+}
+
+.lm-cable-osd-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  grid-column: 1;
+}
+
+.lm-cable-osd-center {
+  grid-column: 2;
+  min-width: 0;
+  text-align: center;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.lm-cable-osd-inline-meta {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #ffc8cf;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.lm-cable-osd-right {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.lm-cable-osd-channel {
+  margin: 0;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+  font-family: "Orbitron", "Rajdhani", "Segoe UI", sans-serif;
+  font-size: clamp(0.9rem, 2vw, 1.2rem);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 0 0 18px rgba(255, 77, 94, 0.35), 0 2px 6px rgba(0, 0, 0, 0.8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lm-cable-osd-channel--quad {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 8px 12px;
+  font-size: clamp(0.72rem, 1.4vw, 0.92rem);
+  text-shadow: none;
+}
+
+.lm-cable-osd-channel-part {
+  opacity: 0.65;
+  border-bottom: 2px solid transparent;
+  padding-bottom: 1px;
+  max-width: 24%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #d8e4f4;
+}
+
+.lm-cable-osd-channel-part.is-active {
+  opacity: 1;
+  color: #fff;
+  border-bottom-color: #ff4d5e;
+}
+
+.lm-cable-osd-clock {
+  font-family: "Orbitron", "Rajdhani", monospace;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.lm-cable-osd-date {
+  font-size: 0.72rem;
+  color: #b8c8dc;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.lm-cable-osd-weather {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #a8e6ff;
+  white-space: nowrap;
+}
+
+.lm-cable-osd-range {
+  font-weight: 600;
+  color: #ffc8cf;
+}
+
+.lm-cable-osd-fav {
+  color: #9eb4cc;
+}
+
+.lm-cable-osd-tuning {
+  color: #fbbf24;
+  animation: lm-cable-blink 0.7s step-end infinite;
+}
+
+@keyframes lm-cable-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.lm-cable-osd-btn--icon {
+  min-width: 44px;
+  padding: 10px 12px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.lm-cable-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.lm-cable-volume-mute {
+  flex-shrink: 0;
+}
+
+.lm-cable-volume-slider {
+  width: 92px;
+  height: 4px;
+  accent-color: #ff6b7a;
+  cursor: pointer;
+}
+
+.lm-cable-osd-quad-summary {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-align: center;
+  max-width: 100%;
+}
+
+.lm-cable-osd-quad-audio-hint {
+  font-size: 0.65rem;
+  color: #8fa8c4;
+}
+
+.lm-cable-osd-center--quad {
+  flex-direction: column;
+}
+
+.lm-cable-osd-btn--danger {
+  border-color: rgba(255, 77, 94, 0.45);
+  color: #ff8a9a;
+  background: rgba(40, 12, 18, 0.9);
+}
+
+.lm-cable-osd-btn--danger:hover:not(:disabled) {
+  background: rgba(80, 20, 30, 0.95);
+  border-color: rgba(255, 77, 94, 0.7);
+}
+
+.lm-cable-osd-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(20, 28, 40, 0.9);
+  color: #e8eef8;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 10px 16px;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.lm-cable-osd-btn--remote {
+  min-width: 52px;
+  font-size: 1.1rem;
+  font-weight: 800;
+  padding: 10px 14px;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: linear-gradient(180deg, #3a4658 0%, #1a2230 100%);
+  box-shadow: 0 3px 0 #0a0e14;
+}
+
+.lm-cable-osd-btn--remote:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #0a0e14;
+}
+
+.lm-cable-osd-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.lm-cable-preload-pool {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 320px;
+  height: 180px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.lm-cable-preload-slot {
+  width: 320px;
+  height: 180px;
+}
+
+.lm-cable-preload-video {
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 768px) {
+  .lm-cable-top-bar {
+    padding: 10px 12px;
+  }
+
+  .lm-cable-top-btn-label {
+    display: none;
+  }
+
+  .lm-cable-top-btn {
+    padding: 8px 10px;
+  }
+
+  .lm-cable-confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .lm-cable-confirm-btn {
+    width: 100%;
+  }
+
+  .lm-cable-osd {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 14px 12px max(14px, env(safe-area-inset-bottom));
+  }
+
+  .lm-cable-osd-actions {
+    grid-column: 1;
+    justify-content: center;
+    order: 3;
+  }
+
+  .lm-cable-osd-center {
+    grid-column: 1;
+    order: 1;
+  }
+
+  .lm-cable-osd-right {
+    grid-column: 1;
+    align-items: center;
+    text-align: center;
+    order: 2;
+  }
+
+  .lm-cable-osd-btn {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+}

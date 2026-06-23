@@ -1,7 +1,7 @@
 import { dbGetUserPrefs, dbPutUserPrefs } from "./indexeddb";
 import type { Channel, RadioStation } from "./types";
 import { collectDefaultBlacklistIds } from "./defaultBlacklist";
-import { channelPassesHeEnCatalog, radioPassesHeEnCatalog } from "./heEnCatalogFilter";
+import { channelPassesHeEnCatalog, isPlutoTvChannel, radioPassesHeEnCatalog } from "./heEnCatalogFilter";
 
 export const PREFS_LOCAL_KEY = "grovee-live-media-user-prefs-v1";
 
@@ -140,7 +140,7 @@ export function favoriteRadioSet(prefs: LiveMediaUserPrefs): Set<string> {
   return new Set(prefs.favoriteRadioIds);
 }
 
-export const DEFAULT_BLACKLIST_VERSION = 3;
+export const DEFAULT_BLACKLIST_VERSION = 4;
 
 function resolvedBlacklistVersion(prefs: LiveMediaUserPrefs): number {
   if (prefs.defaultBlacklistVersion != null) return prefs.defaultBlacklistVersion;
@@ -186,6 +186,7 @@ export function visibleChannels(channels: Channel[], prefs: LiveMediaUserPrefs):
   const blocked = blacklistChannelSet(prefs);
   const fav = favoriteChannelSet(prefs);
   return channels.filter((c) => {
+    if (isPlutoTvChannel(c)) return false;
     if (blocked.has(c.id) && !fav.has(c.id)) return false;
     if (!fav.has(c.id) && !channelPassesHeEnCatalog(c)) return false;
     return true;
