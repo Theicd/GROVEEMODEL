@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
-  "updatedAt": 1782186604100,
+  "updatedAt": 1782377666958,
   "channels": [
     {
       "id": "3czxxt",
@@ -27,6 +27,19 @@
       "type": "tv",
       "tags": [
         "Kids"
+      ]
+    },
+    {
+      "id": "tjz5ej",
+      "name": "Action 24 (1080p)",
+      "country": "",
+      "language": "",
+      "category": "movies",
+      "stream": "http://actionlive.siliconweb.com/actionabr/actiontv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Movies"
       ]
     },
     {
@@ -225,6 +238,19 @@
       ]
     },
     {
+      "id": "xtw9fd",
+      "name": "Dry Bar Comedy (720p)",
+      "country": "",
+      "language": "",
+      "category": "comedy",
+      "stream": "https://drybar-drybarcomedy-1-au.samsung.wurl.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Comedy"
+      ]
+    },
+    {
       "id": "w3vuyn",
       "name": "Ebony TV by Lionsgate (1080p)",
       "country": "",
@@ -263,6 +289,45 @@
       "type": "tv",
       "tags": [
         "Comedy"
+      ]
+    },
+    {
+      "id": "73abr1",
+      "name": "FIFA+ United States (720p)",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "https://d2w9q46ikgrcwx.cloudfront.net/v1/master/3722c60a815c199d9c0ef36c5b73da68a62b09d1/cc-of5cbk3sav3w5/v1/sysdata_s_p_a_fifa_7/samsungheadend_us/latest/main/hls/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ]
+    },
+    {
+      "id": "9k4t83",
+      "name": "FTF Sports (720p)",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "https://1657061170.rsc.cdn77.org/HLS/FTF-LINEAR.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ]
+    },
+    {
+      "id": "9v1rmo",
+      "name": "GLORY Kickboxing (720p)",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "https://6f972d29.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/UmFrdXRlblRWLWV1X0dsb3J5S2lja2JveGluZ19ITFM/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
       ]
     },
     {
@@ -500,6 +565,20 @@
       ]
     },
     {
+      "id": "feafa4",
+      "name": "Mr Bean Live Action (1080p)",
+      "country": "",
+      "language": "",
+      "category": "comedy",
+      "stream": "https://amg00627-amg00627c40-rakuten-uk-5725.playouts.now.amagi.tv/playlist/amg00627-banijayfast-mrbeanpopupcc-rakutenuk/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Comedy",
+        "Kids"
+      ]
+    },
+    {
       "id": "v6xq2x",
       "name": "NBC Comedy Vault (1080p)",
       "country": "",
@@ -510,6 +589,19 @@
       "type": "tv",
       "tags": [
         "Comedy"
+      ]
+    },
+    {
+      "id": "8mikn7",
+      "name": "Ninja Kidz (720p)",
+      "country": "",
+      "language": "",
+      "category": "kids",
+      "stream": "https://d3868b4ny0rgdf.cloudfront.net/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Kids"
       ]
     },
     {
@@ -646,6 +738,20 @@
       ]
     },
     {
+      "id": "89rq43",
+      "name": "Red Bull TV (1080p)",
+      "country": "",
+      "language": "",
+      "category": "outdoor",
+      "stream": "https://3ea22335.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/UmFrdXRlblRWLWdiX1JlZEJ1bGxUVl9ITFM/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Outdoor",
+        "Sports"
+      ]
+    },
+    {
       "id": "cfcgz5",
       "name": "Reshet 13 (720p)",
       "country": "",
@@ -659,6 +765,19 @@
       ]
     },
     {
+      "id": "3gcjtp",
+      "name": "Sky Racing 2 (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://636ffd31f0e12.streamlock.net/RacingStream2/RacingStream2/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ]
+    },
+    {
       "id": "6rc0hj",
       "name": "TeenNick [Not 24/7]",
       "country": "",
@@ -669,6 +788,20 @@
       "type": "tv",
       "tags": [
         "Kids"
+      ]
+    },
+    {
+      "id": "kxp315",
+      "name": "The Chat Show Channel (1080p)",
+      "country": "",
+      "language": "",
+      "category": "comedy",
+      "stream": "https://amg00426-littledotstudio-thechatshow-samsungnz-uqmtt.amagi.tv/playlist/amg00426-littledotstudio-thechatshow-samsungnz/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Comedy",
+        "Series"
       ]
     },
     {

@@ -4,7 +4,17 @@ import type { UnifiedSearchHit } from "../searchResults/types";
 import { fetchStartupContext, getStartupContextSync, refreshLocalWeather } from "../startupContext";
 import type { StartupContext } from "../startupContext/types";
 import { CableStreamSlot } from "./CableStreamSlot";
+import { CableRadioHeaderStrip } from "./CableRadioHeaderStrip";
+import { ClassicRadioView } from "./ClassicRadioView";
 import { formatCableOsdDate, formatCableOsdWeather, shortenCableChannelTitle } from "./cableOsdContext";
+import {
+  RADIO_INTERSTITIAL_EVERY,
+  firstRadioCablePage,
+  isRadioCablePage,
+  maxCablePageIndexTvRadio,
+  nextCablePageWithRadio,
+  radioCablePageIndex,
+} from "./cableTunerRadio";
 import {
   CABLE_STREAM_LOAD_MS,
   CABLE_WARM_SWITCH_MS,
@@ -15,8 +25,6 @@ import {
   initialQuadSlots,
   initialRotationCursor,
   isQuadPage,
-  maxCablePageIndex,
-  nextCablePageIndex,
   nextFavoriteIndex,
   nextWorkingFavoriteIndex,
   pageIndexForFavorite,
@@ -45,6 +53,8 @@ function readStoredVolume(): number {
 
 type Props = {
   favorites: UnifiedSearchHit[];
+  /** Regional radio lineup (geo + favorites) — interstitials + classic radio pages. */
+  regionalRadio?: UnifiedSearchHit[];
   uiLang: ChatUiLanguage;
   loading: boolean;
   onOpenBrowse: () => void;
@@ -68,7 +78,15 @@ function formatClock(date: Date, rtl: boolean, timezone?: string): string {
   }
 }
 
-export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRemoveFavorite, onBack }: Props) {
+export function CableTunerView({
+  favorites,
+  regionalRadio = [],
+  uiLang,
+  loading,
+  onOpenBrowse,
+  onRemoveFavorite,
+  onBack,
+}: Props) {
   const rtl = uiLang === "he";
   const [pageIndex, setPageIndex] = useState(0);
   const [quadSlots, setQuadSlots] = useState<number[]>(() => initialQuadSlots(favorites.length));
@@ -123,6 +141,8 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
           backQuad: "מסך מפוצל",
           back: "חזרה",
           more: "אפשרויות ערוץ",
+          radioBand: "רדיו",
+          openRadio: "פתח רדיו",
         }
       : {
           noFavs: "No favorites — open search and star ☆ working channels.",
@@ -145,13 +165,24 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
           backQuad: "Split screen",
           back: "Back",
           more: "Channel options",
+          radioBand: "Radio",
+          openRadio: "Open radio",
         };
 
   const total = favorites.length;
-  const showQuad = isQuadPage(pageIndex);
+  const radioTotal = regionalRadio.length;
+  const showQuad = isQuadPage(pageIndex) && !isRadioCablePage(pageIndex, total);
+  const showRadioPage = isRadioCablePage(pageIndex, total);
+  const radioIndex = showRadioPage ? radioCablePageIndex(pageIndex, total) : -1;
+  const radioHit = showRadioPage ? (regionalRadio[radioIndex] ?? null) : null;
+  const [headerRadioIdx, setHeaderRadioIdx] = useState(0);
+  const [headerRadioAnim, setHeaderRadioAnim] = useState<"in" | "out">("in");
+  const [headerRadioAudio, setHeaderRadioAudio] = useState(false);
+  const headerRadioTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const radioRotateRef = useRef(0);
   const quadTiles = useMemo(() => pickCableQuadFromSlots(favorites, quadSlots), [favorites, quadSlots]);
   const singleHit = useMemo(() => favoriteForPage(favorites, pageIndex), [favorites, pageIndex]);
-  const focusHit = showQuad ? quadTiles[selectedQuadSlot] ?? null : singleHit;
+  const focusHit = showRadioPage ? radioHit : showQuad ? (quadTiles[selectedQuadSlot] ?? null) : singleHit;
 
   const preloadHit = useMemo(() => {
     if (showQuad || total < 2) return null;
@@ -172,20 +203,44 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
     });
   }, []);
 
-  const range = cableOsdRangeLabel(pageIndex, total, showQuad ? quadSlots : undefined);
-  const rangeLabel = range ? L.range(range.from, range.to) : "";
+  const range = showRadioPage
+    ? { from: radioIndex + 1, to: radioIndex + 1 }
+    : cableOsdRangeLabel(pageIndex, total, showQuad ? quadSlots : undefined);
+  const rangeLabel = showRadioPage
+    ? `${L.radioBand} ${radioIndex + 1}${radioTotal > 1 ? `/${radioTotal}` : ""}`
+    : range
+      ? L.range(range.from, range.to)
+      : "";
+  const regionLabel = localCtx?.cityName ?? localCtx?.countryName ?? localCtx?.countryCode?.toUpperCase() ?? "—";
   const dateLabel = formatCableOsdDate(now, uiLang, localCtx?.timezone);
   const weatherLabel = formatCableOsdWeather(localCtx);
   const clock = formatClock(now, rtl, localCtx?.timezone);
   const centerTitle = focusHit ? shortenCableChannelTitle(focusHit.title) : "";
 
+  const bumpHeaderRadio = useCallback(
+    (nextIdx: number) => {
+      if (regionalRadio.length < 1) return;
+      const idx = ((nextIdx % regionalRadio.length) + regionalRadio.length) % regionalRadio.length;
+      if (headerRadioTimer.current) clearTimeout(headerRadioTimer.current);
+      setHeaderRadioAnim("out");
+      headerRadioTimer.current = setTimeout(() => {
+        setHeaderRadioIdx(idx);
+        setHeaderRadioAnim("in");
+        setHeaderRadioAudio(false);
+        headerRadioTimer.current = null;
+      }, 340);
+    },
+    [regionalRadio.length],
+  );
+
   const pokeOsd = useCallback(() => {
     setOsdVisible(true);
     if (osdTimer.current) clearTimeout(osdTimer.current);
+    if (showRadioPage) return;
     if (!confirmRemoveOpen && !channelMenuOpen) {
       osdTimer.current = setTimeout(() => setOsdVisible(false), OSD_HIDE_MS);
     }
-  }, [channelMenuOpen, confirmRemoveOpen]);
+  }, [channelMenuOpen, confirmRemoveOpen, showRadioPage]);
 
   const closeConfirmRemove = useCallback(() => {
     setConfirmRemoveOpen(false);
@@ -241,15 +296,27 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
 
   const goToPage = useCallback(
     (targetPage: number, opts?: { tuneMs?: number }) => {
-      if (total < 1 || globalSnow) return;
+      const maxPage = maxCablePageIndexTvRadio(total, radioTotal);
+      if (maxPage < 1 && total < 1) return;
+      if (globalSnow) return;
       if (targetPage === pageIndex) return;
       clearTuneTimer();
       pokeOsd();
 
-      const targetFav = isQuadPage(targetPage) ? -1 : singleFavoriteIndex(targetPage);
+      const onRadioTarget = isRadioCablePage(targetPage, total);
+      const onRadioSource = isRadioCablePage(pageIndex, total);
+      if (onRadioSource && onRadioTarget) {
+        setPageIndex(targetPage);
+        setAudioUnlocked(true);
+        return;
+      }
+
+      const targetFav =
+        isQuadPage(targetPage) || onRadioTarget ? -1 : singleFavoriteIndex(targetPage);
       const warmHit =
         opts?.tuneMs == null &&
         !isQuadPage(targetPage) &&
+        !onRadioTarget &&
         preloadReady &&
         targetFav >= 0 &&
         preloadFavIdx === targetFav;
@@ -263,7 +330,16 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
         if (warmHit) setPreloadReady(false);
       }, tuneMs);
     },
-    [clearTuneTimer, globalSnow, pageIndex, pokeOsd, preloadFavIdx, preloadReady, total],
+    [clearTuneTimer, globalSnow, pageIndex, pokeOsd, preloadFavIdx, preloadReady, radioTotal, total],
+  );
+
+  const goToRadioFull = useCallback(
+    (radioIdx: number) => {
+      if (radioTotal < 1) return;
+      const idx = ((radioIdx % radioTotal) + radioTotal) % radioTotal;
+      goToPage(firstRadioCablePage(total) + idx, { tuneMs: CABLE_WARM_SWITCH_MS });
+    },
+    [goToPage, radioTotal, total],
   );
 
   const jumpToFavoriteFromQuad = useCallback(
@@ -280,8 +356,38 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
 
   const changePage = useCallback(
     (delta: 1 | -1) => {
-      if (total < 1 || globalSnow) return;
-      if (total <= 1) return;
+      if (globalSnow) return;
+      const maxPage = maxCablePageIndexTvRadio(total, radioTotal);
+      if (maxPage < 1) return;
+
+      if (isRadioCablePage(pageIndex, total)) {
+        if (radioTotal <= 1) return;
+        const first = firstRadioCablePage(total);
+        const last = first + radioTotal - 1;
+        let next = pageIndex + delta;
+        if (next > last) next = first;
+        if (next < first) next = last;
+        goToPage(next);
+        return;
+      }
+
+      if (radioTotal > 0) {
+        if (delta === 1 && pageIndex === total) {
+          goToPage(firstRadioCablePage(total));
+          return;
+        }
+        if (delta === -1 && pageIndex === 0) {
+          goToPage(maxPage);
+          return;
+        }
+      }
+
+      if (total < 2) {
+        if (radioTotal > 0) {
+          goToPage(nextCablePageWithRadio(pageIndex, delta, total, radioTotal));
+        }
+        return;
+      }
 
       let targetPage: number;
       if (isQuadPage(pageIndex)) {
@@ -292,7 +398,7 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
         if (delta === -1 && curFav === 0) {
           targetPage = 0;
         } else if (delta === 1 && pageIndex === total) {
-          targetPage = 0;
+          targetPage = radioTotal > 0 ? firstRadioCablePage(total) : 0;
         } else {
           const targetFav = nextWorkingFavoriteIndex(curFav, delta, total, deadFavorites);
           targetPage = pageIndexForFavorite(targetFav);
@@ -301,7 +407,7 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
 
       goToPage(targetPage);
     },
-    [deadFavorites, globalSnow, goToPage, pageIndex, total],
+    [deadFavorites, globalSnow, goToPage, pageIndex, radioTotal, total],
   );
 
   const toggleFullscreen = useCallback(async () => {
@@ -349,7 +455,7 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
         quadStateRef.current = { slots, cursor };
         setQuadSlots(slots);
         setRotationCursor(cursor);
-        setPageIndex(Math.min(saved.pageIndex, maxCablePageIndex(total)));
+        setPageIndex(Math.min(saved.pageIndex, maxCablePageIndexTvRadio(total, radioTotal)));
         setSelectedQuadSlot(saved.selectedQuadSlot);
         rotationSlotRef.current = 0;
         return;
@@ -363,10 +469,10 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
       setSelectedQuadSlot(0);
       return;
     }
-    setPageIndex((p) => Math.min(p, maxCablePageIndex(total)));
+    setPageIndex((p) => Math.min(p, maxCablePageIndexTvRadio(total, radioTotal)));
     setQuadSlots((slots) => slots.map((i) => i % total));
     setRotationCursor((c) => c % total);
-  }, [total]);
+  }, [total, radioTotal]);
 
   useEffect(() => {
     if (total <= 0) return;
@@ -399,13 +505,46 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
       quadStateRef.current = advanced;
       setQuadSlots(advanced.slots);
       setRotationCursor(advanced.cursor);
+
+      radioRotateRef.current += 1;
+      if (regionalRadio.length > 0 && radioRotateRef.current % RADIO_INTERSTITIAL_EVERY === 0) {
+        const radioIdx =
+          Math.floor(radioRotateRef.current / RADIO_INTERSTITIAL_EVERY) % regionalRadio.length;
+        bumpHeaderRadio(radioIdx);
+      }
+
       pokeOsd();
     }, QUAD_ROTATE_MS);
     return () => window.clearInterval(id);
-  }, [showQuad, total, pokeOsd]);
+  }, [bumpHeaderRadio, showQuad, total, regionalRadio, pokeOsd]);
 
   useEffect(() => {
-    if (!osdVisible) setQuadActionSlot(null);
+    if (!showQuad || !osdVisible || regionalRadio.length < 2) return;
+    const id = window.setInterval(() => {
+      bumpHeaderRadio(headerRadioIdx + 1);
+    }, 4500);
+    return () => window.clearInterval(id);
+  }, [bumpHeaderRadio, headerRadioIdx, osdVisible, regionalRadio.length, showQuad]);
+
+  useEffect(() => {
+    if (!showQuad) {
+      setHeaderRadioAudio(false);
+      setHeaderRadioAnim("in");
+    }
+  }, [showQuad]);
+
+  useEffect(
+    () => () => {
+      if (headerRadioTimer.current) clearTimeout(headerRadioTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!osdVisible) {
+      setQuadActionSlot(null);
+      setHeaderRadioAudio(false);
+    }
   }, [osdVisible]);
 
   useEffect(() => {
@@ -419,17 +558,23 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
       if (t?.closest(".lm-cable-channel-menu")) return;
       setChannelMenuOpen(false);
       if (osdTimer.current) clearTimeout(osdTimer.current);
-      if (!confirmRemoveOpen) {
+      if (!confirmRemoveOpen && !showRadioPage) {
         osdTimer.current = setTimeout(() => setOsdVisible(false), OSD_HIDE_MS);
       }
     };
     document.addEventListener("click", onDoc);
     return () => document.removeEventListener("click", onDoc);
-  }, [channelMenuOpen]);
+  }, [channelMenuOpen, confirmRemoveOpen, showRadioPage]);
 
   useEffect(() => {
     if (!showQuad) setQuadActionSlot(null);
   }, [showQuad]);
+
+  useEffect(() => {
+    if (!showRadioPage) return;
+    setOsdVisible(true);
+    if (osdTimer.current) clearTimeout(osdTimer.current);
+  }, [showRadioPage]);
 
   useEffect(() => {
     pokeOsd();
@@ -528,12 +673,25 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
       onMouseMove={onPointerActivity}
       onTouchStart={onPointerActivity}
     >
-      {showQuad ? (
+      {showRadioPage && radioHit ? (
+        <div className="lm-cable-single lm-cable-single--radio">
+          <ClassicRadioView
+            hit={radioHit}
+            stationIndex={radioIndex}
+            stationTotal={radioTotal}
+            regionLabel={regionLabel}
+            uiLang={uiLang}
+            muted={slotMuted(true)}
+            volume={volume}
+          />
+        </div>
+      ) : showQuad ? (
         <div className="lm-cable-grid lm-cable-grid--4">
           {Array.from({ length: 4 }, (_, i) => {
             const hit = quadTiles[i] ?? null;
             const audioFocus = selectedQuadSlot === i;
             const chNum = quadSlots[i] != null ? quadSlots[i] + 1 : 0;
+
             return (
               <CableStreamSlot
                 key={`quad-slot-${i}`}
@@ -543,8 +701,8 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
                 channelNum={chNum}
                 channelBadgeTopRight
                 selected={audioFocus}
-                audioFocus={audioFocus && audioUnlocked && !userMuted}
-                muted={slotMuted(audioFocus)}
+                audioFocus={audioFocus && audioUnlocked && !userMuted && !headerRadioAudio}
+                muted={slotMuted(audioFocus && !headerRadioAudio)}
                 volume={volume}
                 multiView
                 loadTimeoutMs={CABLE_STREAM_LOAD_MS}
@@ -556,6 +714,7 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
                 onSelect={() => {
                   setSelectedQuadSlot(i);
                   setAudioUnlocked(true);
+                  setHeaderRadioAudio(false);
                   setQuadActionSlot((prev) => (prev === i ? null : i));
                   pokeOsd();
                 }}
@@ -582,63 +741,86 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
         </div>
       ) : null}
 
-      {onBack || !showQuad ? (
+      {onBack || !showQuad || (showQuad && radioTotal > 0) ? (
         <header
-          className={`lm-cable-header${osdVisible ? "" : " is-hidden"}`}
+          className={`lm-cable-header${osdVisible ? "" : " is-hidden"}${showQuad && radioTotal > 0 ? " lm-cable-header--quad-radio" : ""}`}
           dir={rtl ? "rtl" : "ltr"}
         >
-          <div className="lm-cable-header-inner">
-            {onBack ? (
-              <button
-                type="button"
-                className="lm-cable-osd-btn lm-cable-osd-btn--back"
-                onClick={onBack}
-                aria-label={L.back}
-                title={L.back}
-              >
-                <span className="lm-cable-osd-btn-glyph" aria-hidden="true">
-                  {rtl ? "→" : "←"}
-                </span>
-                <span>{L.back}</span>
-              </button>
-            ) : (
-              <span className="lm-cable-header-slot" aria-hidden="true" />
-            )}
-
-            <div className="lm-cable-channel-menu">
-              <button
-                type="button"
-                className="lm-cable-osd-btn lm-cable-osd-btn--icon lm-cable-osd-btn--menu"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const next = !channelMenuOpen;
-                  setChannelMenuOpen(next);
-                  setOsdVisible(true);
-                  if (osdTimer.current) clearTimeout(osdTimer.current);
-                  if (!confirmRemoveOpen && !next) {
-                    osdTimer.current = setTimeout(() => setOsdVisible(false), OSD_HIDE_MS);
-                  }
+          <div
+            className={`lm-cable-header-inner${showQuad && radioTotal > 0 ? " lm-cable-header-inner--quad-radio" : ""}`}
+          >
+            {showQuad && radioTotal > 0 ? (
+              <CableRadioHeaderStrip
+                stations={regionalRadio}
+                activeIndex={headerRadioIdx}
+                animPhase={headerRadioAnim}
+                uiLang={uiLang}
+                audioFocus={headerRadioAudio && audioUnlocked && !userMuted}
+                muted={slotMuted(headerRadioAudio)}
+                volume={volume}
+                onActivate={() => {
+                  setHeaderRadioAudio(true);
+                  setAudioUnlocked(true);
+                  pokeOsd();
                 }}
-                disabled={!focusHit}
-                aria-label={L.more}
-                aria-expanded={channelMenuOpen}
-                title={L.more}
-              >
-                ⋮
-              </button>
-              {channelMenuOpen && focusHit ? (
-                <div className="lm-cable-channel-menu-pop" role="menu">
+                onOpenFull={(idx) => goToRadioFull(idx)}
+                onSelectIndex={bumpHeaderRadio}
+              />
+            ) : (
+              <>
+                {onBack ? (
                   <button
                     type="button"
-                    className="lm-cable-channel-menu-item lm-cable-channel-menu-item--danger"
-                    role="menuitem"
-                    onClick={openConfirmRemove}
+                    className="lm-cable-osd-btn lm-cable-osd-btn--back"
+                    onClick={onBack}
+                    aria-label={L.back}
+                    title={L.back}
                   >
-                    {L.removeFav}
+                    <span className="lm-cable-osd-btn-glyph" aria-hidden="true">
+                      {rtl ? "→" : "←"}
+                    </span>
+                    <span>{L.back}</span>
                   </button>
+                ) : (
+                  <span className="lm-cable-header-slot" aria-hidden="true" />
+                )}
+
+                <div className="lm-cable-channel-menu">
+                  <button
+                    type="button"
+                    className="lm-cable-osd-btn lm-cable-osd-btn--icon lm-cable-osd-btn--menu"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = !channelMenuOpen;
+                      setChannelMenuOpen(next);
+                      setOsdVisible(true);
+                      if (osdTimer.current) clearTimeout(osdTimer.current);
+                      if (!confirmRemoveOpen && !next) {
+                        osdTimer.current = setTimeout(() => setOsdVisible(false), OSD_HIDE_MS);
+                      }
+                    }}
+                    disabled={!focusHit}
+                    aria-label={L.more}
+                    aria-expanded={channelMenuOpen}
+                    title={L.more}
+                  >
+                    ⋮
+                  </button>
+                  {channelMenuOpen && focusHit ? (
+                    <div className="lm-cable-channel-menu-pop" role="menu">
+                      <button
+                        type="button"
+                        className="lm-cable-channel-menu-item lm-cable-channel-menu-item--danger"
+                        role="menuitem"
+                        onClick={openConfirmRemove}
+                      >
+                        {L.removeFav}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
+              </>
+            )}
           </div>
         </header>
       ) : null}
@@ -674,13 +856,16 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
         </div>
       ) : null}
 
-      <div className={`lm-cable-osd${osdVisible ? "" : " is-hidden"}`} dir="ltr">
+      <div
+        className={`lm-cable-osd${showRadioPage ? " lm-cable-osd--pinned" : osdVisible ? "" : " is-hidden"}`}
+        dir="ltr"
+      >
         <div className="lm-cable-osd-actions">
           <button
             type="button"
             className="lm-cable-osd-btn lm-cable-osd-btn--remote"
             onClick={() => changePage(1)}
-            disabled={globalSnow || total <= 1}
+            disabled={globalSnow || (showRadioPage ? radioTotal <= 1 : total <= 1 && radioTotal === 0)}
             aria-label={L.chUp}
           >
             {L.chUp}
@@ -689,7 +874,7 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
             type="button"
             className="lm-cable-osd-btn lm-cable-osd-btn--remote"
             onClick={() => changePage(-1)}
-            disabled={globalSnow || total <= 1}
+            disabled={globalSnow || (showRadioPage ? radioTotal <= 1 : total <= 1 && radioTotal === 0)}
             aria-label={L.chDown}
           >
             {L.chDown}
@@ -767,7 +952,7 @@ export function CableTunerView({ favorites, uiLang, loading, onOpenBrowse, onRem
         </div>
       </div>
 
-      {!showQuad && preloadHit ? (
+      {!showQuad && !showRadioPage && preloadHit ? (
         <div className="lm-cable-preload-pool" aria-hidden="true">
           <CableStreamSlot
             key={`preload-${preloadHit.id}-${preloadFavIdx}`}

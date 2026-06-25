@@ -1,4 +1,5 @@
 import { fetchJson } from "../webSearch/fetchJson";
+import { filterBlacklistedGames, getBlacklistedIds } from "../localExperience/gamesStore";
 import {
   buildOnlineArchiveQuery,
   buildTitleSearchQuery,
@@ -16,6 +17,9 @@ import type { GameCategoryId, GameSearchResult, OnlineGame, ResolvedGameSearch }
 const ARCHIVE_SEARCH = "https://archive.org/advancedsearch.php";
 const PAGE_ROWS = 80;
 const MAX_ROTATION_PAGES = 40;
+
+/** Default page size for category browse in GamesPanel. */
+export const GAMES_CATALOG_PAGE_SIZE = 20;
 
 type ArchiveDoc = {
   identifier?: string;
@@ -128,6 +132,11 @@ function dedupeGames(games: OnlineGame[]): OnlineGame[] {
 
 function shuffle<T>(arr: T[]): T[] {
   return [...arr].sort(() => Math.random() - 0.5);
+}
+
+async function applyBrowseBlacklist(games: OnlineGame[]): Promise<OnlineGame[]> {
+  const blacklist = await getBlacklistedIds();
+  return filterBlacklistedGames(games, blacklist);
 }
 
 async function fetchArchiveDocs(
@@ -284,6 +293,7 @@ export async function searchFromResolved(
     (a, b) => qualityScore(b, q, years) - qualityScore(a, q, years),
   );
   const picked = sorted.slice(0, limit);
+  const isExplicitSearch = q.length > 0 && !resolved.browseMode;
 
   if (q && !resolved.browseMode) {
     const matched = picked.filter((g) => scoreTextMatch(g, q) >= 30);
@@ -305,12 +315,14 @@ export async function searchFromResolved(
     };
   }
 
+  const visible = isExplicitSearch ? picked : await applyBrowseBlacklist(picked);
+
   return {
-    games: picked,
+    games: visible,
     query: q,
     category: cat,
     latencyMs: Math.round(performance.now() - started),
-    matchFound: picked.length > 0,
+    matchFound: visible.length > 0,
   };
 }
 
@@ -325,13 +337,61 @@ export async function randomOnlineGames(
   const curated = curatedForCategory(eff);
   const merged = mergeCurated(shuffle(pool), shuffle(curated), Math.max(n * 3, 24));
   const picked = shuffle(merged).slice(0, n);
+  const fallback = picked.length ? picked : shuffle(curated).slice(0, n);
+  const visible = await applyBrowseBlacklist(fallback);
 
   return {
-    games: picked.length ? picked : shuffle(curated).slice(0, n),
+    games: visible,
     query: "",
     category: eff,
     latencyMs: Math.round(performance.now() - started),
-    matchFound: (picked.length ? picked : shuffle(curated).slice(0, n)).length > 0,
+    matchFound: visible.length > 0,
+  };
+}
+
+/** Fetch the next batch for category browse, skipping games already shown. */
+export async function loadMoreOnlineGames(
+  n: number,
+  category: GameCategoryId,
+  excludeIds: string[],
+): Promise<GameSearchResult> {
+  const started = performance.now();
+  const eff = effectiveCategory(category);
+  const poolQ = buildOnlineArchiveQuery({ category: eff });
+  const blacklist = await getBlacklistedIds();
+  const exclude = new Set([
+    ...excludeIds.map((id) => id.toLowerCase()),
+    ...[...blacklist].map((id) => id.toLowerCase()),
+  ]);
+  const picked: OnlineGame[] = [];
+  let attempts = 0;
+
+  while (picked.length < n && attempts < 5) {
+    attempts += 1;
+    const probe = await fetchArchiveDocs(poolQ, PAGE_ROWS, 1);
+    const totalPages = Math.max(
+      1,
+      Math.min(MAX_ROTATION_PAGES, Math.ceil(probe.numFound / PAGE_ROWS)),
+    );
+    const page = pickRandomPage(`loadmore-${eff}`, totalPages);
+    const batch = await fetchArchiveDocs(poolQ, PAGE_ROWS, page);
+    const curated = curatedForCategory(eff);
+    const merged = dedupeGames([...curated, ...batch.games]);
+    for (const g of merged) {
+      const key = g.id.toLowerCase();
+      if (exclude.has(key)) continue;
+      exclude.add(key);
+      picked.push(g);
+      if (picked.length >= n) break;
+    }
+  }
+
+  return {
+    games: picked,
+    query: "",
+    category: eff,
+    latencyMs: Math.round(performance.now() - started),
+    matchFound: picked.length > 0,
   };
 }
 

@@ -108,6 +108,7 @@ export type ChatTurnPreludeDeps = {
   setGlobePanelOpen: (v: boolean) => void;
   setGlobeCommand: (v: GlobeCommand | null) => void;
   setGamesPanelOpen: (v: boolean) => void;
+  setGamesPanelLayout: (v: "side" | "full") => void;
   setGamesPanelGames: (v: OnlineGame[]) => void;
   setGamesPanelTitle: (v: string) => void;
   setGamesPanelCategory: (v: GameCategoryId) => void;
@@ -450,6 +451,7 @@ export async function runTextChatTurnPrelude(
       const panelCategory = gameReq.category ?? "featured";
       const gameResult = await searchOnlineGamesWithFallback(gameReq, 12);
       deps.setGamesPanelCategory(panelCategory);
+      deps.setGamesPanelLayout("side");
       deps.setGamesPanelOpen(true);
       deps.setArtifactOpen(false);
       deps.setGamesEmbedGame(null);
@@ -500,6 +502,7 @@ export async function runTextChatTurnPrelude(
       gameNoResults = true;
       deps.pendingGameCategoryPickerRef.current = true;
       deps.setStreamingGameCategoryPicker(true);
+      deps.setGamesPanelLayout("side");
       deps.setGamesPanelOpen(true);
       deps.setGamesPanelGames([]);
       gameSearchCannedReply = buildGameSearchNotFoundReply(

@@ -28,6 +28,8 @@ import { LiveMediaResultsGrid } from "../searchResults/LiveMediaResultsGrid";
 import { LiveMediaControlPanel, LiveMediaStatusBadge } from "../searchResults/LiveMediaControlPanel";
 import type { UnifiedSearchHit } from "../searchResults/types";
 import { CableTunerView } from "./CableTunerView";
+import { fetchStartupContext, getStartupContextSync } from "../startupContext";
+import { buildRegionalRadioLineup } from "./cableTunerRadio";
 import { channelQualityScore } from "./ranking";
 import "./liveMediaPanel.css";
 
@@ -57,6 +59,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [curatedTvHits, setCuratedTvHits] = useState<UnifiedSearchHit[] | null>(null);
   const [curatedReady, setCuratedReady] = useState(false);
+  const [geoCountry, setGeoCountry] = useState(() => getStartupContextSync()?.countryCode ?? "");
   const rtl = uiLang === "he";
 
   const L =
@@ -159,6 +162,22 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
 
   useEffect(() => {
     let alive = true;
+    void fetchStartupContext().then((ctx) => {
+      if (!alive || !ctx?.countryCode) return;
+      setGeoCountry(ctx.countryCode);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (view !== "radio" || country) return;
+    if (geoCountry) setCountry(geoCountry);
+  }, [view, country, geoCountry]);
+
+  useEffect(() => {
+    let alive = true;
     void fetchCuratedFavoritesFromRepo().then((file) => {
       if (!alive) return;
       const hits = (file?.channels ?? []).map((snap) =>
@@ -223,6 +242,11 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
     if (curatedTvHits && curatedTvHits.length > 0) return curatedTvHits;
     return favoriteTvHits;
   }, [curatedTvHits, favoriteTvHits]);
+
+  const regionalRadio = useMemo(
+    () => buildRegionalRadioLineup(radio, geoCountry || "us"),
+    [radio, geoCountry],
+  );
 
   const favoriteRadioHits = useMemo(() => {
     let list = radio.filter((r) => r.favorite);
@@ -419,6 +443,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
         <div className="lm-panel-body lm-panel-body--watch">
           <CableTunerView
             favorites={tunerFavorites}
+            regionalRadio={regionalRadio}
             uiLang={uiLang}
             loading={!curatedReady && loading}
             onOpenBrowse={() => setView("browse")}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { GameCard } from "./GameCard";
 import type { OnlineGame } from "./gameSearch/types";
-import { getFavoriteIds, toggleFavoriteGame } from "./localExperience/gamesStore";
+import { getBlacklistedIds, getFavoriteIds, toggleBlacklistedGame, toggleFavoriteGame } from "./localExperience/gamesStore";
 
 type Props = {
   games: OnlineGame[];
@@ -12,14 +12,20 @@ type Props = {
 
 export function GameResultsStrip({ games, onPlay, onOpenPanel, onOpenFavorites }: Props) {
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const [blacklistIds, setBlacklistIds] = useState<Set<string>>(new Set());
 
   const refreshFavorites = useCallback(async () => {
     setFavoriteIds(await getFavoriteIds());
   }, []);
 
+  const refreshBlacklist = useCallback(async () => {
+    setBlacklistIds(await getBlacklistedIds());
+  }, []);
+
   useEffect(() => {
     void refreshFavorites();
-  }, [refreshFavorites]);
+    void refreshBlacklist();
+  }, [refreshBlacklist, refreshFavorites]);
 
   const handleToggleFavorite = useCallback(
     async (game: OnlineGame) => {
@@ -29,11 +35,20 @@ export function GameResultsStrip({ games, onPlay, onOpenPanel, onOpenFavorites }
     [refreshFavorites],
   );
 
-  if (!games.length) return null;
+  const handleToggleBlacklist = useCallback(
+    async (game: OnlineGame) => {
+      await toggleBlacklistedGame(game);
+      await refreshBlacklist();
+    },
+    [refreshBlacklist],
+  );
+
+  const visibleGames = games.filter((g) => !blacklistIds.has(g.id));
+  if (!visibleGames.length) return null;
   return (
     <div className="game-results-strip" dir="rtl">
       <div className="game-results-head">
-        <span>🎮 משחקים און־ליין ({games.length})</span>
+        <span>🎮 משחקים און־ליין ({visibleGames.length})</span>
         <div className="game-results-head-actions">
           {onOpenFavorites ? (
             <button type="button" className="game-results-more" onClick={onOpenFavorites}>
@@ -46,7 +61,7 @@ export function GameResultsStrip({ games, onPlay, onOpenPanel, onOpenFavorites }
         </div>
       </div>
       <div className="game-results-grid">
-        {games.slice(0, 4).map((g) => (
+        {visibleGames.slice(0, 4).map((g) => (
           <GameCard
             key={g.id}
             game={g}
@@ -54,6 +69,8 @@ export function GameResultsStrip({ games, onPlay, onOpenPanel, onOpenFavorites }
             onPlay={onPlay}
             isFavorite={favoriteIds.has(g.id)}
             onToggleFavorite={(game) => void handleToggleFavorite(game)}
+            isBlacklisted={blacklistIds.has(g.id)}
+            onToggleBlacklist={(game) => void handleToggleBlacklist(game)}
           />
         ))}
       </div>

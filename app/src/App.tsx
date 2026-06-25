@@ -335,6 +335,7 @@ import {
   buildGameSearchFoundReply,
   buildGameSearchNotFoundReply,
   categoryLabelHe,
+  GAMES_CATALOG_PAGE_SIZE,
   parseGameUserRequest,
   randomOnlineGames,
   searchOnlineGamesWithFallback,
@@ -1501,6 +1502,7 @@ function App() {
   const [gamesEmbedGame, setGamesEmbedGame] = useState<OnlineGame | null>(null);
   const [gamesPanelCategory, setGamesPanelCategory] = useState<GameCategoryId>("featured");
   const [gamesPanelStartView, setGamesPanelStartView] = useState<"browse" | "recent" | "favorites">("browse");
+  const [gamesPanelLayout, setGamesPanelLayout] = useState<"side" | "full">("side");
   const [streamingGameCategoryPicker, setStreamingGameCategoryPicker] = useState(false);
   const [cameraMode, setCameraMode] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -2640,6 +2642,8 @@ function App() {
   const showArtifactPanel =
     artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
   const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
+  const showGamesFullscreen = showGamesPanel && gamesPanelLayout === "full";
+  const showGamesSidePanel = showGamesPanel && gamesPanelLayout === "side";
   const showGlobePanel = globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
   const showCameraSidePanel =
     cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
@@ -2648,11 +2652,11 @@ function App() {
   const sidePanelBesideChat =
     showArtifactPanel ||
     showCameraSidePanel ||
-    showGamesPanel ||
+    showGamesSidePanel ||
     showGlobePanel ||
     showSearchResultsPanel ||
     (showLiveMediaPanel && !desktopLayout);
-  const anySidePanelOpen = sidePanelBesideChat || showLiveMediaFullscreen;
+  const anySidePanelOpen = sidePanelBesideChat || showLiveMediaFullscreen || showGamesFullscreen;
 
   const closeSearchResultsPanel = useCallback(() => {
     setSearchResultsOpen(false);
@@ -2856,6 +2860,7 @@ function App() {
   }, []);
 
   const handlePlayGame = useCallback((game: OnlineGame) => {
+    setGamesPanelLayout("full");
     setGamesEmbedGame(game);
     setGamesPanelOpen(true);
     setArtifactOpen(false);
@@ -2877,6 +2882,15 @@ function App() {
   const closeGamesPanel = useCallback(() => {
     setGamesPanelOpen(false);
     setGamesEmbedGame(null);
+    setGamesPanelLayout("side");
+  }, []);
+
+  const expandGamesPanelFull = useCallback(() => {
+    setGamesPanelLayout("full");
+  }, []);
+
+  const shrinkGamesPanelSide = useCallback(() => {
+    setGamesPanelLayout("side");
   }, []);
 
   const openGlobePanelFull = useCallback(() => {
@@ -2892,6 +2906,7 @@ function App() {
   }, []);
 
   const openGamesPanelFull = useCallback(async () => {
+    setGamesPanelLayout("full");
     setGamesPanelOpen(true);
     setGlobePanelOpen(false);
     setArtifactOpen(false);
@@ -2908,7 +2923,7 @@ function App() {
         setGamesPanelTitle(`${cached.title} (מקומי)`);
         return;
       }
-      const result = await randomOnlineGames(20, "featured");
+      const result = await randomOnlineGames(GAMES_CATALOG_PAGE_SIZE, "featured");
       setGamesPanelGames(result.games);
       setGamesPanelTitle(categoryLabelHe("featured"));
       void saveGamesSession(result.games, categoryLabelHe("featured"), "featured");
@@ -2918,6 +2933,7 @@ function App() {
   }, []);
 
   const openGamesFavorites = useCallback(() => {
+    setGamesPanelLayout("side");
     setGamesPanelOpen(true);
     setGlobePanelOpen(false);
     setArtifactOpen(false);
@@ -2927,6 +2943,7 @@ function App() {
   }, []);
 
   const handleGameCategoryPick = useCallback(async (cat: GameCategoryId) => {
+    setGamesPanelLayout("side");
     setGamesPanelStartView("browse");
     setGamesPanelCategory(cat);
     setGamesPanelOpen(true);
@@ -4377,6 +4394,7 @@ function App() {
         const panelCategory = gameReq.category ?? "featured";
         const gameResult = await searchOnlineGamesWithFallback(gameReq, 12);
         setGamesPanelCategory(panelCategory);
+        setGamesPanelLayout("side");
         setGamesPanelOpen(true);
         setArtifactOpen(false);
         setGamesEmbedGame(null);
@@ -4427,6 +4445,7 @@ function App() {
         gameNoResults = true;
         pendingGameCategoryPickerRef.current = true;
         setStreamingGameCategoryPicker(true);
+        setGamesPanelLayout("side");
         setGamesPanelOpen(true);
         setGamesPanelGames([]);
         gameSearchCannedReply = buildGameSearchNotFoundReply(
@@ -5022,6 +5041,7 @@ function App() {
           setGlobePanelOpen,
           setGlobeCommand,
           setGamesPanelOpen,
+          setGamesPanelLayout,
           setGamesPanelGames,
           setGamesPanelTitle,
           setGamesPanelCategory,
@@ -5137,6 +5157,7 @@ function App() {
           setGlobePanelOpen,
           setGlobeCommand,
           setGamesPanelOpen,
+          setGamesPanelLayout,
           setGamesPanelGames,
           setGamesPanelTitle,
           setGamesPanelCategory,
@@ -5722,7 +5743,7 @@ function App() {
       {phase === "ready" && (
         <div
           id="app-container"
-          className={`app-container app-container--visible ${sidePanelBesideChat ? "app-container--artifact-open" : ""}${showLiveMediaFullscreen ? " app-container--livemedia-full" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
+          className={`app-container app-container--visible ${sidePanelBesideChat ? "app-container--artifact-open" : ""}${showLiveMediaFullscreen ? " app-container--livemedia-full" : ""}${showGamesFullscreen ? " app-container--games-full" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
         >
           <div
             className={`sb-overlay ${sidebarOpen ? "active" : ""}`}
@@ -5993,7 +6014,7 @@ function App() {
 
           {anySidePanelOpen ? (
             <aside
-              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesPanel ? " side-panel--games" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}${showLiveMediaPanel ? " side-panel--livemedia" : ""}${showLiveMediaFullscreen ? " side-panel--livemedia-full" : ""}`}
+              className={`artifact-panel side-panel open ${showCameraSidePanel ? "side-panel--camera" : ""}${showGamesSidePanel ? " side-panel--games" : ""}${showGamesFullscreen ? " side-panel--games-full" : ""}${showGlobePanel ? " side-panel--globe" : ""}${showSearchResultsPanel ? " side-panel--search" : ""}${showLiveMediaPanel ? " side-panel--livemedia" : ""}${showLiveMediaFullscreen ? " side-panel--livemedia-full" : ""}`}
               aria-label={
                 showLiveMediaPanel
                   ? "TV LIVE / רדיו"
@@ -6041,6 +6062,9 @@ function App() {
                   title={gamesPanelTitle}
                   initialCategory={gamesPanelCategory}
                   startView={gamesPanelStartView}
+                  layout={gamesPanelLayout}
+                  onExpandFull={expandGamesPanelFull}
+                  onShrinkSide={shrinkGamesPanelSide}
                   onClose={closeGamesPanel}
                   onPlay={handlePlayGame}
                   onBackFromEmbed={() => setGamesEmbedGame(null)}
@@ -6072,25 +6096,29 @@ function App() {
           ) : null}
 
           <section
-            className={`chat-area ${showLanding ? "chat-area--landing" : ""}${showLiveMediaFullscreen ? " chat-area--hidden-livemedia" : ""}`}
-            aria-hidden={showLiveMediaFullscreen}
+            className={`chat-area ${showLanding ? "chat-area--landing" : ""}${showLiveMediaFullscreen ? " chat-area--hidden-livemedia" : ""}${showGamesFullscreen ? " chat-area--hidden-games" : ""}`}
+            aria-hidden={showLiveMediaFullscreen || showGamesFullscreen}
           >
             <header className="chat-header">
-              <button
-                type="button"
-                className="chat-header-menu-btn"
-                aria-label="פתח תפריט GroVee"
-                title="פתח תפריט"
-                onClick={() => setSidebarOpen(true)}
-              >
-                <GroveeLogoMark size="sm" />
-              </button>
-              <LocalContextBar
-                context={startupContext}
-                uiLang={uiLang}
-                variant="header"
-                className="chat-header-context-mobile"
-              />
+              {!desktopLayout ? (
+                <>
+                  <button
+                    type="button"
+                    className="chat-header-menu-btn"
+                    aria-label="פתח תפריט GroVee"
+                    title="פתח תפריט"
+                    onClick={() => setSidebarOpen(true)}
+                  >
+                    <GroveeLogoMark size="sm" />
+                  </button>
+                  <LocalContextBar
+                    context={startupContext}
+                    uiLang={uiLang}
+                    variant="header"
+                    className="chat-header-context-mobile"
+                  />
+                </>
+              ) : null}
               <div className="chat-header-primary">
               {!cameraMode ? (
                 <ChatModelPicker
@@ -6115,12 +6143,14 @@ function App() {
               )}
               </div>
               <div className="chat-header-actions">
-                <UiLanguageToggle className="chat-header-lang-desktop" />
-                <LocalContextBar
-                  context={startupContext}
-                  uiLang={uiLang}
-                  className="chat-header-context-desktop"
-                />
+                {desktopLayout ? <UiLanguageToggle className="chat-header-lang-desktop" /> : null}
+                {desktopLayout ? (
+                  <LocalContextBar
+                    context={startupContext}
+                    uiLang={uiLang}
+                    className="chat-header-context-desktop"
+                  />
+                ) : null}
                 {activeArtifact && !artifactOpen ? (
                   <button
                     type="button"

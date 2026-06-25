@@ -11,6 +11,8 @@ export {
   searchOnlineGames,
   searchFromResolved,
   randomOnlineGames,
+  loadMoreOnlineGames,
+  GAMES_CATALOG_PAGE_SIZE,
   searchOnlineGamesWithFallback,
   loadFeaturedFallback,
   archiveIdentifierFromGame,

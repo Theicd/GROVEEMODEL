@@ -1,6 +1,7 @@
 import type { OnlineGame } from "./gameSearch/types";
 
 import { formatPopularityLabel } from "./gameSearch/gameAliases";
+import { gameThumbnailUrl } from "./gameSearch/gameThumbnail";
 
 
 
@@ -10,6 +11,8 @@ type Props = {
   onPlay: (game: OnlineGame) => void;
   isFavorite?: boolean;
   onToggleFavorite?: (game: OnlineGame) => void;
+  isBlacklisted?: boolean;
+  onToggleBlacklist?: (game: OnlineGame) => void;
 };
 
 
@@ -26,15 +29,13 @@ function ratingStars(rating: number | null | undefined): string | null {
 
 
 
-export function GameCard({ game, compact, onPlay, isFavorite, onToggleFavorite }: Props) {
+export function GameCard({ game, compact, onPlay, isFavorite, onToggleFavorite, isBlacklisted, onToggleBlacklist }: Props) {
 
   const stars = ratingStars(game.rating);
-
   const popularity = formatPopularityLabel(game.downloads);
-
   const platformLabel = game.platform || "Browser";
-
   const yearLabel = game.year ? String(game.year) : null;
+  const thumbSrc = gameThumbnailUrl(game);
 
 
 
@@ -67,16 +68,21 @@ export function GameCard({ game, compact, onPlay, isFavorite, onToggleFavorite }
     >
 
       <div className="game-card-thumb-wrap">
-
+        <span
+          className="game-card-thumb-blur"
+          aria-hidden="true"
+          style={{ backgroundImage: `url(${thumbSrc})` }}
+        />
         <img
 
           className="game-card-thumb"
 
-          src={game.thumbnail}
+          src={thumbSrc}
 
           alt=""
 
           loading="lazy"
+          referrerPolicy="no-referrer"
 
           onError={(e) => {
 
@@ -89,6 +95,20 @@ export function GameCard({ game, compact, onPlay, isFavorite, onToggleFavorite }
         <span className="game-card-badge">{platformLabel.toUpperCase()}</span>
 
         {game.curated ? <span className="game-card-curated">TOP</span> : null}
+        {onToggleBlacklist ? (
+          <button
+            type="button"
+            className={`game-card-block${isBlacklisted ? " is-active" : ""}`}
+            aria-label={isBlacklisted ? "הסר מרשימה שחורה" : "הוסף לרשימה שחורה"}
+            title={isBlacklisted ? "הסר מרשימה שחורה" : "הסתר מהצעות וקטגוריות"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleBlacklist(game);
+            }}
+          >
+            {isBlacklisted ? "✕" : "⊘"}
+          </button>
+        ) : null}
         {onToggleFavorite ? (
           <button
             type="button"

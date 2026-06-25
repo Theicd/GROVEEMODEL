@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GameCard } from "./GameCard";
+import { GamesHeroCarousel } from "./GamesHeroCarousel";
 import { GAME_CATEGORIES } from "./gameSearch/archiveQueries";
+import { buildHeroLineup } from "./gameSearch/gameThumbnail";
 import {
+  GAMES_CATALOG_PAGE_SIZE,
+  loadMoreOnlineGames,
   parseGameUserRequest,
   randomOnlineGames,
   searchOnlineGamesWithFallback,
@@ -9,15 +13,24 @@ import {
   type OnlineGame,
 } from "./gameSearch";
 import {
+  filterBlacklistedGames,
+  getBlacklistedIds,
   getFavoriteGames,
   getFavoriteIds,
   getRecentPlayedGames,
   loadGamesSession,
+  toggleBlacklistedGame,
   toggleFavoriteGame,
 } from "./localExperience/gamesStore";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 
 type PanelView = "browse" | "recent" | "favorites";
+
+export type GamesPanelLayout = "side" | "full";
+
+const ARCHIVE_EMBED_WIDTH = 560;
+const ARCHIVE_EMBED_HEIGHT = 384;
+const GAME_EMBED_LAYOUT_DELAY_MS = 360;
 
 type Props = {
   games: OnlineGame[];
@@ -26,6 +39,10 @@ type Props = {
   title?: string;
   initialCategory?: GameCategoryId | null;
   startView?: PanelView;
+  /** side = third column beside chat; full = workspace until sidebar (desktop). */
+  layout?: GamesPanelLayout;
+  onExpandFull?: () => void;
+  onShrinkSide?: () => void;
   onClose: () => void;
   onPlay: (game: OnlineGame) => void;
   onBackFromEmbed: () => void;
@@ -40,6 +57,9 @@ export function GamesPanel({
   title = "משחקים און־ליין",
   initialCategory = null,
   startView = "browse",
+  layout = "side",
+  onExpandFull,
+  onShrinkSide,
   onClose,
   onPlay,
   onBackFromEmbed,
@@ -54,18 +74,68 @@ export function GamesPanel({
   const [panelView, setPanelView] = useState<PanelView>("browse");
   const [storedGames, setStoredGames] = useState<OnlineGame[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const [blacklistIds, setBlacklistIds] = useState<Set<string>>(new Set());
+  const [heroFavorites, setHeroFavorites] = useState<OnlineGame[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [canLoadMore, setCanLoadMore] = useState(true);
+  const embedStageRef = useRef<HTMLDivElement | null>(null);
+  const [embedSrc, setEmbedSrc] = useState<string | null>(null);
+  const [embedScale, setEmbedScale] = useState(1);
 
   const refreshFavorites = useCallback(async () => {
     setFavoriteIds(await getFavoriteIds());
+    setHeroFavorites(await getFavoriteGames());
   }, []);
+
+  const refreshBlacklist = useCallback(async () => {
+    setBlacklistIds(await getBlacklistedIds());
+  }, []);
+
+  useEffect(() => {
+    void refreshFavorites();
+    void refreshBlacklist();
+  }, [refreshBlacklist, refreshFavorites]);
 
   useEffect(() => {
     if (initialCategory) setActiveCategory(initialCategory);
   }, [initialCategory]);
 
   useEffect(() => {
-    void refreshFavorites();
-  }, [refreshFavorites]);
+    if (!embedGame) {
+      setEmbedSrc(null);
+      return;
+    }
+
+    setEmbedSrc(null);
+    const id = window.setTimeout(() => {
+      setEmbedSrc(embedGame.embedUrl);
+    }, layout === "full" ? GAME_EMBED_LAYOUT_DELAY_MS : 0);
+    return () => window.clearTimeout(id);
+  }, [embedGame, layout]);
+
+  useEffect(() => {
+    if (!embedGame) return;
+    const stage = embedStageRef.current;
+    if (!stage) return;
+
+    const updateScale = () => {
+      const rect = stage.getBoundingClientRect();
+      const next = Math.min(
+        rect.width / ARCHIVE_EMBED_WIDTH,
+        rect.height / ARCHIVE_EMBED_HEIGHT,
+      );
+      setEmbedScale(Math.max(0.5, next || 1));
+    };
+
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(stage);
+    window.addEventListener("resize", updateScale);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateScale);
+    };
+  }, [embedGame]);
 
   const loadStoredView = useCallback(async (view: PanelView) => {
     setPanelView(view);
@@ -125,8 +195,9 @@ export function GamesPanel({
         return;
       }
       onLoadingChange(true);
+      setCanLoadMore(true);
       try {
-        const result = await randomOnlineGames(20, cat);
+        const result = await randomOnlineGames(GAMES_CATALOG_PAGE_SIZE, cat);
         onGamesUpdate(result.games, GAME_CATEGORIES.find((c) => c.id === cat)?.labelHe, cat);
       } finally {
         onLoadingChange(false);
@@ -152,13 +223,42 @@ export function GamesPanel({
       return;
     }
     onLoadingChange(true);
+    setCanLoadMore(true);
     try {
-      const result = await randomOnlineGames(20, activeCategory);
+      const result = await randomOnlineGames(GAMES_CATALOG_PAGE_SIZE, activeCategory);
       onGamesUpdate(result.games, GAME_CATEGORIES.find((c) => c.id === activeCategory)?.labelHe, activeCategory);
     } finally {
       onLoadingChange(false);
     }
   }, [activeCategory, loadStoredView, offline, onGamesUpdate, onLoadingChange, panelView]);
+
+  const loadMoreBrowse = useCallback(async () => {
+    if (offline || panelView !== "browse" || loadingMore || !canLoadMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await loadMoreOnlineGames(GAMES_CATALOG_PAGE_SIZE, activeCategory, games.map((g) => g.id));
+      if (!result.games.length) {
+        setCanLoadMore(false);
+        return;
+      }
+      const merged = [...games];
+      const seen = new Set(games.map((g) => g.id.toLowerCase()));
+      for (const g of result.games) {
+        const key = g.id.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(g);
+      }
+      onGamesUpdate(
+        merged,
+        GAME_CATEGORIES.find((c) => c.id === activeCategory)?.labelHe,
+        activeCategory,
+      );
+      if (result.games.length < GAMES_CATALOG_PAGE_SIZE) setCanLoadMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [activeCategory, canLoadMore, games, loadingMore, offline, onGamesUpdate, panelView]);
 
   const handleToggleFavorite = useCallback(
     async (game: OnlineGame) => {
@@ -171,13 +271,80 @@ export function GamesPanel({
     [panelView, refreshFavorites],
   );
 
-  const displayGames =
-    panelView === "browse" ? games : filterStoredGames(storedGames);
+  const handleToggleBlacklist = useCallback(
+    async (game: OnlineGame) => {
+      const nowBlacklisted = await toggleBlacklistedGame(game);
+      await refreshBlacklist();
+      if (nowBlacklisted && panelView === "browse" && !title.startsWith("חיפוש:")) {
+        onGamesUpdate(
+          filterBlacklistedGames(games, new Set([...blacklistIds, game.id])),
+          title,
+          activeCategory,
+        );
+      }
+      if (nowBlacklisted) {
+        setHeroFavorites((prev) => prev.filter((g) => g.id !== game.id));
+      }
+    },
+    [activeCategory, blacklistIds, games, onGamesUpdate, panelView, refreshBlacklist, title],
+  );
+
+  const requestEmbedFullscreen = useCallback(async () => {
+    const stage = embedStageRef.current;
+    if (!stage) return;
+    try {
+      if (!document.fullscreenElement) {
+        await stage.requestFullscreen();
+      }
+    } catch {
+      /* Browser may reject fullscreen outside a direct user gesture. */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!embedGame) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (document.fullscreenElement !== embedStageRef.current) return;
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        event.stopPropagation();
+        void document.exitFullscreen();
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [embedGame]);
+
+  const browseGames =
+    panelView === "browse" && !title.startsWith("חיפוש:")
+      ? filterBlacklistedGames(games, blacklistIds)
+      : games;
+  const displayGames = panelView === "browse" ? browseGames : filterStoredGames(storedGames);
   const displayLoading = panelView === "browse" && loading;
   const favCount = favoriteIds.size;
+  const heroLineup = useMemo(
+    () =>
+      panelView === "browse"
+        ? buildHeroLineup(filterBlacklistedGames(heroFavorites, blacklistIds))
+        : [],
+    [blacklistIds, heroFavorites, panelView],
+  );
+  const activeCategoryMeta = GAME_CATEGORIES.find((c) => c.id === activeCategory);
+  const catalogSectionTitle = activeCategoryMeta ? `${activeCategoryMeta.icon} ${activeCategoryMeta.labelHe}` : title;
+  const showHero = !embedGame && panelView === "browse" && heroLineup.length > 0 && !displayLoading;
+  const isCategoryBrowse = panelView === "browse" && !title.startsWith("חיפוש:");
 
   return (
-    <div className="games-panel-inner">
+    <div className={`games-panel-inner${layout === "full" ? " games-panel-inner--full" : ""}`}>
       <header className="games-panel-head">
         <div className="games-panel-title">
           <span className="games-panel-dot" aria-hidden="true" />
@@ -185,9 +352,22 @@ export function GamesPanel({
         </div>
         <div className="games-panel-head-actions">
           {embedGame ? (
-            <button type="button" className="games-panel-btn" onClick={onBackFromEmbed}>
-              ← רשימה
-            </button>
+            <>
+              <button type="button" className="games-panel-btn" onClick={onBackFromEmbed}>
+                ← רשימה
+              </button>
+              <button
+                type="button"
+                className="games-panel-btn games-panel-btn--expand"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  void requestEmbedFullscreen();
+                }}
+                title="ALT+ENTER בתוך המשחק"
+              >
+                ⛶ מסך מלא
+              </button>
+            </>
           ) : (
             <>
               <button type="button" className="games-panel-btn" onClick={() => void refreshList()}>
@@ -200,6 +380,28 @@ export function GamesPanel({
               >
                 {expandedSearch ? "סגור חיפוש" : "🔍 חיפוש"}
               </button>
+              {layout === "side" && onExpandFull ? (
+                <button
+                  type="button"
+                  className="games-panel-btn games-panel-btn--expand"
+                  onClick={onExpandFull}
+                  title="פתיחה מלאה עד התפריט"
+                  aria-label="פתיחה מלאה"
+                >
+                  ⛶ מלא
+                </button>
+              ) : null}
+              {layout === "full" && onShrinkSide ? (
+                <button
+                  type="button"
+                  className="games-panel-btn games-panel-btn--expand"
+                  onClick={onShrinkSide}
+                  title="חזרה לפאנל לצד הצ'אט"
+                  aria-label="צמצם לפאנל צד"
+                >
+                  ⊟ צד
+                </button>
+              ) : null}
             </>
           )}
           <button type="button" className="games-panel-close" onClick={onClose} aria-label="סגור">
@@ -214,13 +416,34 @@ export function GamesPanel({
 
       {embedGame ? (
         <div className="games-panel-embed-wrap">
-          <iframe
-            className="games-panel-embed"
-            src={embedGame.embedUrl}
-            title={embedGame.title}
-            allowFullScreen
-            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-          />
+          <div ref={embedStageRef} className="games-panel-embed-stage">
+            {embedSrc ? (
+              <div
+                className="games-panel-embed-frame"
+                style={{
+                  width: `${ARCHIVE_EMBED_WIDTH * embedScale}px`,
+                  height: `${ARCHIVE_EMBED_HEIGHT * embedScale}px`,
+                }}
+              >
+                <iframe
+                  key={`${embedGame.id}-${layout}-${embedSrc}`}
+                  className="games-panel-embed"
+                  src={embedSrc}
+                  title={embedGame.title}
+                  allow="fullscreen; autoplay; gamepad"
+                  allowFullScreen
+                  sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-pointer-lock"
+                  style={{
+                    width: ARCHIVE_EMBED_WIDTH,
+                    height: ARCHIVE_EMBED_HEIGHT,
+                    transform: `scale(${embedScale})`,
+                  }}
+                />
+              </div>
+            ) : (
+              <p className="games-panel-embed-loading">מכין את המשחק לגודל מלא…</p>
+            )}
+          </div>
           <a
             className="games-panel-external"
             href={embedGame.playUrl}
@@ -231,7 +454,7 @@ export function GamesPanel({
           </a>
         </div>
       ) : (
-        <>
+        <div className="games-panel-scroll">
           {expandedSearch || panelView !== "browse" ? (
             <div className="games-panel-search-bar">
               <input
@@ -278,24 +501,41 @@ export function GamesPanel({
             </button>
           </div>
 
+          {showHero ? (
+            <GamesHeroCarousel games={heroLineup} favoriteCount={favCount} layout={layout} onPlay={onPlay} />
+          ) : null}
+
           {panelView === "browse" ? (
-            <div className="games-panel-categories" role="tablist">
-              {GAME_CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeCategory === cat.id}
-                  className={`games-panel-cat${activeCategory === cat.id ? " active" : ""}`}
-                  onClick={() => void loadCategory(cat.id)}
+            <section className="games-browse-toolbar" aria-label="עיון לפי קטגוריה">
+              <div className="games-browse-toolbar-head">
+                <h3 className="games-browse-toolbar-title">עיון לפי קטגוריה</h3>
+                <p className="games-browse-toolbar-sub">בחר ז&apos;אנר — הרשימה למטה מתעדכנת</p>
+              </div>
+              <label className="games-category-select-wrap">
+                <span className="games-category-select-label">קטגוריה</span>
+                <select
+                  className="games-category-select"
+                  value={activeCategory}
+                  onChange={(e) => void loadCategory(e.target.value as GameCategoryId)}
+                  aria-label="בחירת קטגוריית משחקים"
                 >
-                  {cat.icon} {cat.labelHe}
-                </button>
-              ))}
-            </div>
+                  {GAME_CATEGORIES.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.icon} {cat.labelHe}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
           ) : null}
 
           <div className="games-panel-body">
+            {panelView === "browse" && !displayLoading && displayGames.length > 0 ? (
+              <header className="games-catalog-section-head">
+                <h3 className="games-catalog-section-title">{catalogSectionTitle}</h3>
+                <span className="games-catalog-section-count">{displayGames.length} משחקים</span>
+              </header>
+            ) : null}
             {displayLoading ? (
               <p className="games-panel-status">טוען משחקים…</p>
             ) : displayGames.length === 0 ? (
@@ -319,12 +559,26 @@ export function GamesPanel({
                     onPlay={onPlay}
                     isFavorite={favoriteIds.has(g.id)}
                     onToggleFavorite={(game) => void handleToggleFavorite(game)}
+                    isBlacklisted={blacklistIds.has(g.id)}
+                    onToggleBlacklist={(game) => void handleToggleBlacklist(game)}
                   />
                 ))}
               </div>
             )}
+            {isCategoryBrowse && !offline && displayGames.length > 0 && canLoadMore ? (
+              <div className="games-panel-load-more-wrap">
+                <button
+                  type="button"
+                  className="games-panel-load-more"
+                  disabled={loadingMore || displayLoading}
+                  onClick={() => void loadMoreBrowse()}
+                >
+                  {loadingMore ? "טוען עוד…" : `טען עוד ${GAMES_CATALOG_PAGE_SIZE} משחקים`}
+                </button>
+              </div>
+            ) : null}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
