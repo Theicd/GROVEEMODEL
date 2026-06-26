@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="refresh" content="0; url=docs/index.html?tv=1" />
+    <title>GroVee — TV LIVE</title>
+    <link rel="icon" href="docs/favicon.ico" sizes="48x48" />
+  </head>
+  <body>
+    <p style="font-family: system-ui; padding: 1rem">
+      מעביר לערוצי טלוויזיה…
+      <a href="docs/index.html?tv=1">לחץ כאן אם לא קורה כלום</a>
+    </p>
+    <script>
+      location.replace(new URL("docs/index.html?tv=1", location.href).href);
+    </script>
+  </body>
+</html>

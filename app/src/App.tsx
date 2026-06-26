@@ -260,7 +260,7 @@ import {
   pickCapabilitiesDefaultRackId,
   type ChatModelAvailability,
 } from "./capabilitiesOnlyMode";
-import { CapabilitiesWelcomeToast } from "./components/CapabilitiesWelcomeToast";
+import { readTvDeepLink } from "./deepLinks";
 import {
   GEMMA_RACK_ID,
   getRackModelById,
@@ -1539,7 +1539,7 @@ function App() {
   const measuredWebContextCharsRef = useRef(0);
   const [gamesPanelOpen, setGamesPanelOpen] = useState(false);
   const [globePanelOpen, setGlobePanelOpen] = useState(false);
-  const [liveMediaPanelOpen, setLiveMediaPanelOpen] = useState(false);
+  const [liveMediaPanelOpen, setLiveMediaPanelOpen] = useState(() => readTvDeepLink());
   const [globeCommand, setGlobeCommand] = useState<GlobeCommand | null>(null);
   const [gamesPanelGames, setGamesPanelGames] = useState<OnlineGame[]>([]);
   const [gamesPanelTitle, setGamesPanelTitle] = useState("משחקים און־ליין");
