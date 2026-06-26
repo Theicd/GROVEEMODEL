@@ -18,8 +18,11 @@ const WIKIDATA_HEADERS = {
   "User-Agent": "GROVEEMODEL/1.0 (browser chat; movie catalog)",
 };
 
-const tmdbApiKey = (): string =>
-  (import.meta.env.VITE_TMDB_API_KEY as string | undefined)?.trim() || "";
+import { getTmdbApiKey } from "../../apiKeys/apiKeyStore";
+import { isProviderEnabled, recordProviderUsage } from "../../apiKeys/apiProviderUsage";
+import { getChatUiLanguage } from "../../ui/useUiLanguage";
+import { tmdbLocaleForUi } from "../../tmdb/tmdbLocale";
+import { localizeMovieHitsForHebrew } from "../../tmdb/tmdbLocalize";
 
 const stripHtml = (html: string): string => html.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
 
@@ -221,10 +224,12 @@ async function searchInternetArchive(query: string): Promise<MovieSerpHit[]> {
 }
 
 async function fetchTmdbFallback(query: string): Promise<MovieSerpHit[]> {
-  const key = tmdbApiKey();
-  if (!key) return [];
+  const key = getTmdbApiKey();
+  if (!key || !isProviderEnabled("tmdb")) return [];
+  const language = tmdbLocaleForUi(getChatUiLanguage());
+  const fallbackLanguage = language === "he-IL" ? "en-US" : null;
   try {
-    const params = new URLSearchParams({ query, language: "he-IL", api_key: key });
+    const params = new URLSearchParams({ query, language, api_key: key });
     const data = await fetchJson<{
       results?: Array<{
         id: number;
@@ -236,21 +241,35 @@ async function fetchTmdbFallback(query: string): Promise<MovieSerpHit[]> {
         vote_average?: number;
       }>;
     }>(`https://api.themoviedb.org/3/search/movie?${params}`, undefined, { timeoutMs: 9000 });
-    return (data.results ?? []).slice(0, 5).map((m) => {
+
+    const enById = new Map<number, { title?: string; overview?: string }>();
+    if (fallbackLanguage) {
+      const enParams = new URLSearchParams({ query, language: fallbackLanguage, api_key: key });
+      const enData = await fetchJson<{
+        results?: Array<{ id: number; title?: string; overview?: string }>;
+      }>(`https://api.themoviedb.org/3/search/movie?${enParams}`, undefined, { timeoutMs: 9000 });
+      for (const m of enData.results ?? []) enById.set(m.id, m);
+    }
+
+    const defaultTitle = language === "he-IL" ? "סרט" : "Movie";
+    const hits = (data.results ?? []).slice(0, 5).map((m) => {
       const year = m.release_date ? Number(m.release_date.slice(0, 4)) : undefined;
-      const title = m.title?.trim() || m.original_title?.trim() || "סרט";
+      const en = enById.get(m.id);
+      const title = m.title?.trim() || en?.title?.trim() || m.original_title?.trim() || defaultTitle;
+      const snippet = (m.overview?.trim() || en?.overview?.trim() || "").slice(0, 480);
       return {
         id: `tmdb-${m.id}`,
         title,
-        originalTitle: m.original_title || m.title,
+        originalTitle: m.original_title || en?.title || m.title,
         year: Number.isFinite(year) ? year : undefined,
         url: `https://www.themoviedb.org/movie/${m.id}`,
-        snippet: (m.overview?.trim() || "").slice(0, 480),
+        snippet,
         poster: m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : undefined,
         source: "TMDB",
         rating: m.vote_average,
       };
     });
+    return language === "he-IL" ? localizeMovieHitsForHebrew(hits) : hits;
   } catch {
     return [];
   }

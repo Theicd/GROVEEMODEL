@@ -13,6 +13,7 @@ import { hfScannerProxyPlugin } from "./vite/hfScannerProxyPlugin";
 import { translateProxyPlugin } from "./vite/translateProxyPlugin";
 import { liveMediaFavoritesSyncPlugin } from "./vite-plugins/liveMediaFavoritesSync";
 import { gameFavoritesSyncPlugin } from "./vite-plugins/gameFavoritesSync";
+import { mjhEpgProxyPlugin } from "./vite-plugins/mjhEpgProxy";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoName = path.basename(__dirname);
@@ -52,6 +53,7 @@ export default defineConfig({
     translateProxyPlugin(),
     liveMediaFavoritesSyncPlugin(),
     gameFavoritesSyncPlugin(),
+    mjhEpgProxyPlugin(),
     {
       name: "grovee-dev-banner",
       configureServer(server) {

@@ -34,6 +34,20 @@ import {
   targetFavoriteAfterStep,
 } from "./cableTunerUtils";
 import { loadCableTunerSession, saveCableTunerSession } from "./cableTunerSession";
+import { CableEpgPanel } from "./CableEpgPanel";
+import { useEpgGuide } from "./epg/useEpgGuide";
+import { warmMjhEpgCaches } from "./epg/epgService";
+import { useStreamCueSync } from "./epg/useStreamCueSync";
+import { useTmdbProgramMeta } from "./epg/useTmdbProgramMeta";
+import { useLocalizedEpgNowPlaying } from "./epg/useLocalizedEpgNowPlaying";
+import { resolveLiveEpgProgram } from "./epg/epgProgramSync";
+import {
+  entryForHit,
+  formatDurationMinutes,
+  formatEpisodeLabel,
+  formatOsdProgramRange,
+  nowPlayingFromEntry,
+} from "./epg/epgNowPlaying";
 import "./cableTuner.css";
 
 const TUNE_MS = 2400;
@@ -94,7 +108,6 @@ export function CableTunerView({
     initialRotationCursor(favorites.length, initialQuadSlots(favorites.length)),
   );
   const [selectedQuadSlot, setSelectedQuadSlot] = useState(0);
-  const [quadActionSlot, setQuadActionSlot] = useState<number | null>(null);
   const rotationSlotRef = useRef(0);
   const quadStateRef = useRef({
     slots: initialQuadSlots(favorites.length),
@@ -113,6 +126,7 @@ export function CableTunerView({
   const [preloadFavIdx, setPreloadFavIdx] = useState(0);
   const [preloadReady, setPreloadReady] = useState(false);
   const [deadFavorites, setDeadFavorites] = useState<ReadonlySet<number>>(() => new Set());
+  const [epgOpen, setEpgOpen] = useState(false);
   const tuneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const osdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -125,6 +139,12 @@ export function CableTunerView({
           browse: "חיפוש",
           chUp: "▲",
           chDown: "▼",
+          chUpLbl: "למעלה",
+          chDownLbl: "למטה",
+          menuLbl: "תפריט",
+          fullscreenLbl: "מסך מלא",
+          volumeLbl: "ווליום",
+          quadScreen: "מסך מפוצל",
           tuning: "מכוון…",
           range: (a: number, b: number) => (a === b ? `ערוץ ${a}` : `ערוצים ${a}–${b}`),
           fullscreen: "מסך מלא",
@@ -138,17 +158,29 @@ export function CableTunerView({
           mute: "השתק",
           unmute: "הפעל שמע",
           jumpToChannel: (n: number) => `▶ לערוץ ${n}`,
+          quadHint: "לחץ על ערוץ לשמע · ▶ לצפייה במסך מלא",
+          quadAudioOn: (t: string) => `שמע: ${t}`,
+          quadPickChannel: "בחר ערוץ",
           backQuad: "מסך מפוצל",
           back: "חזרה",
           more: "אפשרויות ערוץ",
           radioBand: "רדיו",
           openRadio: "פתח רדיו",
+          epg: "לוח שידורים",
+          onNow: "עכשיו",
+          endsIn: (m: number) => (m <= 0 ? "מסתיים" : `נותרו ${m} דק`),
         }
       : {
           noFavs: "No favorites — open search and star ☆ working channels.",
           browse: "Search",
           chUp: "▲",
           chDown: "▼",
+          chUpLbl: "Up",
+          chDownLbl: "Down",
+          menuLbl: "Menu",
+          fullscreenLbl: "Fullscreen",
+          volumeLbl: "Volume",
+          quadScreen: "Multi view",
           tuning: "Tuning…",
           range: (a: number, b: number) => (a === b ? `CH ${a}` : `CH ${a}–${b}`),
           fullscreen: "Fullscreen",
@@ -162,11 +194,17 @@ export function CableTunerView({
           mute: "Mute",
           unmute: "Unmute",
           jumpToChannel: (n: number) => `▶ CH ${n}`,
+          quadHint: "Tap a tile for audio · ▶ for full screen",
+          quadAudioOn: (t: string) => `Audio: ${t}`,
+          quadPickChannel: "Pick a channel",
           backQuad: "Split screen",
           back: "Back",
           more: "Channel options",
           radioBand: "Radio",
           openRadio: "Open radio",
+          epg: "TV guide",
+          onNow: "On now",
+          endsIn: (m: number) => (m <= 0 ? "ending" : `${m} min left`),
         };
 
   const total = favorites.length;
@@ -183,6 +221,31 @@ export function CableTunerView({
   const quadTiles = useMemo(() => pickCableQuadFromSlots(favorites, quadSlots), [favorites, quadSlots]);
   const singleHit = useMemo(() => favoriteForPage(favorites, pageIndex), [favorites, pageIndex]);
   const focusHit = showRadioPage ? radioHit : showQuad ? (quadTiles[selectedQuadSlot] ?? null) : singleHit;
+  const epgHit = showRadioPage || showQuad ? null : focusHit;
+  const streamUrl = focusHit?.mediaPlayUrl || focusHit?.url;
+  const streamCue = useStreamCueSync(streamUrl, Boolean(focusHit) && !showQuad && !showRadioPage && !globalSnow);
+  const epgGuide = useEpgGuide(favorites, Boolean(favorites.length) && !showRadioPage && !showQuad && !globalSnow);
+
+  const epgEntry = useMemo(
+    () => (focusHit ? entryForHit(epgGuide.entries, focusHit.id) : null),
+    [epgGuide.entries, focusHit],
+  );
+  const epgLiveProgram = useMemo(() => {
+    const programs = epgEntry?.schedule?.programs;
+    if (!programs?.length) return null;
+    return resolveLiveEpgProgram(programs, now, {
+      cue: streamCue,
+      streamUrl,
+      sourceKey: epgEntry?.schedule?.channel?.sourceKey,
+    });
+  }, [epgEntry, now, streamCue, streamUrl]);
+  const tmdbMeta = useTmdbProgramMeta(
+    epgLiveProgram?.title,
+    Boolean(epgLiveProgram?.title),
+    uiLang,
+    epgLiveProgram?.season,
+    epgLiveProgram?.episode,
+  );
 
   const preloadHit = useMemo(() => {
     if (showQuad || total < 2) return null;
@@ -206,16 +269,51 @@ export function CableTunerView({
   const range = showRadioPage
     ? { from: radioIndex + 1, to: radioIndex + 1 }
     : cableOsdRangeLabel(pageIndex, total, showQuad ? quadSlots : undefined);
-  const rangeLabel = showRadioPage
-    ? `${L.radioBand} ${radioIndex + 1}${radioTotal > 1 ? `/${radioTotal}` : ""}`
-    : range
-      ? L.range(range.from, range.to)
-      : "";
   const regionLabel = localCtx?.cityName ?? localCtx?.countryName ?? localCtx?.countryCode?.toUpperCase() ?? "—";
   const dateLabel = formatCableOsdDate(now, uiLang, localCtx?.timezone);
   const weatherLabel = formatCableOsdWeather(localCtx);
   const clock = formatClock(now, rtl, localCtx?.timezone);
   const centerTitle = focusHit ? shortenCableChannelTitle(focusHit.title) : "";
+  const osdChannelNum = showRadioPage
+    ? radioIndex + 1
+    : showQuad
+      ? null
+      : singleFavoriteIndex(pageIndex) + 1;
+  const osdChannelRange = showQuad && range ? `${range.from}${range.to !== range.from ? `–${range.to}` : ""}` : null;
+  const nowPlayingInfo = useMemo(() => {
+    if (!focusHit || showQuad || showRadioPage) return null;
+    return nowPlayingFromEntry(epgEntry, now, streamCue, tmdbMeta?.runtimeMinutes ?? null);
+  }, [epgEntry, focusHit, now, showQuad, showRadioPage, streamCue, tmdbMeta?.runtimeMinutes]);
+
+  const tmdbOverviewShort =
+    tmdbMeta?.overview && tmdbMeta.overview.length > 0 ?
+      tmdbMeta.overview.length > 140 ?
+        `${tmdbMeta.overview.slice(0, 139).trim()}…`
+      : tmdbMeta.overview
+    : null;
+
+  const nowPlayingLocalized = useLocalizedEpgNowPlaying(
+    nowPlayingInfo,
+    uiLang,
+    tmdbMeta?.title,
+    tmdbOverviewShort,
+  );
+
+  const nowPlaying = useMemo(() => {
+    if (!nowPlayingLocalized || !nowPlayingInfo) return null;
+    const description = nowPlayingLocalized.description;
+    const clippedDesc =
+      description && description.length > 140 ? `${description.slice(0, 139).trim()}…` : description;
+    return {
+      ...nowPlayingInfo,
+      displayTitle: nowPlayingLocalized.displayTitle,
+      episodeLabel: formatEpisodeLabel(nowPlayingInfo.program),
+      description: clippedDesc,
+      tmdbYear: tmdbMeta?.year ?? null,
+      tmdbRating: tmdbMeta?.rating ?? null,
+      posterUrl: tmdbMeta?.posterUrl ?? null,
+    };
+  }, [nowPlayingInfo, nowPlayingLocalized, tmdbMeta?.year, tmdbMeta?.rating, tmdbMeta?.posterUrl]);
 
   const bumpHeaderRadio = useCallback(
     (nextIdx: number) => {
@@ -326,7 +424,6 @@ export function CableTunerView({
       tuneTimer.current = setTimeout(() => {
         setPageIndex(targetPage);
         setGlobalSnow(false);
-        setQuadActionSlot(null);
         if (warmHit) setPreloadReady(false);
       }, tuneMs);
     },
@@ -371,18 +468,16 @@ export function CableTunerView({
         return;
       }
 
-      if (radioTotal > 0) {
-        if (delta === 1 && pageIndex === total) {
-          goToPage(firstRadioCablePage(total));
-          return;
-        }
-        if (delta === -1 && pageIndex === 0) {
-          goToPage(maxPage);
-          return;
-        }
+      if (radioTotal > 0 && delta === 1 && pageIndex === total) {
+        goToPage(firstRadioCablePage(total));
+        return;
       }
 
       if (total < 2) {
+        if (isQuadPage(pageIndex) && total === 1) {
+          goToPage(1);
+          return;
+        }
         if (radioTotal > 0) {
           goToPage(nextCablePageWithRadio(pageIndex, delta, total, radioTotal));
         }
@@ -442,6 +537,10 @@ export function CableTunerView({
     return () => {
       alive = false;
     };
+  }, []);
+
+  useEffect(() => {
+    void warmMjhEpgCaches();
   }, []);
 
   useEffect(() => {
@@ -542,7 +641,6 @@ export function CableTunerView({
 
   useEffect(() => {
     if (!osdVisible) {
-      setQuadActionSlot(null);
       setHeaderRadioAudio(false);
     }
   }, [osdVisible]);
@@ -567,14 +665,14 @@ export function CableTunerView({
   }, [channelMenuOpen, confirmRemoveOpen, showRadioPage]);
 
   useEffect(() => {
-    if (!showQuad) setQuadActionSlot(null);
-  }, [showQuad]);
-
-  useEffect(() => {
     if (!showRadioPage) return;
     setOsdVisible(true);
     if (osdTimer.current) clearTimeout(osdTimer.current);
   }, [showRadioPage]);
+
+  useEffect(() => {
+    if (showQuad || showRadioPage) setEpgOpen(false);
+  }, [showQuad, showRadioPage, pageIndex]);
 
   useEffect(() => {
     pokeOsd();
@@ -706,7 +804,7 @@ export function CableTunerView({
                 volume={volume}
                 multiView
                 loadTimeoutMs={CABLE_STREAM_LOAD_MS}
-                quadJumpOpen={quadActionSlot === i && osdVisible && !globalSnow}
+                quadJumpOpen={selectedQuadSlot === i && osdVisible && !globalSnow}
                 quadJumpLabel={chNum > 0 ? L.jumpToChannel(chNum) : ""}
                 onQuadJump={() => jumpToFavoriteFromQuad(quadSlots[i] ?? 0)}
                 onDoubleActivate={() => jumpToFavoriteFromQuad(quadSlots[i] ?? 0)}
@@ -715,7 +813,6 @@ export function CableTunerView({
                   setSelectedQuadSlot(i);
                   setAudioUnlocked(true);
                   setHeaderRadioAudio(false);
-                  setQuadActionSlot((prev) => (prev === i ? null : i));
                   pokeOsd();
                 }}
               />
@@ -856,54 +953,102 @@ export function CableTunerView({
         </div>
       ) : null}
 
+      {epgOpen && epgHit ? (
+        <CableEpgPanel
+          favorites={favorites}
+          focusHit={epgHit}
+          uiLang={uiLang}
+          onClose={() => setEpgOpen(false)}
+        />
+      ) : null}
+
       <div
-        className={`lm-cable-osd${showRadioPage ? " lm-cable-osd--pinned" : osdVisible ? "" : " is-hidden"}`}
+        className={`lm-cable-osd${showRadioPage ? " lm-cable-osd--pinned" : osdVisible ? "" : " is-hidden"}${showQuad ? " lm-cable-osd--quad" : ""}${rtl ? " lm-cable-osd--he" : ""}`}
         dir="ltr"
       >
-        <div className="lm-cable-osd-actions">
+        <div className="lm-cable-osd-toolbar">
           <button
             type="button"
-            className="lm-cable-osd-btn lm-cable-osd-btn--remote"
+            className="lm-cable-osd-tool"
             onClick={() => changePage(1)}
             disabled={globalSnow || (showRadioPage ? radioTotal <= 1 : total <= 1 && radioTotal === 0)}
-            aria-label={L.chUp}
+            aria-label={L.chUpLbl}
           >
-            {L.chUp}
+            <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+              {L.chUp}
+            </span>
+            <span className="lm-cable-osd-tool-label">{L.chUpLbl}</span>
           </button>
           <button
             type="button"
-            className="lm-cable-osd-btn lm-cable-osd-btn--remote"
+            className="lm-cable-osd-tool"
             onClick={() => changePage(-1)}
             disabled={globalSnow || (showRadioPage ? radioTotal <= 1 : total <= 1 && radioTotal === 0)}
-            aria-label={L.chDown}
+            aria-label={L.chDownLbl}
           >
-            {L.chDown}
+            <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+              {L.chDown}
+            </span>
+            <span className="lm-cable-osd-tool-label">{L.chDownLbl}</span>
           </button>
           {!showQuad ? (
             <button
               type="button"
-              className="lm-cable-osd-btn lm-cable-osd-btn--quad"
+              className="lm-cable-osd-tool"
               onClick={goToQuad}
               disabled={globalSnow}
-              aria-label={L.backQuad}
+              aria-label={L.menuLbl}
               title={L.backQuad}
             >
-              ⊞
+              <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+                ⊞
+              </span>
+              <span className="lm-cable-osd-tool-label">{L.menuLbl}</span>
             </button>
           ) : null}
-          <button type="button" className="lm-cable-osd-btn" onClick={onOpenBrowse}>
-            {L.browse}
+          {epgHit && favorites.length > 0 ? (
+            <button
+              type="button"
+              className="lm-cable-osd-tool lm-cable-osd-tool--epg"
+              onClick={() => {
+                setEpgOpen(true);
+                pokeOsd();
+              }}
+              disabled={globalSnow}
+              aria-label={L.epg}
+              title={
+                epgGuide.loading
+                  ? L.epg
+                  : `${L.epg}${epgGuide.readyCount ? ` (${epgGuide.readyCount})` : ""}`
+              }
+            >
+              <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+                ▦
+              </span>
+              <span className="lm-cable-osd-tool-label">
+                EPG{epgGuide.readyCount > 0 ? ` ${epgGuide.readyCount}` : ""}
+              </span>
+            </button>
+          ) : null}
+          <button type="button" className="lm-cable-osd-tool" onClick={onOpenBrowse}>
+            <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+              ⌕
+            </span>
+            <span className="lm-cable-osd-tool-label">{L.browse}</span>
           </button>
           <button
             type="button"
-            className="lm-cable-osd-btn lm-cable-osd-btn--icon"
+            className="lm-cable-osd-tool"
             onClick={() => void toggleFullscreen()}
-            aria-label={isFullscreen ? L.exitFullscreen : L.fullscreen}
-            title={isFullscreen ? L.exitFullscreen : L.fullscreen}
+            aria-label={isFullscreen ? L.exitFullscreen : L.fullscreenLbl}
+            title={isFullscreen ? L.exitFullscreen : L.fullscreenLbl}
           >
-            {isFullscreen ? "⤢" : "⛶"}
+            <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+              {isFullscreen ? "⤢" : "⛶"}
+            </span>
+            <span className="lm-cable-osd-tool-label">{L.fullscreenLbl}</span>
           </button>
-          <div className="lm-cable-volume" title={L.volume}>
+          <div className="lm-cable-volume" title={L.volumeLbl}>
             <div className="lm-cable-volume-rail">
               <input
                 type="range"
@@ -922,7 +1067,7 @@ export function CableTunerView({
             </div>
             <button
               type="button"
-              className="lm-cable-osd-btn lm-cable-osd-btn--icon lm-cable-volume-mute"
+              className="lm-cable-osd-tool lm-cable-volume-mute"
               onClick={() => {
                 setAudioUnlocked(true);
                 setUserMuted((m) => !m);
@@ -930,25 +1075,135 @@ export function CableTunerView({
               }}
               aria-label={userMuted ? L.unmute : L.mute}
             >
-              {userMuted || volume === 0 ? "🔇" : volume < 0.45 ? "🔉" : "🔊"}
+              <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+                {userMuted || volume === 0 ? "🔇" : volume < 0.45 ? "🔉" : "🔊"}
+              </span>
+              <span className="lm-cable-osd-tool-label">{L.volumeLbl}</span>
             </button>
           </div>
         </div>
 
-        <div className={`lm-cable-osd-center${showQuad ? " lm-cable-osd-center--quad" : ""}`} dir={rtl ? "rtl" : "ltr"}>
-          {!showQuad ? (
-            <h2 className="lm-cable-osd-channel" title={focusHit?.title}>
-              {centerTitle}
-              {rangeLabel ? <span className="lm-cable-osd-inline-meta"> · {rangeLabel}</span> : null}
-            </h2>
-          ) : null}
-          {globalSnow ? <span className="lm-cable-osd-tuning">{L.tuning}</span> : null}
-        </div>
+        <div className="lm-cable-osd-panel">
+          <div className="lm-cable-osd-col lm-cable-osd-col--channel" dir={rtl ? "rtl" : "ltr"}>
+            {osdChannelNum != null ? (
+              <span className="lm-cable-osd-ch-num">{osdChannelNum}</span>
+            ) : osdChannelRange ? (
+              <span className="lm-cable-osd-ch-num lm-cable-osd-ch-num--range">{osdChannelRange}</span>
+            ) : (
+              <span className="lm-cable-osd-ch-num">—</span>
+            )}
+            <span className="lm-cable-osd-ch-name" title={focusHit?.title}>
+              {showQuad && range ? L.range(range.from, range.to) : showQuad ? L.quadScreen : centerTitle || "—"}
+            </span>
+          </div>
 
-        <div className="lm-cable-osd-right">
-          <span className="lm-cable-osd-clock">{clock}</span>
-          <span className="lm-cable-osd-date">{dateLabel}</span>
-          {weatherLabel ? <span className="lm-cable-osd-weather">{weatherLabel}</span> : null}
+          <div className="lm-cable-osd-col lm-cable-osd-col--program" dir={rtl ? "rtl" : "ltr"}>
+            {showQuad ? (
+              <div className="lm-cable-osd-quad-summary">
+                <div className="lm-cable-osd-channel lm-cable-osd-channel--quad" role="list">
+                  {quadTiles.map((hit, i) => {
+                    const chNum = quadSlots[i] != null ? quadSlots[i] + 1 : 0;
+                    const title = hit ? shortenCableChannelTitle(hit.title, 16) : "—";
+                    const active = selectedQuadSlot === i;
+                    return (
+                      <button
+                        key={`quad-ch-${i}`}
+                        type="button"
+                        role="listitem"
+                        className={`lm-cable-osd-channel-part${active ? " is-active" : ""}`}
+                        title={hit?.title}
+                        onClick={() => {
+                          setSelectedQuadSlot(i);
+                          setAudioUnlocked(true);
+                          setHeaderRadioAudio(false);
+                          pokeOsd();
+                        }}
+                        onDoubleClick={(e) => {
+                          e.preventDefault();
+                          jumpToFavoriteFromQuad(quadSlots[i] ?? 0);
+                        }}
+                      >
+                        {chNum > 0 ? `${String(chNum).padStart(2, "0")} ${title}` : title}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="lm-cable-osd-quad-audio-hint">
+                  {focusHit ? L.quadAudioOn(centerTitle) : L.quadHint}
+                </p>
+              </div>
+            ) : nowPlaying ? (
+              <div className="lm-cable-osd-program" aria-live="polite">
+                {nowPlaying.posterUrl ? (
+                  <img
+                    className="lm-cable-osd-now-poster"
+                    src={nowPlaying.posterUrl}
+                    alt=""
+                    loading="lazy"
+                  />
+                ) : null}
+                <div className="lm-cable-osd-program-body">
+                  <span className="lm-cable-osd-now-kicker">{L.onNow}</span>
+                  <p className="lm-cable-osd-now-title" title={nowPlaying.displayTitle}>
+                    {nowPlaying.displayTitle}
+                  </p>
+                  {nowPlaying.episodeLabel ? (
+                    <p className="lm-cable-osd-now-episode">{nowPlaying.episodeLabel}</p>
+                  ) : null}
+                  {nowPlaying.description ? (
+                    <p className="lm-cable-osd-now-desc" title={nowPlaying.description}>
+                      {nowPlaying.description}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="lm-cable-osd-program lm-cable-osd-program--idle">
+                <p className="lm-cable-osd-idle-title">{centerTitle || L.tuning}</p>
+                {globalSnow ? <p className="lm-cable-osd-tuning">{L.tuning}</p> : null}
+              </div>
+            )}
+          </div>
+
+          <div className="lm-cable-osd-col lm-cable-osd-col--timing">
+            {showQuad ? (
+              <button
+                type="button"
+                className="lm-cable-osd-btn lm-cable-osd-btn--danger lm-cable-osd-quad-jump"
+                disabled={!focusHit}
+                onClick={() => jumpToFavoriteFromQuad(quadSlots[selectedQuadSlot] ?? 0)}
+              >
+                {focusHit ? L.jumpToChannel((quadSlots[selectedQuadSlot] ?? 0) + 1) : L.quadPickChannel}
+              </button>
+            ) : nowPlaying ? (
+              <>
+                <span className="lm-cable-osd-time-range">
+                  {formatOsdProgramRange(nowPlaying.displayStart, nowPlaying.displayEnd, rtl)}
+                </span>
+                <span className="lm-cable-osd-now-ends">{L.endsIn(nowPlaying.minutesLeft)}</span>
+                <div className="lm-cable-osd-timing-meta">
+                  <span className="lm-cable-osd-now-duration">
+                    {formatDurationMinutes(nowPlaying.durationMinutes, rtl)}
+                  </span>
+                  {nowPlaying.tmdbYear ? (
+                    <span className="lm-cable-osd-now-year">{nowPlaying.tmdbYear}</span>
+                  ) : null}
+                  {nowPlaying.tmdbRating != null ? (
+                    <span className="lm-cable-osd-now-rating">★ {nowPlaying.tmdbRating.toFixed(1)}</span>
+                  ) : null}
+                </div>
+                <div className="lm-cable-osd-now-bar" aria-hidden="true">
+                  <span className="lm-cable-osd-now-fill" style={{ width: `${nowPlaying.progressPct}%` }} />
+                </div>
+              </>
+            ) : null}
+          </div>
+
+          <div className="lm-cable-osd-col lm-cable-osd-col--status" dir={rtl ? "rtl" : "ltr"}>
+            <span className="lm-cable-osd-clock">{clock}</span>
+            <span className="lm-cable-osd-date">{dateLabel}</span>
+            {weatherLabel ? <span className="lm-cable-osd-weather">{weatherLabel}</span> : null}
+          </div>
         </div>
       </div>
 

@@ -4,6 +4,7 @@ import { SidebarSettingsIcon } from "./SidebarSettingsIcon";
 
 export type SidebarGearAction =
   | "settings"
+  | "api-keys"
   | "plugins"
   | "activity"
   | "presentation-qa"
@@ -16,6 +17,7 @@ const MENU_ITEMS: {
   title?: string;
 }[] = [
   { id: "settings", icon: "⚙", label: "הגדרות המודל", title: "Gemma · מנוע חישוב" },
+  { id: "api-keys", icon: "🔑", label: "מפתחות API", title: "TMDB · AIS · Tavily · Scavio" },
   { id: "plugins", icon: "🧩", label: "מרכז התוספים", title: "חיפוש · API · RSS" },
   { id: "activity", icon: "📋", label: "פעילות המודל", title: "הנחיות ותשובות" },
   { id: "presentation-qa", icon: "✦", label: "בדיקת מצגת", title: "80 שאלות מצגת" },

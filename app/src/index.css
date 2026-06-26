@@ -2053,6 +2053,11 @@ body {
   display: none;
 }
 
+.chat-header-lang-desktop,
+.chat-header-context-desktop {
+  display: none;
+}
+
 .chat-header-primary {
   min-width: 0;
 }

@@ -54,6 +54,7 @@ export function channelToSearchHit(c: Channel, fuseScore = 0.5): UnifiedSearchHi
       loadTimeMs: c.loadTimeMs,
       languages: c.languages?.join(", ") || c.language,
       languageSource: c.languageSource,
+      tvgId: c.tvgId,
     },
     summarizable: false,
   };

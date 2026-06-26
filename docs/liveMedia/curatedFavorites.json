@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
-  "updatedAt": 1782377666958,
+  "updatedAt": 1782446874093,
   "channels": [
     {
       "id": "3czxxt",
@@ -14,7 +14,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "30ATVClassicMovies.us@SD"
     },
     {
       "id": "s0ucuc",
@@ -27,7 +28,8 @@
       "type": "tv",
       "tags": [
         "Kids"
-      ]
+      ],
+      "tvgId": "ABCKids.au@Sydney"
     },
     {
       "id": "tjz5ej",
@@ -40,7 +42,36 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "Action24.gr@SD"
+    },
+    {
+      "id": "ov4cb6",
+      "name": "Action Hollywood Movies (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://amg01076-lightningintern-actionhollywood-samsungau-rs69y.amagi.tv/playlist/amg01076-lightningintern-actionhollywood-samsungau/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
+    },
+    {
+      "id": "nki0cj",
+      "name": "Action Hollywood Movies (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://cdn-apse1-prod.tsv2.amagi.tv/linear/amg01076-lightningintern-actionhollywood-samsungnz/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     },
     {
       "id": "67xisa",
@@ -53,7 +84,22 @@
       "type": "tv",
       "tags": [
         "Entertainment"
-      ]
+      ],
+      "tvgId": "AbsoluteRealitybyWETV.us@SD"
+    },
+    {
+      "id": "53pml1",
+      "name": "America's Got Talent (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://d2mexh8isep4mf.cloudfront.net/AmericasGotTalent_GB.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     },
     {
       "id": "alzugs",
@@ -66,7 +112,22 @@
       "type": "tv",
       "tags": [
         "Series"
-      ]
+      ],
+      "tvgId": "PBSAntiquesRoadshow.us@SD"
+    },
+    {
+      "id": "m9olx9",
+      "name": "Autentic History (1080p)",
+      "country": "",
+      "language": "",
+      "category": "documentary",
+      "stream": "https://9e754fa707344ccca6d84955c8fcaf36.mediatailor.us-east-1.amazonaws.com/v1/master/44f73ba4d03e9607dcd9bebdcb8494d86964f1d8/RlaxxTV-eu_AutenticHistory/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Documentary"
+      ],
+      "tvgId": "AutenticHistory.de@SD"
     },
     {
       "id": "a9keq8",
@@ -79,7 +140,8 @@
       "type": "tv",
       "tags": [
         "Undefined"
-      ]
+      ],
+      "tvgId": ""
     },
     {
       "id": "5684ev",
@@ -92,7 +154,8 @@
       "type": "tv",
       "tags": [
         "Cooking"
-      ]
+      ],
+      "tvgId": "bonappetit.us@SD"
     },
     {
       "id": "1ud8xw",
@@ -105,7 +168,36 @@
       "type": "tv",
       "tags": [
         "Entertainment"
-      ]
+      ],
+      "tvgId": "BounceXL.us@SD"
+    },
+    {
+      "id": "tqsggl",
+      "name": "BritBox Mysteries (1080p)",
+      "country": "",
+      "language": "",
+      "category": "documentary",
+      "stream": "https://aegis-cloudfront-1.tubi.video/c95700f8-e51c-4a36-ad46-56f70fc9f1d9/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Documentary"
+      ],
+      "tvgId": "BritBoxMysteries.us@SD"
+    },
+    {
+      "id": "7mioyx",
+      "name": "Channel 8 (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://gra1.crystalweb.net:1936/channel8/channel8/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": "Channel8.gr@HD"
     },
     {
       "id": "vbjixp",
@@ -118,7 +210,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "Charge.us@SD"
     },
     {
       "id": "9i9hel",
@@ -131,7 +224,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "ClassiqueTV.br@SD"
     },
     {
       "id": "4ccc7z",
@@ -144,7 +238,8 @@
       "type": "tv",
       "tags": [
         "Comedy"
-      ]
+      ],
+      "tvgId": "ComedyCentral.us@East"
     },
     {
       "id": "89w9r1",
@@ -157,7 +252,8 @@
       "type": "tv",
       "tags": [
         "Series"
-      ]
+      ],
+      "tvgId": "Cops.us@Poland"
     },
     {
       "id": "13bocd",
@@ -170,7 +266,8 @@
       "type": "tv",
       "tags": [
         "Undefined"
-      ]
+      ],
+      "tvgId": ""
     },
     {
       "id": "23fs34",
@@ -183,7 +280,8 @@
       "type": "tv",
       "tags": [
         "Series"
-      ]
+      ],
+      "tvgId": "DarkMatterTV.us@SD"
     },
     {
       "id": "4bin4q",
@@ -196,7 +294,8 @@
       "type": "tv",
       "tags": [
         "Documentary"
-      ]
+      ],
+      "tvgId": "DeadlyWomen.us@UK"
     },
     {
       "id": "b5hqan",
@@ -209,7 +308,8 @@
       "type": "tv",
       "tags": [
         "Music"
-      ]
+      ],
+      "tvgId": "DeluxeMusic.de@SD"
     },
     {
       "id": "63utyx",
@@ -222,7 +322,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "DiscoverFilm.uk@SD"
     },
     {
       "id": "63jm5p",
@@ -235,7 +336,8 @@
       "type": "tv",
       "tags": [
         "Documentary"
-      ]
+      ],
+      "tvgId": "DocumentaryPlus.us@US"
     },
     {
       "id": "xtw9fd",
@@ -248,7 +350,8 @@
       "type": "tv",
       "tags": [
         "Comedy"
-      ]
+      ],
+      "tvgId": "DryBarComedyPlus.us@SD"
     },
     {
       "id": "w3vuyn",
@@ -262,7 +365,8 @@
       "tags": [
         "Movies",
         "Series"
-      ]
+      ],
+      "tvgId": "EbonyTVbyLionsgate.us@SD"
     },
     {
       "id": "62njb6",
@@ -276,7 +380,8 @@
       "tags": [
         "Entertainment",
         "News"
-      ]
+      ],
+      "tvgId": "EntertainmentTonight.us@SD"
     },
     {
       "id": "2cufvw",
@@ -289,7 +394,8 @@
       "type": "tv",
       "tags": [
         "Comedy"
-      ]
+      ],
+      "tvgId": "FailArmy.us@Italy"
     },
     {
       "id": "73abr1",
@@ -302,7 +408,36 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "FIFAPlus.uk@UnitedStates"
+    },
+    {
+      "id": "paf1vf",
+      "name": "FNX [Geo-blocked]",
+      "country": "",
+      "language": "",
+      "category": "culture",
+      "stream": "https://castus-vod-dev.s3.amazonaws.com/vod_clients/kvcr/live/ch1/video.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Culture"
+      ],
+      "tvgId": "KVCRDT242.us@SD"
+    },
+    {
+      "id": "9s648d",
+      "name": "FOX Sports (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "undefined",
+      "stream": "https://d1jzu95oc8fgt3.cloudfront.net/FOX_Sports.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     },
     {
       "id": "9k4t83",
@@ -315,7 +450,22 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "FTFSports.us@SD"
+    },
+    {
+      "id": "aubz5b",
+      "name": "Global Fashion Channel (1080p)",
+      "country": "",
+      "language": "",
+      "category": "lifestyle",
+      "stream": "https://pubgfc.teleosmedia.com/linear/globalfashionchannel/globalfashionchannel/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Lifestyle"
+      ],
+      "tvgId": "GlobalFashionChannel.us@SD"
     },
     {
       "id": "9v1rmo",
@@ -328,7 +478,8 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "GloryKickboxing.us@Poland"
     },
     {
       "id": "mk1h2g",
@@ -341,7 +492,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "GravitasMovies.us@SD"
     },
     {
       "id": "bv1un3",
@@ -354,7 +506,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "GrjngoWesternMovies.de@SD"
     },
     {
       "id": "7ul2gd",
@@ -367,7 +520,22 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "GroovyTV.gr@SD"
+    },
+    {
+      "id": "ax1zue",
+      "name": "History Hunters (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://amg00841-amg00841c7-rakuten-uk-2820.playouts.now.amagi.tv/playlist/amg00841-aeemeafast-historyhuntersrakuten-rakutenuk/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     },
     {
       "id": "4xdm2a",
@@ -380,20 +548,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
-    },
-    {
-      "id": "vh2x02",
-      "name": "iFilm English",
-      "country": "",
-      "language": "eng",
-      "category": "movies",
-      "stream": "https://live.presstv.ir/hls/ifilmen.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Movies"
-      ]
+      ],
+      "tvgId": "HomePlus.ir@SD"
     },
     {
       "id": "4e5mm3",
@@ -406,7 +562,37 @@
       "type": "tv",
       "tags": [
         "Documentary"
-      ]
+      ],
+      "tvgId": "INWILD.nl@SD"
+    },
+    {
+      "id": "hldfat",
+      "name": "Jail",
+      "country": "",
+      "language": "",
+      "category": "documentary",
+      "stream": "https://e85541db4ae943d9b5a09477d6b1d8ab.mediatailor.us-east-1.amazonaws.com/v1/master/44f73ba4d03e9607dcd9bebdcb8494d86964f1d8/RakutenTV-eu_Jail/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Documentary",
+        "Entertainment"
+      ],
+      "tvgId": "Jail.uk@SD"
+    },
+    {
+      "id": "7qxjn",
+      "name": "Just for Laughs Gags (1080p)",
+      "country": "",
+      "language": "",
+      "category": "comedy",
+      "stream": "https://streams2.sofast.tv/ptnr-yupptv/title-JUST_FOR_LAUGHS_GAGS_YUPPTV/v1/master/611d79b11b77e2f571934fd80ca1413453772ac7/2790d143-5874-4146-bf91-9063c52b2f15/manifest.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Comedy"
+      ],
+      "tvgId": "JustforLaughsGags.us@SD"
     },
     {
       "id": "6efreo",
@@ -419,7 +605,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "24HourFreeMovies.us@SD"
     },
     {
       "id": "284n8w",
@@ -432,7 +619,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "FilmBoxExtra.nl@Adria"
     },
     {
       "id": "4zo3j6",
@@ -445,7 +633,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "FilmBoxPremium.nl@Adria"
     },
     {
       "id": "3tiyeq",
@@ -458,7 +647,50 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "FilmBoxStars.nl@Adria"
+    },
+    {
+      "id": "9z5vv3",
+      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Music\",360TuneBox (576p)",
+      "country": "",
+      "language": "",
+      "category": "music",
+      "stream": "https://iptv.prosto.tv/ch141/index.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Music"
+      ],
+      "tvgId": "360TuneBox.nl@SD"
+    },
+    {
+      "id": "5gz2kb",
+      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Sports\",FightBox",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "https://webtvstream.bhtelecom.ba/hls7/fightbox.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "FightBox.nl@SD"
+    },
+    {
+      "id": "j4k9fe",
+      "name": "Lone Star (720p)",
+      "country": "",
+      "language": "",
+      "category": "entertainment",
+      "stream": "https://6b88cde9.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/UmFrdXRlblRWLWV1X0xvbmVTdGFyX0hMUw/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Entertainment"
+      ],
+      "tvgId": "LoneStar.us@Poland"
     },
     {
       "id": "9btioe",
@@ -471,7 +703,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MadeInHollywood.us@SD"
     },
     {
       "id": "z2atqu",
@@ -484,7 +717,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MaverickBlackCinema.us@SD"
     },
     {
       "id": "rlaubr",
@@ -497,7 +731,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MixHollywood.eg@SD"
     },
     {
       "id": "mmk8wa",
@@ -510,7 +745,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "Movies.us@SD"
     },
     {
       "id": "2phkef",
@@ -523,7 +759,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MovieSphere.us@US"
     },
     {
       "id": "y60z20",
@@ -536,7 +773,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MovieSphere.us@AU"
     },
     {
       "id": "tbobfe",
@@ -549,7 +787,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MovieSphere.us@CA"
     },
     {
       "id": "n6lx2f",
@@ -562,7 +801,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "MovieSphere.us@UK"
     },
     {
       "id": "feafa4",
@@ -576,7 +816,8 @@
       "tags": [
         "Comedy",
         "Kids"
-      ]
+      ],
+      "tvgId": "MrBeanLiveAction.uk@English"
     },
     {
       "id": "v6xq2x",
@@ -589,7 +830,8 @@
       "type": "tv",
       "tags": [
         "Comedy"
-      ]
+      ],
+      "tvgId": "NBCComedyVault.us@SD"
     },
     {
       "id": "8mikn7",
@@ -602,7 +844,8 @@
       "type": "tv",
       "tags": [
         "Kids"
-      ]
+      ],
+      "tvgId": "NinjaKidzTV.us@SD"
     },
     {
       "id": "74i658",
@@ -615,7 +858,8 @@
       "type": "tv",
       "tags": [
         "General"
-      ]
+      ],
+      "tvgId": "Now14.il@SD"
     },
     {
       "id": "7gfwfp",
@@ -629,7 +873,8 @@
       "tags": [
         "Movies",
         "Series"
-      ]
+      ],
+      "tvgId": "OuterSphere.us@SD"
     },
     {
       "id": "l67l1x",
@@ -643,7 +888,8 @@
       "tags": [
         "Movies",
         "Series"
-      ]
+      ],
+      "tvgId": "ParamountNetwork.us@East"
     },
     {
       "id": "8eljjc",
@@ -656,7 +902,8 @@
       "type": "tv",
       "tags": [
         "Family"
-      ]
+      ],
+      "tvgId": "PositivTV.us@SD"
     },
     {
       "id": "beaxkp",
@@ -669,7 +916,8 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "RACERInternational.pl@FAST"
     },
     {
       "id": "32uynr",
@@ -682,7 +930,8 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "RacerSelect.us@SD"
     },
     {
       "id": "tvg39g",
@@ -695,7 +944,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "RakutenTVActionMovies.es@UK"
     },
     {
       "id": "b9jflz",
@@ -709,7 +959,8 @@
       "tags": [
         "Family",
         "Movies"
-      ]
+      ],
+      "tvgId": "RakutenTVFamilyMovies.es@Italy"
     },
     {
       "id": "dy40n4",
@@ -722,7 +973,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "RakutenTVTopMovies.es@Italy"
     },
     {
       "id": "bpna5u",
@@ -735,7 +987,8 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "RallyTV.us@SD"
     },
     {
       "id": "89rq43",
@@ -749,7 +1002,8 @@
       "tags": [
         "Outdoor",
         "Sports"
-      ]
+      ],
+      "tvgId": "RedBullTV.at@EUMENA"
     },
     {
       "id": "cfcgz5",
@@ -762,7 +1016,22 @@
       "type": "tv",
       "tags": [
         "General"
-      ]
+      ],
+      "tvgId": "Channel13.il@SD"
+    },
+    {
+      "id": "aceoup",
+      "name": "Saved by the Bell (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://xumo-xumoent-vc-111-0pd1g.fast.nbcuni.com/live/master.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     },
     {
       "id": "3gcjtp",
@@ -775,7 +1044,50 @@
       "type": "tv",
       "tags": [
         "Sports"
-      ]
+      ],
+      "tvgId": "SkyRacing2.au@SD"
+    },
+    {
+      "id": "3uopqc",
+      "name": "Space Series (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://streams2.sofast.tv/v1/master/611d79b11b77e2f571934fd80ca1413453772ac7/18d329ef-d478-413c-b68f-c123494ac434/manifest.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
+    },
+    {
+      "id": "1xieox",
+      "name": "Stingray Jukebox Oldies (1080p)",
+      "country": "",
+      "language": "",
+      "category": "music",
+      "stream": "https://lotus.stingray.com/manifest/ose-021ads-montreal/samsungtvplus/master.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Music"
+      ],
+      "tvgId": "StingrayJukeboxOldies.ca@SD"
+    },
+    {
+      "id": "6a3180",
+      "name": "Surf Cinema (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://amg13231-actve-amg13231c4-samsung-nz-3093.playouts.now.amagi.tv/playlist/amg13231-actvefast-surfer-samsungnz/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     },
     {
       "id": "6rc0hj",
@@ -788,7 +1100,8 @@
       "type": "tv",
       "tags": [
         "Kids"
-      ]
+      ],
+      "tvgId": "TeenNick.il@SD"
     },
     {
       "id": "kxp315",
@@ -802,7 +1115,8 @@
       "tags": [
         "Comedy",
         "Series"
-      ]
+      ],
+      "tvgId": "TheChatShowChannel.uk@SD"
     },
     {
       "id": "86162r",
@@ -815,7 +1129,8 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "TheFilmDetective.us@SD"
     },
     {
       "id": "7hrae2",
@@ -828,7 +1143,8 @@
       "type": "tv",
       "tags": [
         "Family"
-      ]
+      ],
+      "tvgId": "ThePetCollective.us@Italy"
     },
     {
       "id": "2spoli",
@@ -841,7 +1157,36 @@
       "type": "tv",
       "tags": [
         "Kids"
-      ]
+      ],
+      "tvgId": "TomAndJerry.do@HD"
+    },
+    {
+      "id": "75kt02",
+      "name": "TVS Cipher Network (360p)",
+      "country": "",
+      "language": "",
+      "category": "classic",
+      "stream": "https://rpn.bozztv.com/gusa/gusa-tvsmystery/index.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Classic"
+      ],
+      "tvgId": "TVSCipherNetwork.us@SD"
+    },
+    {
+      "id": "2vwcmz",
+      "name": "WFXT-DT2 (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://cdn-uw2-prod.tsv2.amagi.tv/linear/amg01438-ewscrippscompan-ionmystery-tablo/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": "WFXT662.us@SD"
     },
     {
       "id": "62x37d",
@@ -854,7 +1199,22 @@
       "type": "tv",
       "tags": [
         "Movies"
-      ]
+      ],
+      "tvgId": "WhiplashCinema.us@SD"
+    },
+    {
+      "id": "737d9j",
+      "name": "Wild West TV (1080p)",
+      "country": "",
+      "language": "",
+      "category": "undefined",
+      "stream": "https://linear-799.frequency.stream/dist/xumo/799/hls/master/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Undefined"
+      ],
+      "tvgId": ""
     }
   ],
   "radio": []

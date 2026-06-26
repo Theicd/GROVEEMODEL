@@ -82,6 +82,9 @@ export type UnifiedSearchHit = {
     shipSource?: "ais" | "globe" | "route-marker" | "aisstream";
     marineInfraKind?: string;
     regionLabel?: string;
+    languages?: string;
+    languageSource?: string;
+    tvgId?: string;
   };
   mediaPlayUrl?: string;
   /** When true, lightbox plays via iframe embed (Invidious / PeerTube page) instead of direct file. */

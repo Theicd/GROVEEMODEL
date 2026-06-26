@@ -14,6 +14,7 @@ export type CuratedFavoriteChannel = {
   source: string;
   type: Channel["type"];
   tags?: string[];
+  tvgId?: string;
 };
 
 export type CuratedFavoriteRadio = {
@@ -76,6 +77,7 @@ export function channelToCuratedSnapshot(channel: Channel): CuratedFavoriteChann
     source: channel.source,
     type: channel.type,
     tags: channel.tags,
+    tvgId: channel.tvgId,
   };
 }
 
@@ -95,6 +97,7 @@ export function curatedSnapshotToChannel(snap: CuratedFavoriteChannel): Channel 
     lastCheck: 0,
     favorite: true,
     tags: snap.tags,
+    tvgId: snap.tvgId,
     addedAt: Date.now(),
   };
 }

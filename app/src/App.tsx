@@ -289,6 +289,8 @@ import {
 } from "./webSearch/searchPlanner";
 import { registerGlobeLiveSnapshotListener, subscribeLiveWorldSnapshot, pingGlobeForLiveSnapshot, findGlobeIframe } from "./liveWorld";
 import { AISSTREAM_KEY_SAVED_EVENT } from "./apiKeys/apiKeyStore";
+import { ApiKeysPanelContent } from "./apiKeys/ApiKeysPanel";
+import "./apiKeys/apiKeys.css";
 import { refreshLivePanelPayload } from "./searchResults/panelSearch";
 import {
   fetchStartupContext,
@@ -834,6 +836,8 @@ function MessageBody({
   );
 }
 
+type SettingsModalTab = "gemma" | "localText" | "vision" | "api-keys";
+
 function SettingsModal({
   open,
   onClose,
@@ -841,6 +845,7 @@ function SettingsModal({
   onSave,
   onClearCache,
   cacheClearing,
+  initialTab = "gemma",
 }: {
   open: boolean;
   onClose: () => void;
@@ -848,15 +853,20 @@ function SettingsModal({
   onSave: (s: AppSettings) => void;
   onClearCache: () => void;
   cacheClearing: boolean;
+  initialTab?: SettingsModalTab;
 }) {
   const [draft, setDraft] = useState<AppSettings>(() => settings);
-  const [settingsTab, setSettingsTab] = useState<"gemma" | "localText" | "vision">("gemma");
+  const [settingsTab, setSettingsTab] = useState<SettingsModalTab>(initialTab);
   const [hfTokenDraft, setHfTokenDraft] = useState(() => getHfToken() ?? "");
   const [hfTokenStatus, setHfTokenStatus] = useState<string | null>(null);
   const [hfTokenChecking, setHfTokenChecking] = useState(false);
   const [chatProfile, setChatProfile] = useState<ChatHardwareProfileId>(
     () => loadChatProfileOverride() ?? detectChatHardwareProfile(),
   );
+
+  useEffect(() => {
+    if (open) setSettingsTab(initialTab);
+  }, [open, initialTab]);
 
   if (!open) return null;
 
@@ -873,11 +883,22 @@ function SettingsModal({
   };
 
   const settingsHeadline =
-    settingsTab === "localText"
+    settingsTab === "api-keys"
+      ? { title: "מפתחות API", sub: "TMDB · AIS חי · Tavily · Scavio" }
+      : settingsTab === "localText"
       ? { title: "הגדרות SmolLM", sub: "SmolLM2 360M · מקומי בדפדפן" }
       : settingsTab === "vision"
         ? { title: "הגדרות מצלמה", sub: "עיניים ואסיטואציות" }
         : { title: "הגדרות Gemma", sub: "GEMMA 4 E2B · מקומי בדפדפן" };
+
+  const settingsBadge =
+    settingsTab === "api-keys"
+      ? "🔑"
+      : settingsTab === "localText"
+        ? "S"
+        : settingsTab === "vision"
+          ? "👁"
+          : "G";
 
   const localTextBackendOptions: { id: LocalTextInferenceBackend; label: string; hint: string }[] = [
     { id: "auto", label: "Auto", hint: "WebGPU אם אפשר; נופל ל-WASM בשגיאה" },
@@ -904,7 +925,7 @@ function SettingsModal({
       <div className="settings-panel modal-box">
         <div className="settings-head">
           <div className="settings-head-brand">
-            <span className="settings-head-badge">{settingsTab === "localText" ? "S" : "G"}</span>
+            <span className="settings-head-badge">{settingsBadge}</span>
             <div>
               <h2 id="settings-title">{settingsHeadline.title}</h2>
               <p className="settings-head-sub">{settingsHeadline.sub}</p>
@@ -943,7 +964,22 @@ function SettingsModal({
           >
             עיניים ואסיטואציות
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={settingsTab === "api-keys"}
+            className={`settings-tab ${settingsTab === "api-keys" ? "active" : ""}`}
+            onClick={() => setSettingsTab("api-keys")}
+          >
+            מפתחות API
+          </button>
         </div>
+
+        {settingsTab === "api-keys" ? (
+          <div className="settings-api-keys">
+            <ApiKeysPanelContent active showSoon={false} />
+          </div>
+        ) : null}
 
         {settingsTab === "vision" ? (
           <SituationSettingsPanel vision={draft.vision} onVisionChange={patchVision} />
@@ -1370,21 +1406,29 @@ function SettingsModal({
         ) : null}
 
         <div className="settings-footer">
-          <button type="button" className="settings-btn-ghost" onClick={() => setDraft(defaultAppSettings())}>
-            איפוס ברירת מחדל
-          </button>
-          <button
-            type="button"
-            className="settings-btn-save"
-            onClick={() => {
-              saveChatProfileOverride(chatProfile);
-              setHfToken(hfTokenDraft);
-              onSave(draft);
-              onClose();
-            }}
-          >
-            שמור
-          </button>
+          {settingsTab === "api-keys" ? (
+            <button type="button" className="settings-btn-save" onClick={onClose}>
+              סגור
+            </button>
+          ) : (
+            <>
+              <button type="button" className="settings-btn-ghost" onClick={() => setDraft(defaultAppSettings())}>
+                איפוס ברירת מחדל
+              </button>
+              <button
+                type="button"
+                className="settings-btn-save"
+                onClick={() => {
+                  saveChatProfileOverride(chatProfile);
+                  setHfToken(hfTokenDraft);
+                  onSave(draft);
+                  onClose();
+                }}
+              >
+                שמור
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1422,6 +1466,7 @@ function App() {
 
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsModalTab>("gemma");
   const [settingsModalKey, setSettingsModalKey] = useState(0);
   const [modelRack, setModelRack] = useState<RackModelEntry[]>(() => loadModelRack());
   const [selectedRackModelId, setSelectedRackModelId] = useState(() => getSelectedModelId());
@@ -1566,6 +1611,7 @@ function App() {
   const [desktopLayout, setDesktopLayout] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 769px)").matches,
   );
+
   const uiLang = useUiLanguage();
 
   useEffect(() => {
@@ -2640,13 +2686,29 @@ function App() {
     searchResultsOpen && !!searchResultsPayload && !gamesPanelOpen && !liveMediaPanelOpen;
   const showLiveMediaPanel = liveMediaPanelOpen && !showSearchResultsPanel;
   const showArtifactPanel =
-    artifactOpen && !!activeArtifact && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
-  const showGamesPanel = gamesPanelOpen && desktopLayout && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
+    artifactOpen &&
+    !!activeArtifact &&
+    !gamesPanelOpen &&
+    !globePanelOpen &&
+    !showSearchResultsPanel &&
+    !showLiveMediaPanel;
+  const showGamesPanel =
+    gamesPanelOpen &&
+    desktopLayout &&
+    !globePanelOpen &&
+    !showSearchResultsPanel &&
+    !showLiveMediaPanel;
   const showGamesFullscreen = showGamesPanel && gamesPanelLayout === "full";
   const showGamesSidePanel = showGamesPanel && gamesPanelLayout === "side";
   const showGlobePanel = globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
   const showCameraSidePanel =
-    cameraMode && desktopLayout && !showArtifactPanel && !gamesPanelOpen && !globePanelOpen && !showSearchResultsPanel && !showLiveMediaPanel;
+    cameraMode &&
+    desktopLayout &&
+    !showArtifactPanel &&
+    !gamesPanelOpen &&
+    !globePanelOpen &&
+    !showSearchResultsPanel &&
+    !showLiveMediaPanel;
   const showCameraInline = cameraMode && !desktopLayout;
   const showLiveMediaFullscreen = showLiveMediaPanel && desktopLayout;
   const sidePanelBesideChat =
@@ -2716,6 +2778,7 @@ function App() {
         setArtifactOpen(false);
         setGlobePanelOpen(false);
         setGamesPanelOpen(false);
+        setGamesEmbedGame(null);
       } finally {
         setSearchPanelLoading(false);
         setStatus("");
@@ -2733,6 +2796,12 @@ function App() {
     (action: SidebarGearAction) => {
       switch (action) {
         case "settings":
+          setSettingsInitialTab("gemma");
+          setSettingsModalKey((k) => k + 1);
+          setSettingsOpen(true);
+          break;
+        case "api-keys":
+          setSettingsInitialTab("api-keys");
           setSettingsModalKey((k) => k + 1);
           setSettingsOpen(true);
           break;
@@ -5622,6 +5691,7 @@ function App() {
         onSave={persistSettings}
         onClearCache={() => void clearModelCache()}
         cacheClearing={cacheClearing}
+        initialTab={settingsInitialTab}
       />
 
       <PluginsPanel
@@ -6047,13 +6117,6 @@ function App() {
                   streamTokenCount={streamTokenCount}
                   onClose={() => setArtifactOpen(false)}
                 />
-              ) : showGlobePanel ? (
-                <GlobePanel
-                  onClose={closeGlobePanel}
-                  command={globeCommand}
-                  onCommandSent={() => setGlobeCommand(null)}
-                  modelReady={isLoaded}
-                />
               ) : showGamesPanel ? (
                 <GamesPanel
                   games={gamesPanelGames}
@@ -6070,6 +6133,13 @@ function App() {
                   onBackFromEmbed={() => setGamesEmbedGame(null)}
                   onGamesUpdate={handleGamesPanelUpdate}
                   onLoadingChange={setGamesPanelLoading}
+                />
+              ) : showGlobePanel ? (
+                <GlobePanel
+                  onClose={closeGlobePanel}
+                  command={globeCommand}
+                  onCommandSent={() => setGlobeCommand(null)}
+                  modelReady={isLoaded}
                 />
               ) : (
                 <CameraPreview
@@ -6100,25 +6170,21 @@ function App() {
             aria-hidden={showLiveMediaFullscreen || showGamesFullscreen}
           >
             <header className="chat-header">
-              {!desktopLayout ? (
-                <>
-                  <button
-                    type="button"
-                    className="chat-header-menu-btn"
-                    aria-label="פתח תפריט GroVee"
-                    title="פתח תפריט"
-                    onClick={() => setSidebarOpen(true)}
-                  >
-                    <GroveeLogoMark size="sm" />
-                  </button>
-                  <LocalContextBar
-                    context={startupContext}
-                    uiLang={uiLang}
-                    variant="header"
-                    className="chat-header-context-mobile"
-                  />
-                </>
-              ) : null}
+              <button
+                type="button"
+                className="chat-header-menu-btn"
+                aria-label="פתח תפריט GroVee"
+                title="פתח תפריט"
+                onClick={() => setSidebarOpen(true)}
+              >
+                <GroveeLogoMark size="sm" />
+              </button>
+              <LocalContextBar
+                context={startupContext}
+                uiLang={uiLang}
+                variant="header"
+                className="chat-header-context-mobile"
+              />
               <div className="chat-header-primary">
               {!cameraMode ? (
                 <ChatModelPicker
@@ -6143,14 +6209,12 @@ function App() {
               )}
               </div>
               <div className="chat-header-actions">
-                {desktopLayout ? <UiLanguageToggle className="chat-header-lang-desktop" /> : null}
-                {desktopLayout ? (
-                  <LocalContextBar
-                    context={startupContext}
-                    uiLang={uiLang}
-                    className="chat-header-context-desktop"
-                  />
-                ) : null}
+                <UiLanguageToggle className="chat-header-lang-desktop" />
+                <LocalContextBar
+                  context={startupContext}
+                  uiLang={uiLang}
+                  className="chat-header-context-desktop"
+                />
                 {activeArtifact && !artifactOpen ? (
                   <button
                     type="button"

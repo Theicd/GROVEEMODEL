@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 import { channelToSearchHit, radioToSearchHit } from "./adapters";
 import {
-  curatedSnapshotToChannel,
   fetchCuratedFavoritesFromRepo,
 } from "./curatedFavorites";
 import { LIVE_MEDIA_CATEGORIES, LIVE_MEDIA_COUNTRIES } from "./catalogs";
@@ -28,12 +27,15 @@ import { LiveMediaResultsGrid } from "../searchResults/LiveMediaResultsGrid";
 import { LiveMediaControlPanel, LiveMediaStatusBadge } from "../searchResults/LiveMediaControlPanel";
 import type { UnifiedSearchHit } from "../searchResults/types";
 import { CableTunerView } from "./CableTunerView";
+import { warmMjhEpgCaches } from "./epg/epgService";
 import { fetchStartupContext, getStartupContextSync } from "../startupContext";
 import { buildRegionalRadioLineup } from "./cableTunerRadio";
 import { channelQualityScore } from "./ranking";
+import { ApiKeysPanelContent } from "../apiKeys/ApiKeysPanel";
 import "./liveMediaPanel.css";
+import "../apiKeys/apiKeys.css";
 
-type HubView = "watch" | "browse" | "radio" | "settings";
+type HubView = "watch" | "browse" | "favorites" | "radio" | "settings";
 
 type Props = {
   uiLang: ChatUiLanguage;
@@ -57,7 +59,6 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   const [language, setLanguage] = useState("");
   const [page, setPage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [curatedTvHits, setCuratedTvHits] = useState<UnifiedSearchHit[] | null>(null);
   const [curatedReady, setCuratedReady] = useState(false);
   const [geoCountry, setGeoCountry] = useState(() => getStartupContextSync()?.countryCode ?? "");
   const rtl = uiLang === "he";
@@ -99,6 +100,8 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
           langFilter: "שפה",
           langUnknown: "לא מזוהה",
           backChat: "חזרה לצ'אט",
+          tmdbTitle: "מפתח TMDB",
+          tmdbHint: "משך סרט, תקציר ופוסטר בתצוגת Live TV (EPG / OSD).",
           brandLive: "שידור חי",
           brandTag: "ערוצים · רדיו · מועדפים",
         }
@@ -137,6 +140,8 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
           langFilter: "Language",
           langUnknown: "Unknown",
           backChat: "Back to chat",
+          tmdbTitle: "TMDB API key",
+          tmdbHint: "Movie runtime, overview, and poster in Live TV (EPG / OSD).",
           brandLive: "LIVE",
           brandTag: "Channels · Radio · Favorites",
         };
@@ -178,17 +183,16 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
 
   useEffect(() => {
     let alive = true;
-    void fetchCuratedFavoritesFromRepo().then((file) => {
-      if (!alive) return;
-      const hits = (file?.channels ?? []).map((snap) =>
-        channelToSearchHit(curatedSnapshotToChannel(snap)),
-      );
-      setCuratedTvHits(hits);
-      setCuratedReady(true);
+    void fetchCuratedFavoritesFromRepo().then(() => {
+      if (alive) setCuratedReady(true);
     });
     return () => {
       alive = false;
     };
+  }, []);
+
+  useEffect(() => {
+    void warmMjhEpgCaches();
   }, []);
 
   useEffect(() => {
@@ -238,10 +242,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
     return list.map((c) => channelToSearchHit(c));
   }, [channels, userPrefs?.favoriteChannelIds]);
 
-  const tunerFavorites = useMemo(() => {
-    if (curatedTvHits && curatedTvHits.length > 0) return curatedTvHits;
-    return favoriteTvHits;
-  }, [curatedTvHits, favoriteTvHits]);
+  const tunerFavorites = favoriteTvHits;
 
   const regionalRadio = useMemo(
     () => buildRegionalRadioLineup(radio, geoCountry || "us"),
@@ -341,6 +342,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
 
   const nav: { id: HubView; label: string; badge?: number }[] = [
     { id: "watch", label: L.watch, badge: tunerFavorites.length || undefined },
+    { id: "favorites", label: L.favorites, badge: (favoriteTvHits.length + favoriteRadioHits.length) || undefined },
     { id: "browse", label: L.browse },
     { id: "radio", label: L.radio },
     { id: "settings", label: L.settings },
@@ -510,6 +512,29 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
                 </>
               ) : null}
 
+              {view === "favorites" && !loading ? (
+                <div className="lm-favorites">
+                  <section>
+                    <h3>
+                      ★ {L.tv} · {favoriteTvHits.length}
+                    </h3>
+                    {favoriteTvHits.length ? (
+                      <LiveMediaResultsGrid hits={favoriteTvHits} uiLang={uiLang} mode="livetv" {...gridFavProps} />
+                    ) : (
+                      <p className="lm-empty-favorites">{L.noFavorites}</p>
+                    )}
+                  </section>
+                  {favoriteRadioHits.length > 0 ? (
+                    <section>
+                      <h3>
+                        ★ {L.radio} · {favoriteRadioHits.length}
+                      </h3>
+                      <LiveMediaResultsGrid hits={favoriteRadioHits} uiLang={uiLang} mode="radio" {...gridFavProps} />
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
+
               {view === "radio" && !loading ? (
                 <>
                   <p className="lm-count">
@@ -567,6 +592,11 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
                         📺 {L.liveControl}
                       </button>
                     </div>
+                  </section>
+                  <section className="lm-settings-tmdb">
+                    <h3>{L.tmdbTitle}</h3>
+                    <p>{L.tmdbHint}</p>
+                    <ApiKeysPanelContent active providers={["tmdb"]} showIntro={false} showSoon={false} />
                   </section>
                   {(userPrefs?.blacklistChannelIds.length ?? 0) + (userPrefs?.blacklistRadioIds.length ?? 0) > 0 ? (
                     <section>

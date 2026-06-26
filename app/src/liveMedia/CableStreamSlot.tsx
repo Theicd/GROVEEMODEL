@@ -164,8 +164,10 @@ export function CableStreamSlot({
             className="lm-cable-tile-jump"
             onClick={(e) => {
               e.stopPropagation();
+              e.preventDefault();
               onQuadJump();
             }}
+            onPointerDown={(e) => e.stopPropagation()}
           >
             {quadJumpLabel}
           </button>

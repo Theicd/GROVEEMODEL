@@ -36,8 +36,8 @@ const HUB_TABS: { id: PluginsHubTab; label: string; icon: string; badgeClass?: s
 ];
 
 const TAB_SUBTITLE: Record<PluginsHubTab, string> = {
-  plugins: "שירותים מקומיים על המחשב — Grove Search Companion",
-  "api-keys": "AIS חי · Tavily · Scavio — נשמר מקומית בדפדפן",
+  plugins: "שירותים מקומיים — Grove Search Companion",
+  "api-keys": "TMDB · AIS חי · Tavily · Scavio — נשמר מקומית בדפדפן",
   rss: "מנוע חדשות ברקע — איסוף כותרות, אינדקס וסיכום Gemma",
 };
 
@@ -61,7 +61,19 @@ const statusClass: Record<PluginStatus, string> = {
   degraded: "grovee-plugin-status--degraded",
 };
 
-function PluginCard({
+function resolveStatusLabel(health?: PluginHealthState): string {
+  const status = health?.status ?? "unknown";
+  if (
+    health?.moduleHealth &&
+    !health.moduleHealth.enabled &&
+    health.messageHe?.includes("מושבת")
+  ) {
+    return "מושבת";
+  }
+  return statusLabel[status];
+}
+
+function CompanionPluginCard({
   plugin,
   health,
 }: {
@@ -217,6 +229,16 @@ function PluginCard({
   );
 }
 
+function PluginCard({
+  plugin,
+  health,
+}: {
+  plugin: GroveePlugin;
+  health?: PluginHealthState;
+}) {
+  return <CompanionPluginCard plugin={plugin} health={health} />;
+}
+
 function PluginsTabContent({
   snapshot,
 }: {
@@ -225,8 +247,7 @@ function PluginsTabContent({
   return (
     <>
       <p className="grovee-plugins-intro">
-        תוספים מריצים תהליך קטן על המחשב שלך. GROVEEMODEL נשאר בדפדפן; התוסף מספק יכולות שלא
-        אפשריות בדפדפן בלבד (למשל SERP scraping).
+        תוספים מריצים תהליך קטן על המחשב שלך. GROVEEMODEL נשאר בדפדפן; Companion מספק חיפוש מקומי.
       </p>
 
       {GROVEE_PLUGINS.map((plugin) => (
@@ -237,7 +258,6 @@ function PluginsTabContent({
         <h3>תוספים עתידיים</h3>
         <ul>
           <li>Cheapersal — מחירי סופר מקומי</li>
-          <li>TMDB — קטalog סרטים</li>
           <li>HF Scanner — סריקת מודלים</li>
         </ul>
       </section>

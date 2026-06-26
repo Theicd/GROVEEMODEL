@@ -4,13 +4,19 @@ import {
   AISSTREAM_KEY_SAVED_EVENT,
   TAVILY_KEY_SAVED_EVENT,
   SCAVIO_KEY_SAVED_EVENT,
+  TMDB_KEY_SAVED_EVENT,
   getAisStreamApiKey,
   getScavioApiKey,
   getTavilyApiKey,
+  getTmdbApiKey,
+  getTmdbV4Token,
   listApiKeyEntries,
   setAisStreamApiKey,
   setScavioApiKey,
   setTavilyApiKey,
+  setTmdbApiKey,
+  setTmdbV4Token,
+  ensureTmdbDefaultsInstalled,
   isProviderEnabled,
   setProviderEnabled,
   getProviderUsage,
@@ -24,38 +30,44 @@ import type { ProviderUsageRecord } from "./apiProviderUsage";
 import { probeAisStreamConnection } from "../realityData/providers/aisStream";
 import { probeScavioConnection } from "../webSearch/providers/scavio";
 import { probeTavilyConnection } from "../webSearch/providers/tavily";
+import { probeTmdbConnection } from "../tmdb/tmdbProbe";
 import "./apiKeys.css";
 
-const KEY_PROVIDERS: ApiKeyProviderId[] = ["aisstream", "tavily", "scavio"];
+const KEY_PROVIDERS: ApiKeyProviderId[] = ["tmdb", "aisstream", "tavily", "scavio"];
 
 const PROVIDER_ICON: Record<ApiKeyProviderId, string> = {
   aisstream: "⛴",
   tavily: "🔍",
   scavio: "🌐",
+  tmdb: "🎬",
 };
 
 const PROVIDER_PLACEHOLDER: Record<ApiKeyProviderId, string> = {
   aisstream: "הדבק מפתח מ-aisstream.io",
   tavily: "הדבק מפתח מ-tavily.com",
   scavio: "הדבק מפתח sk_… מ-scavio.dev",
+  tmdb: "הדבק מפתח API v3 מ-themoviedb.org",
 };
 
 const SAVED_EVENT: Record<ApiKeyProviderId, string> = {
   aisstream: AISSTREAM_KEY_SAVED_EVENT,
   tavily: TAVILY_KEY_SAVED_EVENT,
   scavio: SCAVIO_KEY_SAVED_EVENT,
+  tmdb: TMDB_KEY_SAVED_EVENT,
 };
 
 const readEnabledMap = (): Record<ApiKeyProviderId, boolean> => ({
   aisstream: isProviderEnabled("aisstream"),
   tavily: isProviderEnabled("tavily"),
   scavio: isProviderEnabled("scavio"),
+  tmdb: isProviderEnabled("tmdb"),
 });
 
 const readUsageMap = (): Record<ApiKeyProviderId, ProviderUsageRecord> => ({
   aisstream: getProviderUsage("aisstream"),
   tavily: getProviderUsage("tavily"),
   scavio: getProviderUsage("scavio"),
+  tmdb: getProviderUsage("tmdb"),
 });
 
 const formatLastUsed = (ts?: number): string => {
@@ -68,12 +80,32 @@ const formatLastUsed = (ts?: number): string => {
   });
 };
 
-export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
+type ApiKeysPanelContentProps = {
+  active?: boolean;
+  /** Show only selected providers (e.g. TMDB in Live TV settings). */
+  providers?: ApiKeyProviderId[];
+  showIntro?: boolean;
+  showSoon?: boolean;
+};
+
+export function ApiKeysPanelContent({
+  active = true,
+  providers,
+  showIntro = true,
+  showSoon = true,
+}: ApiKeysPanelContentProps) {
+  const visibleProviders = providers ?? KEY_PROVIDERS;
+  useEffect(() => {
+    ensureTmdbDefaultsInstalled();
+  }, []);
+
   const [drafts, setDrafts] = useState<Record<ApiKeyProviderId, string>>(() => ({
     aisstream: getAisStreamApiKey() ?? "",
     tavily: getTavilyApiKey() ?? "",
     scavio: getScavioApiKey() ?? "",
+    tmdb: getTmdbApiKey() ?? "",
   }));
+  const [tmdbV4Draft, setTmdbV4Draft] = useState(() => getTmdbV4Token() ?? "");
   const [enabledMap, setEnabledMap] = useState(readEnabledMap);
   const [usageMap, setUsageMap] = useState(readUsageMap);
   const [savedFlash, setSavedFlash] = useState<ApiKeyProviderId | null>(null);
@@ -83,6 +115,9 @@ export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
 
   useEffect(() => {
     if (!active) return;
+    ensureTmdbDefaultsInstalled();
+    setDrafts((prev) => ({ ...prev, tmdb: getTmdbApiKey() ?? prev.tmdb }));
+    setTmdbV4Draft(getTmdbV4Token() ?? "");
     const refresh = () => {
       setEnabledMap(readEnabledMap());
       setUsageMap(readUsageMap());
@@ -105,7 +140,10 @@ export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
     const value = drafts[id].trim();
     if (id === "aisstream") setAisStreamApiKey(value);
     else if (id === "tavily") setTavilyApiKey(value);
-    else setScavioApiKey(value);
+    else if (id === "tmdb") {
+      setTmdbApiKey(value);
+      setTmdbV4Token(tmdbV4Draft);
+    } else setScavioApiKey(value);
     window.dispatchEvent(new CustomEvent(SAVED_EVENT[id]));
     setSavedFlash(id);
     window.setTimeout(() => setSavedFlash(null), 2000);
@@ -129,6 +167,8 @@ export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
       message = (await probeAisStreamConnection(key)).message;
     } else if (id === "tavily") {
       message = (await probeTavilyConnection(key)).message;
+    } else if (id === "tmdb") {
+      message = (await probeTmdbConnection(key)).message;
     } else {
       message = (await probeScavioConnection(key)).message;
     }
@@ -238,7 +278,7 @@ export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
         </label>
 
         <label className="api-keys-field">
-          <span>מפתח API</span>
+          <span>{id === "tmdb" ? "מפתח API (v3)" : "מפתח API"}</span>
           <input
             type="password"
             autoComplete="off"
@@ -249,6 +289,21 @@ export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
             dir="ltr"
           />
         </label>
+
+        {id === "tmdb" ? (
+          <label className="api-keys-field">
+            <span>Access Token (v4)</span>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={tmdbV4Draft}
+              onChange={(e) => setTmdbV4Draft(e.target.value)}
+              placeholder="Bearer token מ-themoviedb.org"
+              dir="ltr"
+            />
+          </label>
+        ) : null}
 
         {renderUsage(id)}
 
@@ -275,23 +330,26 @@ export function ApiKeysPanelContent({ active = true }: { active?: boolean }) {
 
   return (
     <>
-      <p className="api-keys-intro">
-        <strong>AISStream</strong> לים · <strong>Tavily</strong> + <strong>Scavio</strong> לחיפוש אתרים ב-SERP
-        (בנוסף ל-Wikipedia/GitHub/SearXNG). כבה מאגר שלא בשימוש כדי לחסוך קרדיטים.
-      </p>
+      {showIntro ? (
+        <p className="api-keys-intro">
+          <strong>TMDB</strong> — משך סרט, תקציר ופוסטר ב-Live TV · <strong>AISStream</strong> לים ·{" "}
+          <strong>Tavily</strong> + <strong>Scavio</strong> לחיפוש אתרים.
+        </p>
+      ) : null}
 
-      {KEY_PROVIDERS.map(renderCard)}
+      {visibleProviders.map(renderCard)}
 
       {testResult ? <p className="api-keys-test-result api-keys-test-result--global">{testResult}</p> : null}
 
-      <section className="api-keys-card api-keys-card--soon">
-        <h3>בקרוב</h3>
-        <ul>
-          <li>Cheapersal — מחירי סופר</li>
-          <li>Pixabay — מדיה</li>
-          <li>TMDB — סרטים</li>
-        </ul>
-      </section>
+      {showSoon ? (
+        <section className="api-keys-card api-keys-card--soon">
+          <h3>בקרוב</h3>
+          <ul>
+            <li>Cheapersal — מחירי סופר</li>
+            <li>Pixabay — מדיה</li>
+          </ul>
+        </section>
+      ) : null}
     </>
   );
 }
@@ -322,7 +380,7 @@ export function ApiKeysPanel({ open, onClose }: PanelProps) {
             </span>
             <div>
               <h2 id="api-keys-title">מפתחות API</h2>
-              <p className="settings-head-sub">AIS חי · חיפוש web (Tavily + Scavio Google)</p>
+              <p className="settings-head-sub">TMDB · AIS חי · Tavily · Scavio</p>
             </div>
           </div>
           <button type="button" className="icon-close settings-close" onClick={onClose} aria-label="סגור">
