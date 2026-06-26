@@ -1,6 +1,8 @@
 import { getTmdbApiKey } from "../apiKeys/apiKeyStore";
 import { isProviderEnabled, recordProviderUsage } from "../apiKeys/apiProviderUsage";
+import type { EpgProgram } from "../liveMedia/epg/types";
 import { tmdbFallbackLocale, type TmdbLanguage } from "./tmdbLocale";
+import { shouldUseTmdbForEpg } from "./tmdbEpgGate";
 import { localizeTmdbMetaForUi } from "./tmdbLocalize";
 
 export type { TmdbLanguage } from "./tmdbLocale";
@@ -93,8 +95,20 @@ function pickTv(
 /** Movie / TV metadata for EPG now-playing (runtime, overview, poster). */
 export async function lookupTmdbProgram(
   title: string,
-  opts?: { season?: number; episode?: number; language?: TmdbLanguage },
+  opts?: { season?: number; episode?: number; language?: TmdbLanguage; program?: EpgProgram | null },
 ): Promise<TmdbProgramMeta | null> {
+  const stub: EpgProgram = opts?.program ?? {
+    channelId: "",
+    title,
+    season: opts?.season,
+    episode: opts?.episode,
+    start: new Date(),
+    end: new Date(),
+  };
+  if (!shouldUseTmdbForEpg(stub)) {
+    return null;
+  }
+
   const language = opts?.language ?? "en-US";
   const fallbackLanguage = tmdbFallbackLocale(language);
   const key = cacheKey(title, language, opts?.season, opts?.episode);

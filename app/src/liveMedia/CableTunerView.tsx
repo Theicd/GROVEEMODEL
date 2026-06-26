@@ -224,7 +224,7 @@ export function CableTunerView({
   const epgHit = showRadioPage || showQuad ? null : focusHit;
   const streamUrl = focusHit?.mediaPlayUrl || focusHit?.url;
   const streamCue = useStreamCueSync(streamUrl, Boolean(focusHit) && !showQuad && !showRadioPage && !globalSnow);
-  const epgGuide = useEpgGuide(favorites, Boolean(favorites.length) && !showRadioPage && !showQuad && !globalSnow);
+  const epgGuide = useEpgGuide(favorites, Boolean(favorites.length) && !showRadioPage && !showQuad);
 
   const epgEntry = useMemo(
     () => (focusHit ? entryForHit(epgGuide.entries, focusHit.id) : null),
@@ -240,11 +240,9 @@ export function CableTunerView({
     });
   }, [epgEntry, now, streamCue, streamUrl]);
   const tmdbMeta = useTmdbProgramMeta(
-    epgLiveProgram?.title,
+    epgLiveProgram,
     Boolean(epgLiveProgram?.title),
     uiLang,
-    epgLiveProgram?.season,
-    epgLiveProgram?.episode,
   );
 
   const preloadHit = useMemo(() => {
@@ -282,6 +280,7 @@ export function CableTunerView({
   const osdChannelRange = showQuad && range ? `${range.from}${range.to !== range.from ? `–${range.to}` : ""}` : null;
   const nowPlayingInfo = useMemo(() => {
     if (!focusHit || showQuad || showRadioPage) return null;
+    if (epgEntry && epgEntry.hit.id !== focusHit.id) return null;
     return nowPlayingFromEntry(epgEntry, now, streamCue, tmdbMeta?.runtimeMinutes ?? null);
   }, [epgEntry, focusHit, now, showQuad, showRadioPage, streamCue, tmdbMeta?.runtimeMinutes]);
 
@@ -301,6 +300,7 @@ export function CableTunerView({
 
   const nowPlaying = useMemo(() => {
     if (!nowPlayingLocalized || !nowPlayingInfo) return null;
+    if (epgEntry && focusHit && epgEntry.hit.id !== focusHit.id) return null;
     const description = nowPlayingLocalized.description;
     const clippedDesc =
       description && description.length > 140 ? `${description.slice(0, 139).trim()}…` : description;
@@ -313,7 +313,9 @@ export function CableTunerView({
       tmdbRating: tmdbMeta?.rating ?? null,
       posterUrl: tmdbMeta?.posterUrl ?? null,
     };
-  }, [nowPlayingInfo, nowPlayingLocalized, tmdbMeta?.year, tmdbMeta?.rating, tmdbMeta?.posterUrl]);
+  }, [nowPlayingInfo, nowPlayingLocalized, tmdbMeta?.year, tmdbMeta?.rating, tmdbMeta?.posterUrl, epgEntry, focusHit]);
+
+  const osdNoProgram = !showQuad && !showRadioPage && !nowPlaying;
 
   const bumpHeaderRadio = useCallback(
     (nextIdx: number) => {
@@ -379,18 +381,18 @@ export function CableTunerView({
   }, [deadFavorites, markFavoriteDead, total]);
 
   const skipSingleToNext = useCallback(() => {
-    if (showQuad || total < 2 || globalSnow) return;
+    if (showQuad || total < 2) return;
     const cur = singleFavoriteIndex(pageIndex);
     markFavoriteDead(cur);
     const nextFav = nextWorkingFavoriteIndex(cur, 1, total, new Set([...deadFavorites, cur]));
     const targetPage = pageIndexForFavorite(nextFav);
     clearTuneTimer();
+    setPageIndex(targetPage);
     setGlobalSnow(true);
     tuneTimer.current = setTimeout(() => {
-      setPageIndex(targetPage);
       setGlobalSnow(false);
     }, TUNE_MS);
-  }, [clearTuneTimer, deadFavorites, globalSnow, markFavoriteDead, pageIndex, showQuad, total]);
+  }, [clearTuneTimer, deadFavorites, markFavoriteDead, pageIndex, showQuad, total]);
 
   const goToPage = useCallback(
     (targetPage: number, opts?: { tuneMs?: number }) => {
@@ -1083,7 +1085,7 @@ export function CableTunerView({
           </div>
         </div>
 
-        <div className="lm-cable-osd-panel">
+        <div className={`lm-cable-osd-panel${osdNoProgram ? " lm-cable-osd-panel--no-epg" : ""}`}>
           <div className="lm-cable-osd-col lm-cable-osd-col--channel" dir={rtl ? "rtl" : "ltr"}>
             {osdChannelNum != null ? (
               <span className="lm-cable-osd-ch-num">{osdChannelNum}</span>
@@ -1092,9 +1094,11 @@ export function CableTunerView({
             ) : (
               <span className="lm-cable-osd-ch-num">—</span>
             )}
-            <span className="lm-cable-osd-ch-name" title={focusHit?.title}>
-              {showQuad && range ? L.range(range.from, range.to) : showQuad ? L.quadScreen : centerTitle || "—"}
-            </span>
+            {!osdNoProgram ? (
+              <span className="lm-cable-osd-ch-name" title={focusHit?.title}>
+                {showQuad && range ? L.range(range.from, range.to) : showQuad ? L.quadScreen : centerTitle || "—"}
+              </span>
+            ) : null}
           </div>
 
           <div className="lm-cable-osd-col lm-cable-osd-col--program" dir={rtl ? "rtl" : "ltr"}>
@@ -1159,7 +1163,13 @@ export function CableTunerView({
               </div>
             ) : (
               <div className="lm-cable-osd-program lm-cable-osd-program--idle">
-                <p className="lm-cable-osd-idle-title">{centerTitle || L.tuning}</p>
+                {osdNoProgram ? (
+                  <p className="lm-cable-osd-idle-title lm-cable-osd-idle-title--centered" title={focusHit?.title}>
+                    {centerTitle || "—"}
+                  </p>
+                ) : (
+                  <p className="lm-cable-osd-idle-title">{centerTitle || L.tuning}</p>
+                )}
                 {globalSnow ? <p className="lm-cable-osd-tuning">{L.tuning}</p> : null}
               </div>
             )}

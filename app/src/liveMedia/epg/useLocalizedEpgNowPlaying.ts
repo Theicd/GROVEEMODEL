@@ -38,6 +38,12 @@ export function useLocalizedEpgNowPlaying(
       return;
     }
 
+    setLocalized({
+      ...base,
+      displayTitle: tmdbTitle?.trim() || info.program.title,
+      description: tmdbOverview?.trim() || info.program.description?.trim() || info.program.subTitle?.trim() || null,
+    });
+
     let alive = true;
     void (async () => {
       const epgCopy = await localizeEpgCopyForUi(

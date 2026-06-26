@@ -84,19 +84,18 @@ export function detectEpgOffsetHoursForCue(
   return bestScore > 400 ? bestOffset : 0;
 }
 
-/** When no HLS cue yet, try common US/XMLTV offset mistakes. */
-export function guessUsEpgOffsetHours(programs: EpgProgram[], now: Date): number {
-  const candidates = [0, -5, -4, -3, 3, 4, 5];
+/** When no HLS cue yet, pick smallest offset that yields a plausible live slot. */
+export function inferUsEpgOffsetHours(programs: EpgProgram[], now: Date): number {
   let bestOffset = 0;
   let bestScore = -Infinity;
 
-  for (const offset of candidates) {
+  for (let offset = -8; offset <= 8; offset++) {
     const shifted = shiftEpgPrograms(programs, offset);
     const live = shifted.find((p) => p.start <= now && p.end > now);
     if (!live) continue;
     const slotMin = (live.end.getTime() - live.start.getTime()) / 60_000;
-    if (slotMin < 8 || slotMin > 300) continue;
-    const score = slotMin >= 20 && slotMin <= 150 ? 100 - Math.abs(slotMin - 60) : 40;
+    if (slotMin < 12 || slotMin > 300) continue;
+    const score = 200 - Math.abs(offset) * 12 - Math.abs(slotMin - 60) * 0.5;
     if (score > bestScore) {
       bestScore = score;
       bestOffset = offset;
@@ -104,6 +103,11 @@ export function guessUsEpgOffsetHours(programs: EpgProgram[], now: Date): number
   }
 
   return bestScore > 0 ? bestOffset : 0;
+}
+
+/** @deprecated use inferUsEpgOffsetHours */
+export function guessUsEpgOffsetHours(programs: EpgProgram[], now: Date): number {
+  return inferUsEpgOffsetHours(programs, now);
 }
 
 export function resolveEpgOffsetHours(
@@ -124,7 +128,7 @@ export function resolveEpgOffsetHours(
   if (cached) return cached;
 
   if (isUsMjhEpgSource(sourceKey) && programs.length > 0) {
-    const guessed = guessUsEpgOffsetHours(programs, now);
+    const guessed = inferUsEpgOffsetHours(programs, now);
     if (guessed && streamUrl) cacheStreamEpgOffset(streamUrl, guessed);
     return guessed;
   }

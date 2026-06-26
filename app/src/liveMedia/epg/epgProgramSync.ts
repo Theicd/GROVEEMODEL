@@ -58,6 +58,8 @@ export function resolveLiveEpgProgram(
   if (opts?.cue) {
     const fromCue = findProgramForStreamCue(shifted, now, opts.cue);
     if (fromCue) return fromCue;
+    // Stream has live segment timing — wall-clock EPG slot is often wrong (timezone drift).
+    return null;
   }
   return findLiveProgram(shifted, now);
 }

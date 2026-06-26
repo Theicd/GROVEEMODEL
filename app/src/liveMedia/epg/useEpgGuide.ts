@@ -12,8 +12,6 @@ export function useEpgGuide(hits: UnifiedSearchHit[], enabled: boolean) {
 
   useEffect(() => {
     if (!enabled || !hits.length) {
-      setEntries([]);
-      setReadyCount(0);
       setProgress({ loaded: 0, total: 0 });
       return;
     }

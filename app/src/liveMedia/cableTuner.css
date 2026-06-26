@@ -648,6 +648,32 @@
 
 .lm-cable-osd-program--idle {
   align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.lm-cable-osd-panel--no-epg {
+  grid-template-columns: minmax(64px, 0.55fr) minmax(0, 1fr) minmax(80px, 0.8fr);
+}
+
+.lm-cable-osd-panel--no-epg .lm-cable-osd-col--timing {
+  display: none;
+}
+
+.lm-cable-osd-panel--no-epg .lm-cable-osd-col--program {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.lm-cable-osd-idle-title--centered {
+  font-size: clamp(1rem, 2.4vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #e8f4ff;
+  text-align: center;
+  width: 100%;
+  margin: 0;
 }
 
 .lm-cable-osd-program-body {

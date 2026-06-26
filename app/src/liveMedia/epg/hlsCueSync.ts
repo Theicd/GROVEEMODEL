@@ -1,4 +1,6 @@
 /** Parsed from #EXT-X-CUE-OUT / #EXT-X-CUE-OUT-CONT in HLS media playlists. */
+import { proxyAwareFetch } from "../../webSearch/proxyFetch";
+
 export type HlsCueState = {
   /** Minutes elapsed in the current programme segment (from stream, not EPG). */
   elapsedMinutes: number;
@@ -51,18 +53,35 @@ function proxyUrl(target: string): string {
 }
 
 async function fetchPlaylistText(url: string): Promise<string | null> {
-  const attempts = [url];
-  if (typeof window !== "undefined") attempts.push(proxyUrl(url));
+  const attempts: Array<() => Promise<string | null>> = [];
+
+  attempts.push(async () => {
+    try {
+      const res = await proxyAwareFetch(url);
+      if (!res.ok) return null;
+      const text = await res.text();
+      return text.includes("#EXTM3U") ? text : null;
+    } catch {
+      return null;
+    }
+  });
+
+  if (typeof window !== "undefined" && import.meta.env.DEV) {
+    attempts.push(async () => {
+      try {
+        const res = await fetch(proxyUrl(url));
+        if (!res.ok) return null;
+        const text = await res.text();
+        return text.includes("#EXTM3U") ? text : null;
+      } catch {
+        return null;
+      }
+    });
+  }
 
   for (const attempt of attempts) {
-    try {
-      const res = await fetch(attempt);
-      if (!res.ok) continue;
-      const text = await res.text();
-      if (text.includes("#EXTM3U")) return text;
-    } catch {
-      /* try proxy */
-    }
+    const text = await attempt();
+    if (text) return text;
   }
   return null;
 }

@@ -40,10 +40,14 @@ const BY_TVG_BASE: Record<string, EpgExplicitTarget[]> = {
     { sourceKey: "mjh-plex-us", channelId: "6a1610bebdf296985fd95603-69d93c22a5c870fb1e88f871" },
     { sourceKey: "mjh-roku", channelId: "6a1610bebdf296985fd95603-69d93c22a5c870fb1e88f871" },
   ],
+  "FTFSports.us": [
+    { sourceKey: "mjh-plex-us", channelId: "6a1610bebdf296985fd95603-605a309dc5acdc002c7a20aa" },
+  ],
   "ABCKids.au": [{ sourceKey: "mjh-all", channelId: "mjh-abc-kids" }],
 };
 
 const STREAM_HINTS: Array<{ test: RegExp; targets: EpgExplicitTarget[] }> = [
+  { test: /ftf-linear|ftfsports/i, targets: BY_TVG_BASE["FTFSports.us"]! },
   { test: /ionmystery/i, targets: BY_TVG_BASE["WFXT662.us"]! },
   { test: /sysdata_s_p_a_fifa|fifa[_-]?plus/i, targets: BY_TVG_BASE["FIFAPlus.uk"]! },
   { test: /absolutereality|wetv/i, targets: BY_TVG_BASE["AbsoluteRealitybyWETV.us"]! },

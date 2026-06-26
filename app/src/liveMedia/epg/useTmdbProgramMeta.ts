@@ -1,26 +1,32 @@
 import { useEffect, useState } from "react";
 import { TMDB_KEY_SAVED_EVENT } from "../../apiKeys/apiKeyStore";
 import type { ChatUiLanguage } from "../../ui/useUiLanguage";
+import type { EpgProgram } from "./types";
 import { lookupTmdbProgram, tmdbLocaleForUi, type TmdbProgramMeta } from "../../tmdb/tmdbClient";
 
 export function useTmdbProgramMeta(
-  title: string | undefined,
+  program: EpgProgram | null | undefined,
   enabled: boolean,
   uiLang: ChatUiLanguage,
-  season?: number,
-  episode?: number,
 ): TmdbProgramMeta | null {
   const [meta, setMeta] = useState<TmdbProgramMeta | null>(null);
   const language = tmdbLocaleForUi(uiLang);
+  const title = program?.title;
 
   useEffect(() => {
-    if (!enabled || !title?.trim()) {
+    if (!enabled || !title?.trim() || !program) {
       setMeta(null);
       return;
     }
+    setMeta(null);
     let alive = true;
     const load = () => {
-      void lookupTmdbProgram(title, { season, episode, language }).then((m) => {
+      void lookupTmdbProgram(title, {
+        season: program.season,
+        episode: program.episode,
+        language,
+        program,
+      }).then((m) => {
         if (alive) setMeta(m);
       });
     };
@@ -30,7 +36,7 @@ export function useTmdbProgramMeta(
       alive = false;
       window.removeEventListener(TMDB_KEY_SAVED_EVENT, load);
     };
-  }, [title, enabled, season, episode, language]);
+  }, [title, enabled, program, program?.season, program?.episode, language]);
 
   return meta;
 }
