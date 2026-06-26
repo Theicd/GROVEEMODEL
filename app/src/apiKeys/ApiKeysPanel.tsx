@@ -16,7 +16,7 @@ import {
   setTavilyApiKey,
   setTmdbApiKey,
   setTmdbV4Token,
-  ensureTmdbDefaultsInstalled,
+  ensureBuiltinApiKeysInstalled,
   isProviderEnabled,
   setProviderEnabled,
   getProviderUsage,
@@ -96,7 +96,7 @@ export function ApiKeysPanelContent({
 }: ApiKeysPanelContentProps) {
   const visibleProviders = providers ?? KEY_PROVIDERS;
   useEffect(() => {
-    ensureTmdbDefaultsInstalled();
+    ensureBuiltinApiKeysInstalled();
   }, []);
 
   const [drafts, setDrafts] = useState<Record<ApiKeyProviderId, string>>(() => ({
@@ -115,8 +115,13 @@ export function ApiKeysPanelContent({
 
   useEffect(() => {
     if (!active) return;
-    ensureTmdbDefaultsInstalled();
-    setDrafts((prev) => ({ ...prev, tmdb: getTmdbApiKey() ?? prev.tmdb }));
+    ensureBuiltinApiKeysInstalled();
+    setDrafts({
+      aisstream: getAisStreamApiKey(),
+      tavily: getTavilyApiKey(),
+      scavio: getScavioApiKey(),
+      tmdb: getTmdbApiKey(),
+    });
     setTmdbV4Draft(getTmdbV4Token() ?? "");
     const refresh = () => {
       setEnabledMap(readEnabledMap());

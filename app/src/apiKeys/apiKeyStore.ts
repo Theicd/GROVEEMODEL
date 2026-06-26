@@ -6,10 +6,14 @@ const SCAVIO_KEY = "grovee-scavio-api-key";
 const TMDB_KEY = "grovee-tmdb-api-key";
 const TMDB_V4_KEY = "grovee-tmdb-v4-token";
 
-/** Built-in TMDB credentials — shown and used from «מפתחות API» by default. */
+/** Built-in API credentials — used on GitHub Pages and pre-filled in «מפתחות API». */
 export const DEFAULT_TMDB_API_KEY = "c1b70f76d13dcb2268678fc347fb0f68";
 export const DEFAULT_TMDB_V4_TOKEN =
   "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJjMWI3MGY3NmQxM2RjYjIyNjg2NzhmYzM0N2ZiMGY2OCIsIm5iZiI6MTc1NTU1MzI2MS4yNjIsInN1YiI6IjY4YTM5ZGVkNzk2MTFjNDRiNTNlZTZkMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.PWSY-Yx-NBfme1ID8vqTXCPTWeZ7tD___dn_ZD03qYE";
+export const DEFAULT_TAVILY_API_KEY = "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";
+export const DEFAULT_SCAVIO_API_KEY =
+  "sk_42e3064a90375bf3ee566e490b90cc13470b0b7bdaa200f6db703c02ed54741f";
+export const DEFAULT_AISSTREAM_API_KEY = "3a4363e45173f0e80c8aa584f655ac8c617da959";
 
 export const AISSTREAM_KEY_SAVED_EVENT = "grovee-aisstream-key-saved";
 export const TAVILY_KEY_SAVED_EVENT = "grovee-tavily-key-saved";
@@ -62,13 +66,22 @@ export const API_KEY_CATALOG: Record<
   },
 };
 
-export const getAisStreamApiKey = (): string | undefined => {
-  const fromEnv = (import.meta.env.VITE_AISSTREAM_API_KEY as string | undefined)?.trim();
+function resolveApiKey(envValue: string | undefined, storageKey: string, builtin: string): string {
+  const fromEnv = envValue?.trim();
   if (fromEnv) return fromEnv;
-  if (typeof localStorage === "undefined") return undefined;
-  const stored = localStorage.getItem(AISSTREAM_KEY)?.trim();
-  return stored || undefined;
-};
+  if (typeof localStorage !== "undefined") {
+    const stored = localStorage.getItem(storageKey)?.trim();
+    if (stored) return stored;
+  }
+  return builtin;
+}
+
+export const getAisStreamApiKey = (): string =>
+  resolveApiKey(
+    import.meta.env.VITE_AISSTREAM_API_KEY as string | undefined,
+    AISSTREAM_KEY,
+    DEFAULT_AISSTREAM_API_KEY,
+  );
 
 export const setAisStreamApiKey = (key: string): void => {
   if (typeof localStorage === "undefined") return;
@@ -77,13 +90,12 @@ export const setAisStreamApiKey = (key: string): void => {
   else localStorage.removeItem(AISSTREAM_KEY);
 };
 
-export const getTavilyApiKey = (): string | undefined => {
-  const fromEnv = (import.meta.env.VITE_TAVILY_API_KEY as string | undefined)?.trim();
-  if (fromEnv) return fromEnv;
-  if (typeof localStorage === "undefined") return undefined;
-  const stored = localStorage.getItem(TAVILY_KEY)?.trim();
-  return stored || undefined;
-};
+export const getTavilyApiKey = (): string =>
+  resolveApiKey(
+    import.meta.env.VITE_TAVILY_API_KEY as string | undefined,
+    TAVILY_KEY,
+    DEFAULT_TAVILY_API_KEY,
+  );
 
 export const setTavilyApiKey = (key: string): void => {
   if (typeof localStorage === "undefined") return;
@@ -92,13 +104,12 @@ export const setTavilyApiKey = (key: string): void => {
   else localStorage.removeItem(TAVILY_KEY);
 };
 
-export const getScavioApiKey = (): string | undefined => {
-  const fromEnv = (import.meta.env.VITE_SCAVIO_API_KEY as string | undefined)?.trim();
-  if (fromEnv) return fromEnv;
-  if (typeof localStorage === "undefined") return undefined;
-  const stored = localStorage.getItem(SCAVIO_KEY)?.trim();
-  return stored || undefined;
-};
+export const getScavioApiKey = (): string =>
+  resolveApiKey(
+    import.meta.env.VITE_SCAVIO_API_KEY as string | undefined,
+    SCAVIO_KEY,
+    DEFAULT_SCAVIO_API_KEY,
+  );
 
 export const setScavioApiKey = (key: string): void => {
   if (typeof localStorage === "undefined") return;
@@ -107,25 +118,19 @@ export const setScavioApiKey = (key: string): void => {
   else localStorage.removeItem(SCAVIO_KEY);
 };
 
-export const getTmdbApiKey = (): string | undefined => {
-  const fromEnv = (import.meta.env.VITE_TMDB_API_KEY as string | undefined)?.trim();
-  if (fromEnv) return fromEnv;
-  if (typeof localStorage !== "undefined") {
-    const stored = localStorage.getItem(TMDB_KEY)?.trim();
-    if (stored) return stored;
-  }
-  return DEFAULT_TMDB_API_KEY;
-};
+export const getTmdbApiKey = (): string =>
+  resolveApiKey(
+    import.meta.env.VITE_TMDB_API_KEY as string | undefined,
+    TMDB_KEY,
+    DEFAULT_TMDB_API_KEY,
+  );
 
-export const getTmdbV4Token = (): string | undefined => {
-  const fromEnv = (import.meta.env.VITE_TMDB_V4_TOKEN as string | undefined)?.trim();
-  if (fromEnv) return fromEnv;
-  if (typeof localStorage !== "undefined") {
-    const stored = localStorage.getItem(TMDB_V4_KEY)?.trim();
-    if (stored) return stored;
-  }
-  return DEFAULT_TMDB_V4_TOKEN;
-};
+export const getTmdbV4Token = (): string =>
+  resolveApiKey(
+    import.meta.env.VITE_TMDB_V4_TOKEN as string | undefined,
+    TMDB_V4_KEY,
+    DEFAULT_TMDB_V4_TOKEN,
+  );
 
 export const setTmdbApiKey = (key: string): void => {
   if (typeof localStorage === "undefined") return;
@@ -141,19 +146,29 @@ export const setTmdbV4Token = (token: string): void => {
   else localStorage.removeItem(TMDB_V4_KEY);
 };
 
-/** Pre-fill TMDB fields in localStorage so the API keys UI shows them on first open. */
-export const ensureTmdbDefaultsInstalled = (): void => {
+/** Pre-fill localStorage so the API keys UI shows built-in keys on first visit. */
+export const ensureBuiltinApiKeysInstalled = (): void => {
   if (typeof localStorage === "undefined") return;
-  if (!localStorage.getItem(TMDB_KEY)?.trim()) {
-    localStorage.setItem(TMDB_KEY, DEFAULT_TMDB_API_KEY);
-  }
+  if (!localStorage.getItem(TMDB_KEY)?.trim()) localStorage.setItem(TMDB_KEY, DEFAULT_TMDB_API_KEY);
   if (!localStorage.getItem(TMDB_V4_KEY)?.trim()) {
     localStorage.setItem(TMDB_V4_KEY, DEFAULT_TMDB_V4_TOKEN);
   }
+  if (!localStorage.getItem(TAVILY_KEY)?.trim()) {
+    localStorage.setItem(TAVILY_KEY, DEFAULT_TAVILY_API_KEY);
+  }
+  if (!localStorage.getItem(SCAVIO_KEY)?.trim()) {
+    localStorage.setItem(SCAVIO_KEY, DEFAULT_SCAVIO_API_KEY);
+  }
+  if (!localStorage.getItem(AISSTREAM_KEY)?.trim()) {
+    localStorage.setItem(AISSTREAM_KEY, DEFAULT_AISSTREAM_API_KEY);
+  }
 };
 
+/** @deprecated use ensureBuiltinApiKeysInstalled */
+export const ensureTmdbDefaultsInstalled = ensureBuiltinApiKeysInstalled;
+
 if (typeof window !== "undefined") {
-  ensureTmdbDefaultsInstalled();
+  ensureBuiltinApiKeysInstalled();
 }
 
 const maskKey = (key: string): string => {
@@ -161,7 +176,7 @@ const maskKey = (key: string): string => {
   return `${key.slice(0, 4)}…${key.slice(-4)}`;
 };
 
-const getKeyForProvider = (id: ApiKeyProviderId): string | undefined => {
+const getKeyForProvider = (id: ApiKeyProviderId): string => {
   if (id === "aisstream") return getAisStreamApiKey();
   if (id === "tavily") return getTavilyApiKey();
   if (id === "tmdb") return getTmdbApiKey();
