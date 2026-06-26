@@ -48,6 +48,11 @@ import {
   formatOsdProgramRange,
   nowPlayingFromEntry,
 } from "./epg/epgNowPlaying";
+import {
+  CableTunerWelcome,
+  dismissTvWelcome,
+  readTvWelcomeDismissed,
+} from "./CableTunerWelcome";
 import "./cableTuner.css";
 
 const TUNE_MS = 2400;
@@ -114,6 +119,7 @@ export function CableTunerView({
     cursor: initialRotationCursor(favorites.length, initialQuadSlots(favorites.length)),
   });
   const [globalSnow, setGlobalSnow] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(() => !readTvWelcomeDismissed());
   const [osdVisible, setOsdVisible] = useState(true);
   const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false);
   const [channelMenuOpen, setChannelMenuOpen] = useState(false);
@@ -754,7 +760,24 @@ export function CableTunerView({
   }, []);
 
   if (loading) {
-    return <div className="lm-cable-loading">…</div>;
+    return (
+      <div className="lm-cable lm-cable--fullscreen">
+        <div className="lm-cable-loading" aria-hidden="true">
+          …
+        </div>
+        {welcomeOpen ? (
+          <CableTunerWelcome
+            uiLang={uiLang}
+            booting
+            channelCount={0}
+            onStart={() => {
+              dismissTvWelcome();
+              setWelcomeOpen(false);
+            }}
+          />
+        ) : null}
+      </div>
+    );
   }
 
   if (!total) {
@@ -771,11 +794,23 @@ export function CableTunerView({
   return (
     <div
       ref={rootRef}
-      className={`lm-cable lm-cable--fullscreen${isFullscreen ? " is-browser-fullscreen" : ""}`}
+      className={`lm-cable lm-cable--fullscreen${isFullscreen ? " is-browser-fullscreen" : ""}${welcomeOpen ? " lm-cable--welcome-open" : ""}`}
       dir={rtl ? "rtl" : "ltr"}
       onMouseMove={onPointerActivity}
       onTouchStart={onPointerActivity}
     >
+      {welcomeOpen ? (
+        <CableTunerWelcome
+          uiLang={uiLang}
+          booting={false}
+          channelCount={total}
+          onStart={() => {
+            dismissTvWelcome();
+            setWelcomeOpen(false);
+            pokeOsd();
+          }}
+        />
+      ) : null}
       {showRadioPage && radioHit ? (
         <div className="lm-cable-single lm-cable-single--radio">
           <ClassicRadioView

@@ -413,13 +413,13 @@ export async function ensureLiveMediaLibrary(): Promise<{
   await ensureBuiltinSources();
   let channels = (await dbGetAllChannels()).map(enrichChannel);
   let radio = (await dbGetAllRadio()).map(enrichRadio);
-  if (channels.length === 0 && radio.length === 0) {
-    await syncAllLiveMediaSources();
-    channels = (await dbGetAllChannels()).map(enrichChannel);
-    radio = (await dbGetAllRadio()).map(enrichRadio);
-  }
   const curated = await fetchCuratedFavoritesFromRepo();
   channels = injectCuratedChannels(channels, curated).map(enrichChannel);
+  if (channels.length === 0 && radio.length === 0) {
+    await syncAllLiveMediaSources();
+    channels = injectCuratedChannels((await dbGetAllChannels()).map(enrichChannel), curated).map(enrichChannel);
+    radio = (await dbGetAllRadio()).map(enrichRadio);
+  }
   let prefs = await loadUserPrefs();
   const mergedPrefs = mergeCuratedFavoritesIntoPrefs(prefs, curated);
   if (mergedPrefs.changed) {

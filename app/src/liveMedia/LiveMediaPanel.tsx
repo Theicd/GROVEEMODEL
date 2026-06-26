@@ -2,10 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 import { channelToSearchHit, radioToSearchHit } from "./adapters";
 import {
-  fetchCuratedFavoritesFromRepo,
-} from "./curatedFavorites";
-import { LIVE_MEDIA_CATEGORIES, LIVE_MEDIA_COUNTRIES } from "./catalogs";
-import {
   ensureLiveMediaLibrary,
   exportLiveMediaUserPrefs,
   hideChannelFromCatalog,
@@ -59,7 +55,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   const [language, setLanguage] = useState("");
   const [page, setPage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [curatedReady, setCuratedReady] = useState(false);
+  const [libraryReady, setLibraryReady] = useState(false);
   const [geoCountry, setGeoCountry] = useState(() => getStartupContextSync()?.countryCode ?? "");
   const rtl = uiLang === "he";
 
@@ -148,6 +144,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
 
   const refreshLibrary = useCallback(async () => {
     setLoading(true);
+    setLibraryReady(false);
     try {
       const lib = await ensureLiveMediaLibrary();
       setChannels(lib.channels);
@@ -155,6 +152,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
       setUserPrefs(lib.prefs);
     } finally {
       setLoading(false);
+      setLibraryReady(true);
     }
   }, []);
 
@@ -180,16 +178,6 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
     if (view !== "radio" || country) return;
     if (geoCountry) setCountry(geoCountry);
   }, [view, country, geoCountry]);
-
-  useEffect(() => {
-    let alive = true;
-    void fetchCuratedFavoritesFromRepo().then(() => {
-      if (alive) setCuratedReady(true);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   useEffect(() => {
     void warmMjhEpgCaches();
@@ -447,7 +435,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
             favorites={tunerFavorites}
             regionalRadio={regionalRadio}
             uiLang={uiLang}
-            loading={!curatedReady && loading}
+            loading={!libraryReady || loading}
             onOpenBrowse={() => setView("browse")}
             onRemoveFavorite={handleToggleFavorite}
             onBack={isFullLayout ? undefined : onClose}
