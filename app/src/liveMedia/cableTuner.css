@@ -917,9 +917,9 @@
 .lm-cable-volume {
   position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -942,6 +942,28 @@
   border: 1px solid var(--osd-neon-dim);
   background: rgba(8, 14, 28, 0.94);
   box-shadow: 0 0 14px rgba(45, 180, 255, 0.3), 0 8px 24px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.lm-cable-volume:hover .lm-cable-volume-rail,
+.lm-cable-volume:focus-within .lm-cable-volume-rail {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (min-width: 769px) {
+  .lm-cable-volume {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .lm-cable-volume-rail {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .lm-cable-volume-slider {
@@ -1050,8 +1072,8 @@
   }
 
   .lm-cable-osd {
-    padding: 8px 12px max(10px, env(safe-area-inset-bottom));
-    gap: 8px;
+    padding: 6px 10px max(8px, env(safe-area-inset-bottom));
+    gap: 6px;
   }
 
   .lm-cable-osd-toolbar,
@@ -1059,55 +1081,121 @@
     max-width: 100%;
   }
 
+  /* Single scrollable toolbar row — no wrap into 2 rows */
   .lm-cable-osd-toolbar {
-    gap: 6px;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    padding-inline: 2px;
+  }
+
+  .lm-cable-osd-toolbar::-webkit-scrollbar {
+    display: none;
   }
 
   .lm-cable-osd-tool {
-    min-width: 48px;
-    min-height: 46px;
-    padding: 5px 6px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    min-width: 44px;
+    min-height: 42px;
+    padding: 6px 8px;
   }
 
   .lm-cable-osd-tool-label {
-    font-size: 0.52rem;
+    font-size: 0.5rem;
+    max-width: 48px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Volume: mute + horizontal slider inline (no popup rail) */
+  .lm-cable-volume {
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+    padding-inline: 2px;
+  }
+
+  .lm-cable-volume-mute {
+    min-width: 42px;
+    min-height: 42px;
+    padding: 6px;
+  }
+
+  .lm-cable-volume-mute .lm-cable-osd-tool-label {
+    display: none;
+  }
+
+  .lm-cable-volume-rail {
+    position: static;
+    transform: none;
+    opacity: 1;
+    pointer-events: auto;
+    width: 72px;
+    height: auto;
+    min-height: 36px;
+    padding: 4px 8px;
+    box-shadow: none;
+  }
+
+  .lm-cable-volume-slider {
+    transform: none;
+    width: 100%;
+    height: 24px;
   }
 
   .lm-cable-osd-panel {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
   }
 
   .lm-cable-osd-col--channel {
     grid-column: 1;
-    grid-row: 1;
+    grid-row: auto;
     flex-direction: row;
     gap: 8px;
     text-align: start;
     align-items: center;
-  }
-
-  .lm-cable-osd-col--program {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    border-inline-start: none;
-    border-top: 1px solid rgba(120, 170, 220, 0.18);
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(120, 170, 220, 0.14);
   }
 
   .lm-cable-osd-col--timing {
-    grid-column: 2;
-    grid-row: 1;
+    grid-column: 1;
+    grid-row: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(120, 170, 220, 0.14);
+  }
+
+  .lm-cable-osd-col--program {
+    grid-column: 1;
+    grid-row: auto;
+    border-inline-start: none;
+    border-top: none;
+    padding: 8px 10px;
   }
 
   .lm-cable-osd-col--status {
-    grid-column: 1 / -1;
-    grid-row: 3;
+    grid-column: 1;
+    grid-row: auto;
     flex-direction: row;
     flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px 16px;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding: 6px 10px;
     border-inline-start: none;
-    border-top: 1px solid rgba(120, 170, 220, 0.18);
+    border-top: 1px solid rgba(120, 170, 220, 0.14);
   }
 
   .lm-cable-osd-col + .lm-cable-osd-col {
@@ -1115,12 +1203,70 @@
   }
 
   .lm-cable-osd-ch-num {
-    font-size: 1.4rem;
+    font-size: 1.35rem;
+  }
+
+  .lm-cable-osd-ch-name {
+    font-size: 0.68rem;
+    text-align: end;
+    -webkit-line-clamp: 1;
+  }
+
+  .lm-cable-osd-program {
+    gap: 8px;
+  }
+
+  .lm-cable-osd-now-title {
+    font-size: 0.92rem;
+    line-height: 1.25;
+    -webkit-line-clamp: 2;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .lm-cable-osd-now-desc {
+    font-size: 0.72rem;
+    line-height: 1.35;
+    -webkit-line-clamp: 2;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .lm-cable-osd-now-poster {
-    width: 40px;
-    height: 60px;
+    width: 36px;
+    height: 54px;
+    flex-shrink: 0;
+  }
+
+  .lm-cable-osd-time-range,
+  .lm-cable-osd-now-ends {
+    font-size: 0.72rem;
+  }
+
+  .lm-cable-osd-channel--quad {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .lm-cable-osd-channel--quad::-webkit-scrollbar {
+    display: none;
+  }
+
+  .lm-cable-osd-channel-part {
+    max-width: none;
+    flex: 0 0 auto;
+    font-size: 0.68rem;
+  }
+
+  .lm-cable-osd-quad-jump {
+    max-width: 100%;
+    width: 100%;
   }
 
   .lm-cable-osd-btn {
@@ -1146,6 +1292,22 @@
 
   .lm-cable-radio-header-slide {
     max-width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .lm-cable-osd-tool-label {
+    display: none;
+  }
+
+  .lm-cable-osd-tool {
+    min-width: 40px;
+    min-height: 40px;
+    padding: 7px;
+  }
+
+  .lm-cable-volume-rail {
+    width: 56px;
   }
 }
 

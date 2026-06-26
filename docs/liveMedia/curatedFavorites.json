@@ -1,7 +1,7 @@
 {
   "version": 1,
   "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
-  "updatedAt": 1782446874093,
+  "updatedAt": 1782423468552,
   "channels": [
     {
       "id": "3czxxt",
@@ -46,34 +46,6 @@
       "tvgId": "Action24.gr@SD"
     },
     {
-      "id": "ov4cb6",
-      "name": "Action Hollywood Movies (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://amg01076-lightningintern-actionhollywood-samsungau-rs69y.amagi.tv/playlist/amg01076-lightningintern-actionhollywood-samsungau/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
-    },
-    {
-      "id": "nki0cj",
-      "name": "Action Hollywood Movies (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://cdn-apse1-prod.tsv2.amagi.tv/linear/amg01076-lightningintern-actionhollywood-samsungnz/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
-    },
-    {
       "id": "67xisa",
       "name": "AMC Absolute Reality",
       "country": "",
@@ -88,20 +60,6 @@
       "tvgId": "AbsoluteRealitybyWETV.us@SD"
     },
     {
-      "id": "53pml1",
-      "name": "America's Got Talent (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://d2mexh8isep4mf.cloudfront.net/AmericasGotTalent_GB.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
-    },
-    {
       "id": "alzugs",
       "name": "Antiques Roadshow PBS (1080p)",
       "country": "",
@@ -114,20 +72,6 @@
         "Series"
       ],
       "tvgId": "PBSAntiquesRoadshow.us@SD"
-    },
-    {
-      "id": "m9olx9",
-      "name": "Autentic History (1080p)",
-      "country": "",
-      "language": "",
-      "category": "documentary",
-      "stream": "https://9e754fa707344ccca6d84955c8fcaf36.mediatailor.us-east-1.amazonaws.com/v1/master/44f73ba4d03e9607dcd9bebdcb8494d86964f1d8/RlaxxTV-eu_AutenticHistory/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Documentary"
-      ],
-      "tvgId": "AutenticHistory.de@SD"
     },
     {
       "id": "a9keq8",
@@ -454,20 +398,6 @@
       "tvgId": "FTFSports.us@SD"
     },
     {
-      "id": "aubz5b",
-      "name": "Global Fashion Channel (1080p)",
-      "country": "",
-      "language": "",
-      "category": "lifestyle",
-      "stream": "https://pubgfc.teleosmedia.com/linear/globalfashionchannel/globalfashionchannel/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Lifestyle"
-      ],
-      "tvgId": "GlobalFashionChannel.us@SD"
-    },
-    {
       "id": "9v1rmo",
       "name": "GLORY Kickboxing (720p)",
       "country": "",
@@ -522,20 +452,6 @@
         "Movies"
       ],
       "tvgId": "GroovyTV.gr@SD"
-    },
-    {
-      "id": "ax1zue",
-      "name": "History Hunters (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://amg00841-amg00841c7-rakuten-uk-2820.playouts.now.amagi.tv/playlist/amg00841-aeemeafast-historyhuntersrakuten-rakutenuk/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": "history-hunters"
     },
     {
       "id": "4xdm2a",
@@ -596,7 +512,7 @@
     },
     {
       "id": "6efreo",
-      "name": "like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0\" group-title=\"Movies\",24 Hour Free Movies (720p)",
+      "name": "24 Hour Free Movies (720p)",
       "country": "",
       "language": "",
       "category": "movies",
@@ -610,7 +526,7 @@
     },
     {
       "id": "284n8w",
-      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Movies\",FilmBox Extra",
+      "name": "FilmBox Extra",
       "country": "",
       "language": "",
       "category": "movies",
@@ -624,7 +540,7 @@
     },
     {
       "id": "4zo3j6",
-      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Movies\",FilmBox Premium",
+      "name": "FilmBox Premium",
       "country": "",
       "language": "",
       "category": "movies",
@@ -638,7 +554,7 @@
     },
     {
       "id": "3tiyeq",
-      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Movies\",FilmBox Stars",
+      "name": "FilmBox Stars",
       "country": "",
       "language": "",
       "category": "movies",
@@ -652,7 +568,7 @@
     },
     {
       "id": "9z5vv3",
-      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Music\",360TuneBox (576p)",
+      "name": "360TuneBox (576p)",
       "country": "",
       "language": "",
       "category": "music",
@@ -666,7 +582,7 @@
     },
     {
       "id": "5gz2kb",
-      "name": "like Gecko) Chrome/149.0.0.0 Safari/537.3\" group-title=\"Sports\",FightBox",
+      "name": "FightBox",
       "country": "",
       "language": "",
       "category": "sports",
@@ -1020,20 +936,6 @@
       "tvgId": "Channel13.il@SD"
     },
     {
-      "id": "aceoup",
-      "name": "Saved by the Bell (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://xumo-xumoent-vc-111-0pd1g.fast.nbcuni.com/live/master.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
-    },
-    {
       "id": "3gcjtp",
       "name": "Sky Racing 2 (720p)",
       "country": "",
@@ -1048,20 +950,6 @@
       "tvgId": "SkyRacing2.au@SD"
     },
     {
-      "id": "3uopqc",
-      "name": "Space Series (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://streams2.sofast.tv/v1/master/611d79b11b77e2f571934fd80ca1413453772ac7/18d329ef-d478-413c-b68f-c123494ac434/manifest.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
-    },
-    {
       "id": "1xieox",
       "name": "Stingray Jukebox Oldies (1080p)",
       "country": "",
@@ -1074,20 +962,6 @@
         "Music"
       ],
       "tvgId": "StingrayJukeboxOldies.ca@SD"
-    },
-    {
-      "id": "6a3180",
-      "name": "Surf Cinema (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://amg13231-actve-amg13231c4-samsung-nz-3093.playouts.now.amagi.tv/playlist/amg13231-actvefast-surfer-samsungnz/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
     },
     {
       "id": "6rc0hj",
@@ -1161,30 +1035,16 @@
       "tvgId": "TomAndJerry.do@HD"
     },
     {
-      "id": "75kt02",
-      "name": "TVS Cipher Network (360p)",
-      "country": "",
-      "language": "",
-      "category": "classic",
-      "stream": "https://rpn.bozztv.com/gusa/gusa-tvsmystery/index.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Classic"
-      ],
-      "tvgId": "TVSCipherNetwork.us@SD"
-    },
-    {
       "id": "2vwcmz",
-      "name": "WFXT-DT2 (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
+      "name": "ION Mystery (1080p)",
+      "country": "US",
+      "language": "eng",
+      "category": "entertainment",
       "stream": "https://cdn-uw2-prod.tsv2.amagi.tv/linear/amg01438-ewscrippscompan-ionmystery-tablo/playlist.m3u8",
       "source": "iptv-org-all",
       "type": "tv",
       "tags": [
-        "Undefined"
+        "Entertainment"
       ],
       "tvgId": "WFXT662.us@SD"
     },
@@ -1201,20 +1061,6 @@
         "Movies"
       ],
       "tvgId": "WhiplashCinema.us@SD"
-    },
-    {
-      "id": "737d9j",
-      "name": "Wild West TV (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://linear-799.frequency.stream/dist/xumo/799/hls/master/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": ""
     }
   ],
   "radio": []

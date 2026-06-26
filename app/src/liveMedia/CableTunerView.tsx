@@ -1054,6 +1054,21 @@ export function CableTunerView({
             <span className="lm-cable-osd-tool-label">{L.fullscreenLbl}</span>
           </button>
           <div className="lm-cable-volume" title={L.volumeLbl}>
+            <button
+              type="button"
+              className="lm-cable-osd-tool lm-cable-volume-mute"
+              onClick={() => {
+                setAudioUnlocked(true);
+                setUserMuted((m) => !m);
+                pokeOsd();
+              }}
+              aria-label={userMuted ? L.unmute : L.mute}
+            >
+              <span className="lm-cable-osd-tool-icon" aria-hidden="true">
+                {userMuted || volume === 0 ? "🔇" : volume < 0.45 ? "🔉" : "🔊"}
+              </span>
+              <span className="lm-cable-osd-tool-label">{L.volumeLbl}</span>
+            </button>
             <div className="lm-cable-volume-rail">
               <input
                 type="range"
@@ -1070,21 +1085,6 @@ export function CableTunerView({
                 aria-label={L.volume}
               />
             </div>
-            <button
-              type="button"
-              className="lm-cable-osd-tool lm-cable-volume-mute"
-              onClick={() => {
-                setAudioUnlocked(true);
-                setUserMuted((m) => !m);
-                pokeOsd();
-              }}
-              aria-label={userMuted ? L.unmute : L.mute}
-            >
-              <span className="lm-cable-osd-tool-icon" aria-hidden="true">
-                {userMuted || volume === 0 ? "🔇" : volume < 0.45 ? "🔉" : "🔊"}
-              </span>
-              <span className="lm-cable-osd-tool-label">{L.volumeLbl}</span>
-            </button>
           </div>
         </div>
 
