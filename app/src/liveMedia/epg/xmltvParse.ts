@@ -73,6 +73,18 @@ function parseEpisodeFields(block: string): Pick<EpgProgram, "season" | "episode
     }
     return { episodeLabel: onscreen, subTitle };
   }
+  const genericEp = block.match(/<episode-num[^>]*>([^<]*)<\/episode-num>/i)?.[1]?.trim();
+  if (genericEp) {
+    const m = genericEp.match(/S(\d+)\s*E(\d+)/i) ?? genericEp.match(/(\d+)\s*x\s*(\d+)/i);
+    if (m) {
+      return {
+        season: +m[1],
+        episode: +m[2],
+        episodeLabel: genericEp,
+        subTitle,
+      };
+    }
+  }
   const xmltv = block
     .match(/<episode-num[^>]*system="xmltv_ns"[^>]*>([^<]*)<\/episode-num>/i)?.[1]
     ?.trim();

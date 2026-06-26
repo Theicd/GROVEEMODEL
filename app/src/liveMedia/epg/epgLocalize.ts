@@ -8,24 +8,19 @@ export type LocalizableEpgCopy = {
   subTitle?: string | null;
 };
 
-/** Translate EPG programme copy for Hebrew UI when text is still Latin. */
+/** Translate EPG programme description for Hebrew UI — never titles (idioms break). */
 export async function localizeEpgCopyForUi(
   copy: LocalizableEpgCopy,
   uiLang: ChatUiLanguage,
 ): Promise<LocalizableEpgCopy> {
   if (uiLang !== "he") return copy;
 
-  const pending: Array<"title" | "description" | "subTitle"> = [];
+  const pending: Array<"description" | "subTitle"> = [];
   const texts: string[] = [];
-  if (needsHebrewTranslation(copy.title)) {
-    pending.push("title");
-    texts.push(copy.title);
-  }
   if (needsHebrewTranslation(copy.description)) {
     pending.push("description");
     texts.push(copy.description!);
-  }
-  if (needsHebrewTranslation(copy.subTitle)) {
+  } else if (needsHebrewTranslation(copy.subTitle)) {
     pending.push("subTitle");
     texts.push(copy.subTitle!);
   }
@@ -34,17 +29,15 @@ export async function localizeEpgCopyForUi(
   try {
     const { texts: translated } = await translateTexts(texts, "he", "en");
     let idx = 0;
-    let title = copy.title;
     let description = copy.description;
     let subTitle = copy.subTitle;
     for (const field of pending) {
       const value = translated[idx++]?.trim();
       if (!value) continue;
-      if (field === "title") title = value;
-      else if (field === "description") description = value;
+      if (field === "description") description = value;
       else subTitle = value;
     }
-    return { title, description, subTitle };
+    return { title: copy.title, description, subTitle };
   } catch {
     return copy;
   }

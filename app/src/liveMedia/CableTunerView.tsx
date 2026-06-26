@@ -243,6 +243,7 @@ export function CableTunerView({
     epgLiveProgram,
     Boolean(epgLiveProgram?.title),
     uiLang,
+    focusHit?.title,
   );
 
   const preloadHit = useMemo(() => {
@@ -296,6 +297,7 @@ export function CableTunerView({
     uiLang,
     tmdbMeta?.title,
     tmdbOverviewShort,
+    tmdbMeta?.seriesTitle,
   );
 
   const nowPlaying = useMemo(() => {
@@ -307,6 +309,7 @@ export function CableTunerView({
     return {
       ...nowPlayingInfo,
       displayTitle: nowPlayingLocalized.displayTitle,
+      seriesTitle: nowPlayingLocalized.seriesTitle,
       episodeLabel: formatEpisodeLabel(nowPlayingInfo.program),
       description: clippedDesc,
       tmdbYear: tmdbMeta?.year ?? null,
@@ -1147,7 +1150,11 @@ export function CableTunerView({
                   />
                 ) : null}
                 <div className="lm-cable-osd-program-body">
-                  <span className="lm-cable-osd-now-kicker">{L.onNow}</span>
+                  <span className="lm-cable-osd-now-kicker">
+                    {nowPlaying.seriesTitle && nowPlaying.seriesTitle !== nowPlaying.displayTitle ?
+                      nowPlaying.seriesTitle
+                    : L.onNow}
+                  </span>
                   <p className="lm-cable-osd-now-title" title={nowPlaying.displayTitle}>
                     {nowPlaying.displayTitle}
                   </p>

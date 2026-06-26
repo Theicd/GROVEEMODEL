@@ -12,6 +12,8 @@ export type TmdbProgramMeta = {
   id: number;
   mediaType: "movie" | "tv";
   title: string;
+  /** TV series name when title is an episode name. */
+  seriesTitle?: string | null;
   runtimeMinutes: number | null;
   overview: string | null;
   posterUrl: string | null;
@@ -73,11 +75,14 @@ function pickMovie(
   title: string,
 ) {
   const norm = title.trim().toLowerCase();
-  return (
+  const hit =
     results.find((r) => r.title?.trim().toLowerCase() === norm) ??
-    results.find((r) => r.title?.trim().toLowerCase().includes(norm)) ??
-    results[0]
-  );
+    results.find((r) => r.title?.trim().toLowerCase().includes(norm));
+  if (!hit) return null;
+  const year = yearFromDate(hit.release_date);
+  const wordCount = norm.split(/\s+/).filter(Boolean).length;
+  if (wordCount >= 3 && year != null && year < 1965) return null;
+  return hit;
 }
 
 function pickTv(
@@ -88,14 +93,26 @@ function pickTv(
   return (
     results.find((r) => r.name?.trim().toLowerCase() === norm) ??
     results.find((r) => r.name?.trim().toLowerCase().includes(norm)) ??
-    results[0]
+    null
   );
+}
+
+function resolveSearchTitle(title: string, channelTitle?: string): string {
+  const t = title.trim();
+  if (t) return t;
+  return channelTitle?.trim() ?? "";
 }
 
 /** Movie / TV metadata for EPG now-playing (runtime, overview, poster). */
 export async function lookupTmdbProgram(
   title: string,
-  opts?: { season?: number; episode?: number; language?: TmdbLanguage; program?: EpgProgram | null },
+  opts?: {
+    season?: number;
+    episode?: number;
+    language?: TmdbLanguage;
+    program?: EpgProgram | null;
+    channelTitle?: string;
+  },
 ): Promise<TmdbProgramMeta | null> {
   const stub: EpgProgram = opts?.program ?? {
     channelId: "",
@@ -111,11 +128,115 @@ export async function lookupTmdbProgram(
 
   const language = opts?.language ?? "en-US";
   const fallbackLanguage = tmdbFallbackLocale(language);
-  const key = cacheKey(title, language, opts?.season, opts?.episode);
+  const query = resolveSearchTitle(title, opts?.channelTitle);
+  if (!query) return null;
+
+  const key = `${cacheKey(query, language, opts?.season, opts?.episode)}|${opts?.channelTitle ?? ""}`;
   if (metaCache.has(key)) return metaCache.get(key) ?? null;
   if (!getTmdbApiKey()) {
     metaCache.set(key, null);
     return null;
+  }
+
+  const tvSearch = await tmdbFetch<{
+    results?: Array<{
+      id: number;
+      name?: string;
+      first_air_date?: string;
+      vote_average?: number;
+      overview?: string;
+      poster_path?: string;
+    }>;
+  }>("/search/tv", { query, language, include_adult: "false" });
+
+  const tvHit = pickTv(tvSearch?.results ?? [], query);
+
+  if (tvHit?.id) {
+    if (opts?.season != null && opts?.episode != null) {
+      const ep = await tmdbFetch<{
+        name?: string;
+        overview?: string;
+        runtime?: number;
+        still_path?: string;
+        vote_average?: number;
+        air_date?: string;
+      }>(`/tv/${tvHit.id}/season/${opts.season}/episode/${opts.episode}`, { language });
+
+      const epEn =
+        fallbackLanguage ?
+          await tmdbFetch<{ name?: string; overview?: string }>(
+            `/tv/${tvHit.id}/season/${opts.season}/episode/${opts.episode}`,
+            { language: fallbackLanguage },
+          )
+        : null;
+
+      const showBrief = await tmdbFetch<{ name?: string; poster_path?: string; first_air_date?: string }>(
+        `/tv/${tvHit.id}`,
+        { language },
+      );
+
+      if (ep) {
+        const meta = await localizeTmdbMetaForUi(
+          {
+            id: tvHit.id,
+            mediaType: "tv",
+            seriesTitle: showBrief?.name?.trim() || tvHit.name?.trim() || query,
+            title:
+              pickLocalizedText(ep.name, epEn?.name) ||
+              ep.name?.trim() ||
+              tvHit.name?.trim() ||
+              query,
+            runtimeMinutes: ep.runtime && ep.runtime > 0 ? ep.runtime : null,
+            overview: pickLocalizedText(ep.overview, epEn?.overview),
+            posterUrl: posterUrl(ep.still_path ?? showBrief?.poster_path ?? tvHit.poster_path),
+            rating: ep.vote_average ?? tvHit.vote_average ?? null,
+            year: yearFromDate(ep.air_date ?? tvHit.first_air_date),
+          },
+          language,
+        );
+        metaCache.set(key, meta);
+        return meta;
+      }
+    }
+
+    const show = await tmdbFetch<{
+      name?: string;
+      overview?: string;
+      poster_path?: string;
+      vote_average?: number;
+      first_air_date?: string;
+      episode_run_time?: number[];
+    }>(`/tv/${tvHit.id}`, { language });
+
+    const showEn =
+      fallbackLanguage ?
+        await tmdbFetch<{ name?: string; overview?: string }>(`/tv/${tvHit.id}`, {
+          language: fallbackLanguage,
+        })
+      : null;
+
+    if (show) {
+      const avgRuntime =
+        show.episode_run_time?.length ?
+          Math.round(show.episode_run_time.reduce((a, b) => a + b, 0) / show.episode_run_time.length)
+        : null;
+
+      const meta = await localizeTmdbMetaForUi(
+        {
+          id: tvHit.id,
+          mediaType: "tv",
+          title: pickLocalizedText(show.name, showEn?.name) || tvHit.name?.trim() || query,
+          runtimeMinutes: avgRuntime,
+          overview: pickLocalizedText(show.overview, showEn?.overview),
+          posterUrl: posterUrl(show.poster_path),
+          rating: show.vote_average ?? null,
+          year: yearFromDate(show.first_air_date),
+        },
+        language,
+      );
+      metaCache.set(key, meta);
+      return meta;
+    }
   }
 
   const movieSearch = await tmdbFetch<{
@@ -127,9 +248,9 @@ export async function lookupTmdbProgram(
       overview?: string;
       poster_path?: string;
     }>;
-  }>("/search/movie", { query: title.trim(), language, include_adult: "false" });
+  }>("/search/movie", { query, language, include_adult: "false" });
 
-  const movieHit = pickMovie(movieSearch?.results ?? [], title);
+  const movieHit = pickMovie(movieSearch?.results ?? [], query);
   if (movieHit?.id) {
     const detail = await tmdbFetch<{
       title?: string;
@@ -156,7 +277,7 @@ export async function lookupTmdbProgram(
           title:
             pickLocalizedText(detail.title, detailEn?.title) ||
             movieHit.title?.trim() ||
-            title,
+            query,
           runtimeMinutes: detail.runtime && detail.runtime > 0 ? detail.runtime : null,
           overview: pickLocalizedText(detail.overview, detailEn?.overview),
           posterUrl: posterUrl(detail.poster_path),
@@ -170,104 +291,8 @@ export async function lookupTmdbProgram(
     }
   }
 
-  const tvSearch = await tmdbFetch<{
-    results?: Array<{
-      id: number;
-      name?: string;
-      first_air_date?: string;
-      vote_average?: number;
-      overview?: string;
-      poster_path?: string;
-    }>;
-  }>("/search/tv", { query: title.trim(), language, include_adult: "false" });
-
-  const tvHit = pickTv(tvSearch?.results ?? [], title);
-  if (!tvHit?.id) {
-    metaCache.set(key, null);
-    return null;
-  }
-
-  if (opts?.season != null && opts?.episode != null) {
-    const ep = await tmdbFetch<{
-      name?: string;
-      overview?: string;
-      runtime?: number;
-      still_path?: string;
-      vote_average?: number;
-      air_date?: string;
-    }>(`/tv/${tvHit.id}/season/${opts.season}/episode/${opts.episode}`, { language });
-
-    const epEn =
-      fallbackLanguage ?
-        await tmdbFetch<{ name?: string; overview?: string }>(
-          `/tv/${tvHit.id}/season/${opts.season}/episode/${opts.episode}`,
-          { language: fallbackLanguage },
-        )
-      : null;
-
-    if (ep) {
-      const meta = await localizeTmdbMetaForUi(
-        {
-          id: tvHit.id,
-          mediaType: "tv",
-          title:
-            pickLocalizedText(ep.name, epEn?.name) ||
-            tvHit.name?.trim() ||
-            title,
-          runtimeMinutes: ep.runtime && ep.runtime > 0 ? ep.runtime : null,
-          overview: pickLocalizedText(ep.overview, epEn?.overview),
-          posterUrl: posterUrl(ep.still_path ?? tvHit.poster_path),
-          rating: ep.vote_average ?? tvHit.vote_average ?? null,
-          year: yearFromDate(ep.air_date ?? tvHit.first_air_date),
-        },
-        language,
-      );
-      metaCache.set(key, meta);
-      return meta;
-    }
-  }
-
-  const show = await tmdbFetch<{
-    name?: string;
-    overview?: string;
-    poster_path?: string;
-    vote_average?: number;
-    first_air_date?: string;
-    episode_run_time?: number[];
-  }>(`/tv/${tvHit.id}`, { language });
-
-  const showEn =
-    fallbackLanguage ?
-      await tmdbFetch<{ name?: string; overview?: string }>(`/tv/${tvHit.id}`, {
-        language: fallbackLanguage,
-      })
-    : null;
-
-  if (!show) {
-    metaCache.set(key, null);
-    return null;
-  }
-
-  const avgRuntime =
-    show.episode_run_time?.length ?
-      Math.round(show.episode_run_time.reduce((a, b) => a + b, 0) / show.episode_run_time.length)
-    : null;
-
-  const meta = await localizeTmdbMetaForUi(
-    {
-      id: tvHit.id,
-      mediaType: "tv",
-      title: pickLocalizedText(show.name, showEn?.name) || tvHit.name?.trim() || title,
-      runtimeMinutes: avgRuntime,
-      overview: pickLocalizedText(show.overview, showEn?.overview),
-      posterUrl: posterUrl(show.poster_path),
-      rating: show.vote_average ?? null,
-      year: yearFromDate(show.first_air_date),
-    },
-    language,
-  );
-  metaCache.set(key, meta);
-  return meta;
+  metaCache.set(key, null);
+  return null;
 }
 
 export async function lookupMovieRuntimeMinutes(title: string): Promise<number | null> {

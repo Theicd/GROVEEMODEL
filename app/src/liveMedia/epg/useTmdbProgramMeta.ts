@@ -8,6 +8,7 @@ export function useTmdbProgramMeta(
   program: EpgProgram | null | undefined,
   enabled: boolean,
   uiLang: ChatUiLanguage,
+  channelTitle?: string,
 ): TmdbProgramMeta | null {
   const [meta, setMeta] = useState<TmdbProgramMeta | null>(null);
   const language = tmdbLocaleForUi(uiLang);
@@ -26,6 +27,7 @@ export function useTmdbProgramMeta(
         episode: program.episode,
         language,
         program,
+        channelTitle,
       }).then((m) => {
         if (alive) setMeta(m);
       });
@@ -36,7 +38,7 @@ export function useTmdbProgramMeta(
       alive = false;
       window.removeEventListener(TMDB_KEY_SAVED_EVENT, load);
     };
-  }, [title, enabled, program, program?.season, program?.episode, language]);
+  }, [title, enabled, program, program?.season, program?.episode, language, channelTitle]);
 
   return meta;
 }

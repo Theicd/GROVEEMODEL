@@ -9,37 +9,19 @@ export function needsHebrewTranslation(text: string | null | undefined): boolean
   return /[a-z]/i.test(t);
 }
 
-/** Fill missing Hebrew from Google Translate when TMDB has no he-IL copy. */
+/** Fill missing Hebrew overview from Google Translate — keep titles from TMDB/EPG. */
 export async function localizeTmdbMetaForUi<T extends { title: string; overview: string | null }>(
   meta: T,
   language: TmdbLanguage,
 ): Promise<T> {
   if (language !== "he-IL") return meta;
 
-  const pending: Array<"title" | "overview"> = [];
-  const texts: string[] = [];
-  if (needsHebrewTranslation(meta.title)) {
-    pending.push("title");
-    texts.push(meta.title);
-  }
-  if (needsHebrewTranslation(meta.overview)) {
-    pending.push("overview");
-    texts.push(meta.overview!);
-  }
-  if (!texts.length) return meta;
+  if (!needsHebrewTranslation(meta.overview)) return meta;
 
   try {
-    const { texts: translated } = await translateTexts(texts, "he", "en");
-    let idx = 0;
-    let title = meta.title;
-    let overview = meta.overview;
-    for (const field of pending) {
-      const value = translated[idx++]?.trim();
-      if (!value) continue;
-      if (field === "title") title = value;
-      else overview = value;
-    }
-    return { ...meta, title, overview };
+    const { texts: translated } = await translateTexts([meta.overview!], "he", "en");
+    const overview = translated[0]?.trim() || meta.overview;
+    return { ...meta, overview };
   } catch {
     return meta;
   }
