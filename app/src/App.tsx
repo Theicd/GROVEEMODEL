@@ -1477,14 +1477,26 @@ function App() {
   modelRackRef.current = modelRack;
   const selectedRackModelRef = useRef(selectedRackModelId);
   selectedRackModelRef.current = selectedRackModelId;
+  const launchedViaTvDeepLink = useRef(readTvDeepLink());
+  useEffect(() => {
+    if (!launchedViaTvDeepLink.current) return;
+    const rack = loadModelRack();
+    setModelRack(rack);
+    const defaultId = pickCapabilitiesDefaultRackId(rack);
+    if (defaultId) {
+      setSelectedRackModelId(defaultId);
+      persistSelectedModelId(defaultId);
+    }
+  }, []);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [pluginsHubTab, setPluginsHubTab] = useState<PluginsHubTab>("plugins");
   const pluginHealth = usePluginHealthPoll(true);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(() => launchedViaTvDeepLink.current);
   const [isGemmaLoaded, setIsGemmaLoaded] = useState(false);
   const [bootTarget, setBootTarget] = useState<StartupModelChoice>("gemma");
-  const [chatModelAvailability, setChatModelAvailability] =
-    useState<ChatModelAvailability>("gemma");
+  const [chatModelAvailability, setChatModelAvailability] = useState<ChatModelAvailability>(() =>
+    launchedViaTvDeepLink.current ? "none" : "gemma",
+  );
   const [capabilitiesFailureReason, setCapabilitiesFailureReason] = useState<string | null>(
     null,
   );
@@ -1499,7 +1511,9 @@ function App() {
       el.focus({ preventScroll: true });
     });
   }, []);
-  const [status, setStatus] = useState("Not loaded");
+  const [status, setStatus] = useState(() =>
+    launchedViaTvDeepLink.current ? "מצב יכולות — אין מודל שיחה" : "Not loaded",
+  );
   const [progress, setProgress] = useState(0);
   const [loadingPhase, setLoadingPhase] = useState<"download" | "init">("download");
   const [loadingBytes, setLoadingBytes] = useState({ loaded: 0, total: 0, speedBps: 0 });
@@ -1539,7 +1553,7 @@ function App() {
   const measuredWebContextCharsRef = useRef(0);
   const [gamesPanelOpen, setGamesPanelOpen] = useState(false);
   const [globePanelOpen, setGlobePanelOpen] = useState(false);
-  const [liveMediaPanelOpen, setLiveMediaPanelOpen] = useState(() => readTvDeepLink());
+  const [liveMediaPanelOpen, setLiveMediaPanelOpen] = useState(() => launchedViaTvDeepLink.current);
   const [globeCommand, setGlobeCommand] = useState<GlobeCommand | null>(null);
   const [gamesPanelGames, setGamesPanelGames] = useState<OnlineGame[]>([]);
   const [gamesPanelTitle, setGamesPanelTitle] = useState("משחקים און־ליין");
@@ -5654,7 +5668,7 @@ function App() {
 
   return (
     <main className="app">
-      {chatModelAvailability === "none" ? (
+      {chatModelAvailability === "none" && !launchedViaTvDeepLink.current ? (
         <CapabilitiesWelcomeToast failureReason={capabilitiesFailureReason} />
       ) : null}
 
