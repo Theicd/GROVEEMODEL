@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 import { channelToSearchHit, radioToSearchHit } from "./adapters";
+import { LIVE_MEDIA_CATEGORIES, LIVE_MEDIA_COUNTRIES } from "./catalogs";
 import {
   ensureLiveMediaLibrary,
   exportLiveMediaUserPrefs,
