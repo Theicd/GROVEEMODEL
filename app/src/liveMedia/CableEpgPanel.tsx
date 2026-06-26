@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { ChatUiLanguage } from "../../ui/useUiLanguage";
 import type { UnifiedSearchHit } from "../../searchResults/types";
-import { loadEpgGuide, type EpgGuideEntry } from "./epg/epgGuideStore";
+import { isWebOnlyHost } from "../webSearch/proxyFetch";
+import { loadEpgGuide, verifyEpgFeedsLoaded, type EpgGuideEntry } from "./epg/epgGuideStore";
 import {
   buildEpgGridWindow,
   EPG_GRID_ROW_PX,
@@ -28,16 +29,20 @@ export function CableEpgPanel({ favorites, focusHit, uiLang, onClose }: Props) {
   const rtl = uiLang === "he";
   const [entries, setEntries] = useState<EpgGuideEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  const [loadError, setLoadError] = useState<"feed" | "nomatch" | false>(false);
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
   const [now, setNow] = useState(() => new Date());
 
+  const webOnly = isWebOnlyHost();
   const L =
     uiLang === "he"
       ? {
           title: "לוח שידורים",
           loading: (n: number, t: number) => `טוען לוח שידורים… ${n}/${t}`,
-          feedError: "לא הצלחנו לטעון את נתוני ה-EPG מהרשת. עצור והפעל מחדש את npm run dev, ואז רענן.",
+          feedError: webOnly
+            ? "לא הצלחנו לטעון את נתוני ה-EPG מהרשת. בדוק חיבור לאינטרנט ולחץ נסה שוב."
+            : "לא הצלחנו לטעון את נתוני ה-EPG מהרשת. עצור והפעל מחדש את npm run dev, ואז רענן.",
+          noMatch: "נתוני EPG נטענו, אך לא נמצאו תוכניות לערוצים המועדפים בטווח הזמן הזה.",
           retry: "נסה שוב",
           channels: (n: number, total: number) => `${n} ערוצים עם תוכניות · ${total} סה״כ`,
           noShows: "אין תוכניות בטווח הזמן",
@@ -47,7 +52,10 @@ export function CableEpgPanel({ favorites, focusHit, uiLang, onClose }: Props) {
       : {
           title: "TV Guide",
           loading: (n: number, t: number) => `Loading TV guide… ${n}/${t}`,
-          feedError: "Could not load EPG data. Stop and restart npm run dev, then refresh.",
+          feedError: webOnly
+            ? "Could not load EPG data from the network. Check your connection and tap Retry."
+            : "Could not load EPG data. Stop and restart npm run dev, then refresh.",
+          noMatch: "EPG feeds loaded, but no programmes matched your favorites in this time window.",
           retry: "Retry",
           channels: (n: number, total: number) => `${n} channels with shows · ${total} total`,
           noShows: "No shows in this time range",
@@ -59,15 +67,20 @@ export function CableEpgPanel({ favorites, focusHit, uiLang, onClose }: Props) {
     setLoading(true);
     setLoadError(false);
     try {
+      const feedsOk = await verifyEpgFeedsLoaded();
+      if (!feedsOk) {
+        setLoadError("feed");
+        return;
+      }
       const result = await loadEpgGuide(favorites, (partial, loaded, total) => {
         setEntries(partial);
         setProgress({ loaded, total });
       });
       setEntries(result);
       const withData = result.filter((e) => (e.schedule?.programs.length ?? 0) > 0).length;
-      if (!withData) setLoadError(true);
+      if (!withData) setLoadError("nomatch");
     } catch {
-      setLoadError(true);
+      setLoadError("feed");
     } finally {
       setLoading(false);
     }
@@ -120,7 +133,7 @@ export function CableEpgPanel({ favorites, focusHit, uiLang, onClose }: Props) {
         ) : null}
         {loadError ? (
           <div className="lm-cable-epg-status lm-cable-epg-status--error">
-            <p>{L.feedError}</p>
+            <p>{loadError === "feed" ? L.feedError : L.noMatch}</p>
             <button type="button" className="lm-cable-osd-btn" onClick={() => void load()}>
               {L.retry}
             </button>

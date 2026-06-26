@@ -111,8 +111,7 @@ const CORS_DIRECT_SUFFIXES = [
   "iptv-org.github.io",
   "de1.api.radio-browser.info",
   "api.radio-browser.info",
-  "i.mjh.nz",
-  "mjh.nz",
+  "cdn.jsdelivr.net",
 ];
 
 type RelayFn = (target: string) => string;

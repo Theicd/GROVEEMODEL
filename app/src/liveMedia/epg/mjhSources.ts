@@ -1,4 +1,5 @@
 import { gunzipSync } from "fflate";
+import { isStaticWebHost } from "../../webSearch/proxyFetch";
 import { parsedChannelsForXml, resetParsedChannelCacheForTests } from "./xmltvParse";
 
 export type MjhEpgSource = {
@@ -47,8 +48,29 @@ function isBrowser(): boolean {
   return typeof window !== "undefined";
 }
 
+const MJH_CDN_BASE = "https://cdn.jsdelivr.net/gh/matthuisman/i.mjh.nz@master";
+
 function devEpgProxyUrl(target: string): string {
   return `/api/epg/raw?url=${encodeURIComponent(target)}`;
+}
+
+/** i.mjh.nz redirects to raw.githubusercontent.com (no browser CORS) — jsDelivr mirrors the same repo with CORS. */
+export function mjhUrlToCdn(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "i.mjh.nz" || parsed.protocol !== "https:") return null;
+    const path = parsed.pathname.replace(/^\//, "");
+    return path ? `${MJH_CDN_BASE}/${path}` : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchBytesFromUrl(fetchUrl: string): Promise<ArrayBuffer | null> {
+  const res = await fetch(fetchUrl, { cache: "no-store", mode: "cors" });
+  if (!res.ok) return null;
+  const buf = await res.arrayBuffer();
+  return buf.byteLength > 64 ? buf : null;
 }
 
 async function gunzipToText(buf: ArrayBuffer): Promise<string> {
@@ -76,25 +98,31 @@ async function gunzipToText(buf: ArrayBuffer): Promise<string> {
   throw new Error("gzip decompression unavailable");
 }
 
-/** Fetch MJH gzip/XML bytes — dev proxy first (binary-safe), then direct CORS. */
+/** Fetch MJH gzip/XML bytes — dev proxy (binary-safe); static hosts use jsDelivr CDN (CORS-safe). */
 export async function fetchMjhBytes(url: string): Promise<ArrayBuffer | null> {
   const attempts: Array<() => Promise<ArrayBuffer | null>> = [];
+  const cdnUrl = mjhUrlToCdn(url);
+  const staticHost = isBrowser() && isStaticWebHost();
 
-  if (isBrowser() && import.meta.env.DEV) {
-    attempts.push(async () => {
-      const res = await fetch(devEpgProxyUrl(url), { cache: "no-store" });
-      if (!res.ok) return null;
-      const buf = await res.arrayBuffer();
-      return buf.byteLength > 64 ? buf : null;
-    });
+  if (cdnUrl && staticHost) {
+    attempts.push(() => fetchBytesFromUrl(cdnUrl));
   }
 
-  attempts.push(async () => {
-    const res = await fetch(url, { cache: "no-store", mode: "cors" });
-    if (!res.ok) return null;
-    const buf = await res.arrayBuffer();
-    return buf.byteLength > 64 ? buf : null;
-  });
+  if (isBrowser() && import.meta.env.DEV) {
+    attempts.push(() => fetchBytesFromUrl(devEpgProxyUrl(url)));
+  }
+
+  if (!staticHost) {
+    attempts.push(() => fetchBytesFromUrl(url));
+  }
+
+  if (cdnUrl && !staticHost) {
+    attempts.push(() => fetchBytesFromUrl(cdnUrl));
+  }
+
+  if (staticHost) {
+    attempts.push(() => fetchBytesFromUrl(`https://corsproxy.io/?${encodeURIComponent(url)}`));
+  }
 
   for (const attempt of attempts) {
     try {
