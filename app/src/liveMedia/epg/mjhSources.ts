@@ -40,6 +40,12 @@ export const MJH_EPG_SOURCES: MjhEpgSource[] = [
     url: "https://i.mjh.nz/Roku/all.xml.gz",
     streamHint: /roku|wurl\.com/i,
   },
+  {
+    key: "rakuten-uk",
+    label: "Rakuten TV UK",
+    url: "https://raw.githubusercontent.com/dp247/rakuten-uk-epg/master/epg.xml",
+    streamHint: /historyhuntersrakuten|rakuten-uk|amg00841.*rakuten/i,
+  },
 ];
 
 const xmlCache = new Map<string, Promise<string | null>>();
@@ -49,6 +55,12 @@ function isBrowser(): boolean {
 }
 
 const MJH_CDN_BASE = "https://cdn.jsdelivr.net/gh/matthuisman/i.mjh.nz@master";
+const RAKUTEN_UK_EPG_CDN = "https://cdn.jsdelivr.net/gh/dp247/rakuten-uk-epg@master/epg.xml";
+
+function rakutenUkCdnUrl(url: string): string | null {
+  if (/rakuten-uk-epg/i.test(url)) return RAKUTEN_UK_EPG_CDN;
+  return null;
+}
 
 function devEpgProxyUrl(target: string): string {
   return `/api/epg/raw?url=${encodeURIComponent(target)}`;
@@ -101,7 +113,7 @@ async function gunzipToText(buf: ArrayBuffer): Promise<string> {
 /** Fetch MJH gzip/XML bytes — dev proxy (binary-safe); static hosts use jsDelivr CDN (CORS-safe). */
 export async function fetchMjhBytes(url: string): Promise<ArrayBuffer | null> {
   const attempts: Array<() => Promise<ArrayBuffer | null>> = [];
-  const cdnUrl = mjhUrlToCdn(url);
+  const cdnUrl = mjhUrlToCdn(url) ?? rakutenUkCdnUrl(url);
   const staticHost = isBrowser() && isStaticWebHost();
 
   if (cdnUrl && staticHost) {

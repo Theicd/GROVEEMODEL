@@ -22,4 +22,11 @@ describe("epgExplicitBindings", () => {
       true,
     );
   });
+
+  it("binds History Hunters Rakuten stream to UK XMLTV id", () => {
+    const stream =
+      "https://amg00841-amg00841c7-rakuten-uk-2820.playouts.now.amagi.tv/playlist/amg00841-aeemeafast-historyhuntersrakuten-rakutenuk/playlist.m3u8";
+    const targets = explicitEpgTargets("history-hunters", stream);
+    expect(targets.some((t) => t.sourceKey === "rakuten-uk" && t.channelId === "history-hunters")).toBe(true);
+  });
 });

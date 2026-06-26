@@ -46,12 +46,15 @@ const BY_TVG_BASE: Record<string, EpgExplicitTarget[]> = {
   "SavedByTheBell.us": [
     { sourceKey: "mjh-roku", channelId: "05a58f8f0d1b55999a9ab0e9caae8a47" },
   ],
+  "HistoryHunters.uk": [{ sourceKey: "rakuten-uk", channelId: "history-hunters" }],
+  "history-hunters": [{ sourceKey: "rakuten-uk", channelId: "history-hunters" }],
   "ABCKids.au": [{ sourceKey: "mjh-all", channelId: "mjh-abc-kids" }],
 };
 
 const STREAM_HINTS: Array<{ test: RegExp; targets: EpgExplicitTarget[] }> = [
   { test: /ftf-linear|ftfsports/i, targets: BY_TVG_BASE["FTFSports.us"]! },
   { test: /nbcuni\.com|savedbythebell|saved-by-the-bell/i, targets: BY_TVG_BASE["SavedByTheBell.us"]! },
+  { test: /historyhuntersrakuten|history-hunters/i, targets: BY_TVG_BASE["HistoryHunters.uk"]! },
   { test: /ionmystery/i, targets: BY_TVG_BASE["WFXT662.us"]! },
   { test: /sysdata_s_p_a_fifa|fifa[_-]?plus/i, targets: BY_TVG_BASE["FIFAPlus.uk"]! },
   { test: /absolutereality|wetv/i, targets: BY_TVG_BASE["AbsoluteRealitybyWETV.us"]! },

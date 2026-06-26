@@ -151,6 +151,7 @@ export function resolveEpgMatchTitles(title: string, tvgId?: string, streamUrl?:
   if (/absolutereality|wetv/i.test(streamUrl ?? "")) add("All Reality We TV");
   if (/fast-channels\.sinclairstoryline\.com\/charge|\/charge\//i.test(streamUrl ?? "")) add("Charge!");
   if (/enterbcef|entertainmenttonight/i.test(streamUrl ?? "")) add("ET");
+  if (/historyhuntersrakuten|history-hunters/i.test(streamUrl ?? "")) add("History Hunters");
   if (/globalfashionchannel|pubgfc/i.test(streamUrl ?? "")) add("FashionTV");
   if (/sofast\.tv/i.test(streamUrl ?? "")) add("Space & Beyond");
   return out;
