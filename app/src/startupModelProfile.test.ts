@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   detectMobileDevice,
   recommendStartupModel,
+  resolveLocalTextBootBackend,
   resolveStartupModelChoice,
   type StartupDeviceSignals,
 } from "./startupModelProfile";
@@ -60,5 +61,20 @@ describe("startupModelProfile", () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)" });
     vi.stubGlobal("window", { innerWidth: 390, matchMedia: () => ({ matches: true }) });
     expect(detectMobileDevice()).toBe(true);
+  });
+
+  it("forces WASM backend for SmolLM on mobile", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) Mobile" });
+    vi.stubGlobal("window", { innerWidth: 412, matchMedia: () => ({ matches: true }) });
+    expect(resolveLocalTextBootBackend("auto")).toBe("wasm");
+    expect(resolveLocalTextBootBackend("webgpu")).toBe("wasm");
+    expect(resolveLocalTextBootBackend("auto", { forceWasm: true })).toBe("wasm");
+  });
+
+  it("keeps desktop backend preference", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 Windows NT 10.0" });
+    vi.stubGlobal("window", { innerWidth: 1280, matchMedia: () => ({ matches: false }) });
+    expect(resolveLocalTextBootBackend("webgpu")).toBe("webgpu");
+    expect(resolveLocalTextBootBackend("auto")).toBe("auto");
   });
 });

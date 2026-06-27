@@ -72,7 +72,10 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
       bootLog("SmolLM worker: navigator.gpu missing");
       return false;
     }
-    const adapter = await g.requestAdapter({ powerPreference: "low-power" });
+    const adapter = await Promise.race([
+      g.requestAdapter({ powerPreference: "low-power" }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
     webGpuAdapterProbe = adapter != null;
     bootLog("SmolLM worker: requestAdapter", {
       adapter: webGpuAdapterProbe ? "found" : "null",
@@ -198,6 +201,14 @@ self.onmessage = async (ev: MessageEvent) => {
 
   try {
     if (msg.type === "load" && msg.modelId) {
+      post({
+        type: "progress",
+        modelId: msg.modelId,
+        message: "מתחיל טעינה…",
+        pct: 0,
+        loaded: 0,
+        total: 0,
+      });
       await ensureGenerator(msg.modelId, msg.backend ?? "auto");
       return;
     }

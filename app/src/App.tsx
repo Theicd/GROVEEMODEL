@@ -252,6 +252,8 @@ import {
   type LocalTextModelSettings,
 } from "./modelRack/localTextModelSettings";
 import {
+  detectMobileDevice,
+  resolveLocalTextBootBackend,
   resolveStartupModelChoice,
   startupChoiceLabelHe,
   type StartupModelChoice,
@@ -2863,7 +2865,7 @@ function App() {
             setLocalTextDownloadPct(p.pct);
             setLocalTextDownloadLabel(p.message);
           },
-          appSettingsRef.current.localText.inferenceBackend,
+          resolveLocalTextBootBackend(appSettingsRef.current.localText.inferenceBackend),
         );
         setModelRack(loadModelRack());
         setStatus(`${entry.label} מוכן לשיחה`);
@@ -3816,6 +3818,7 @@ function App() {
   const loadLocalTextBoot = async (opts?: { forceWasm?: boolean }) => {
     bootLog("SmolLM boot start", {
       forceWasm: !!opts?.forceWasm,
+      backend,
       settings: snapshotInferenceSettings(),
     });
     setWorkerBootError(null);
@@ -3834,7 +3837,7 @@ function App() {
 
     const lt = appSettingsRef.current.localText;
     const alreadyReady = readLocalTextReadyIds().includes(SMOLLM_RACK_ID);
-    const backend = opts?.forceWasm ? "wasm" : lt.inferenceBackend;
+    const backend = resolveLocalTextBootBackend(lt.inferenceBackend, opts);
 
     const onSmolProgress = (p: {
       pct: number;
@@ -3909,6 +3912,20 @@ function App() {
   };
 
   const startIntroLoad = () => {
+    const pref = appSettingsRef.current.startupModel;
+    const guessTarget: StartupModelChoice =
+      pref === "local-text" || pref === "gemma"
+        ? pref
+        : detectMobileDevice()
+          ? "local-text"
+          : "gemma";
+    setIsLoading(true);
+    setIsLoaded(false);
+    setProgress(0);
+    setLoadingPhase("download");
+    setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
+    setStatus("מתכונן לטעינה…");
+    setBootTarget(guessTarget);
     void (async () => {
       bootLog("Intro load clicked", { settings: snapshotInferenceSettings() });
       const rec = await resolveStartupModelChoice(appSettingsRef.current.startupModel);

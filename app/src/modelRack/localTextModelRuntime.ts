@@ -44,6 +44,14 @@ export function downloadLocalTextModel(
           total: data.total,
         });
       }
+      if (data.type === "status" && data.modelId === modelId) {
+        onProgress({
+          pct: 0,
+          message: data.text,
+          loaded: 0,
+          total: 0,
+        });
+      }
       if (data.type === "loaded" && data.modelId === modelId) {
         console.info("[GROVEE:boot]", "SmolLM worker loaded", {
           modelId: data.modelId,

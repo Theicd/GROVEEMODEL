@@ -42,7 +42,7 @@ export async function probeWebGpuAdapter(): Promise<WebGpuAdapterProbe> {
     return empty;
   }
   try {
-    const adapter = (await gpu.requestAdapter()) as {
+    const adapter = (await requestAdapterWithTimeout(() => gpu.requestAdapter())) as {
       info?: {
         isFallbackAdapter?: boolean;
         vendor?: string;
@@ -51,7 +51,7 @@ export async function probeWebGpuAdapter(): Promise<WebGpuAdapterProbe> {
       };
     } | null;
     if (!adapter) {
-      console.info("[GROVEE:boot]", "probeWebGpuAdapter: requestAdapter() returned null");
+      console.info("[GROVEE:boot]", "probeWebGpuAdapter: requestAdapter() returned null (or timed out)");
       return empty;
     }
     const info = adapter.info;
@@ -81,6 +81,34 @@ export function detectMobileDevice(): boolean {
   const coarse = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
   const narrow = window.innerWidth < 900;
   return coarse && narrow;
+}
+
+const WEBGPU_PROBE_TIMEOUT_MS = 2_500;
+
+async function requestAdapterWithTimeout(
+  request: () => Promise<unknown | null>,
+): Promise<unknown | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      request(),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), WEBGPU_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** SmolLM on phones: WASM first — WebGPU probe often stalls before any download bytes. */
+export function resolveLocalTextBootBackend(
+  inferenceBackend: "auto" | "webgpu" | "wasm",
+  opts?: { forceWasm?: boolean },
+): "auto" | "webgpu" | "wasm" {
+  if (opts?.forceWasm) return "wasm";
+  if (detectMobileDevice()) return "wasm";
+  return inferenceBackend;
 }
 
 export async function collectStartupDeviceSignals(): Promise<StartupDeviceSignals> {
