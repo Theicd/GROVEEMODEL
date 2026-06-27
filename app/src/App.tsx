@@ -50,6 +50,7 @@ import {
   type PendingAttachment,
 } from "./documentIngest";
 import { IntroScreen } from "./components/IntroScreen";
+import { CapabilitiesWelcomeToast } from "./components/CapabilitiesWelcomeToast";
 import { GroveeInfoModal } from "./components/GroveeInfoModal";
 import { GroveeLogoMark } from "./GroveeLogoMark";
 import { ChatMessageAvatar } from "./ChatMessageAvatar";
