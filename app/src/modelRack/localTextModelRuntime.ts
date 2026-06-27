@@ -49,7 +49,7 @@ export function downloadLocalTextModel(
         w.removeEventListener("message", onMessage);
         resolve();
       }
-      if (data.type === "error") {
+      if (data.type === "error" && data.scope !== "chat") {
         w.removeEventListener("message", onMessage);
         reject(new Error(data.error));
       }

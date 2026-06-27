@@ -52,6 +52,29 @@ function makeProgressCallback(modelId: string) {
   };
 }
 
+let webGpuAdapterProbe: boolean | null = null;
+
+const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
+  if (webGpuAdapterProbe !== null) return webGpuAdapterProbe;
+  try {
+    const g = (
+      self as unknown as {
+        navigator?: { gpu?: { requestAdapter?: (opts?: object) => Promise<unknown | null> } };
+      }
+    ).navigator?.gpu;
+    if (!g?.requestAdapter) {
+      webGpuAdapterProbe = false;
+      return false;
+    }
+    const adapter = await g.requestAdapter({ powerPreference: "low-power" });
+    webGpuAdapterProbe = adapter != null;
+    return webGpuAdapterProbe;
+  } catch {
+    webGpuAdapterProbe = false;
+    return false;
+  }
+};
+
 async function loadOnDevice(modelId: string, device: "webgpu" | "wasm") {
   post({ type: "status", modelId, text: `טוען ${modelId} (${device})…` });
   const pipe = await pipeline("text-generation", modelId, {
@@ -69,18 +92,31 @@ async function resolveDevice(
   modelId: string,
   backend: "auto" | "webgpu" | "wasm" = "auto",
 ): Promise<Awaited<ReturnType<typeof pipeline>>> {
+  const tryWasm = () => loadOnDevice(modelId, "wasm");
+  const tryWebGpuWithFallback = async () => {
+    try {
+      return await loadOnDevice(modelId, "webgpu");
+    } catch {
+      post({ type: "status", modelId, text: "WebGPU נכשל — עובר ל-WASM…" });
+      return tryWasm();
+    }
+  };
+
   if (backend === "wasm") {
-    return loadOnDevice(modelId, "wasm");
+    return tryWasm();
   }
   if (backend === "webgpu") {
-    return loadOnDevice(modelId, "webgpu");
+    if (await hasRunnableWebGpuAdapter()) {
+      return tryWebGpuWithFallback();
+    }
+    post({ type: "status", modelId, text: "אין WebGPU — טוען ב-WASM…" });
+    return tryWasm();
   }
-  try {
-    return await loadOnDevice(modelId, "webgpu");
-  } catch {
-    post({ type: "status", modelId, text: "WebGPU נכשל — עובר ל-WASM…" });
-    return loadOnDevice(modelId, "wasm");
+  if (await hasRunnableWebGpuAdapter()) {
+    return tryWebGpuWithFallback();
   }
+  post({ type: "status", modelId, text: "אין WebGPU — טוען ב-WASM…" });
+  return tryWasm();
 }
 
 async function ensureGenerator(modelId: string, backend: "auto" | "webgpu" | "wasm" = "auto") {

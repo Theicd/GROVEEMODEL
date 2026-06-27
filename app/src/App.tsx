@@ -432,7 +432,7 @@ const SETTINGS_STORAGE_KEY = "grovee_model_settings_v1";
 const WEBGPU_BLOCKED_KEY = "grovee-webgpu-blocked";
 
 const isWebGpuInferenceError = (msg: string) =>
-  /WebGPU|bad_alloc|Can't create a session|GatherBlockQuantized|node_embedding_Quant|ERROR_CODE:\s*[69]|Could not find an implementation/i.test(
+  /webgpu|gpu adapter|no available backend|bad_alloc|can't create a session|gatherblockquantized|node_embedding_quant|error_code:\s*[69]|could not find an implementation/i.test(
     msg,
   );
 const CHATS_STORAGE_KEY = "grovee_chats_v1";
@@ -3592,7 +3592,14 @@ function App() {
             return;
           }
           if (isLoadingRef.current) {
-            enterCapabilitiesOnlyModeRef.current(errText);
+            setIsLoading(false);
+            setProgress(0);
+            setStatus(`שגיאת טעינה: ${errText.slice(0, 120)}`);
+            setWorkerBootError(
+              isWebGpuInferenceError(errText)
+                ? `${errText} — לחץ «WASM» למטה, או הגדרות → Inference → WASM, והתחל שוב.`
+                : errText,
+            );
             return;
           }
           if (isWebGpuInferenceError(errText)) {
@@ -3792,12 +3799,12 @@ function App() {
     enterCapabilitiesOnlyModeRef.current = enterCapabilitiesOnlyMode;
   }, [enterCapabilitiesOnlyMode]);
 
-  const loadLocalTextBoot = async () => {
+  const loadLocalTextBoot = async (opts?: { forceWasm?: boolean }) => {
     setWorkerBootError(null);
     setIsLoading(true);
     setIsLoaded(false);
     setBootTarget("local-text");
-    setStatus("טוען SmolLM2…");
+    setStatus(opts?.forceWasm ? "טוען SmolLM2 ב-WASM…" : "טוען SmolLM2…");
     setProgress(0);
     setLoadingPhase("download");
     setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
@@ -3809,31 +3816,52 @@ function App() {
 
     const lt = appSettingsRef.current.localText;
     const alreadyReady = readLocalTextReadyIds().includes(SMOLLM_RACK_ID);
+    const backend = opts?.forceWasm ? "wasm" : lt.inferenceBackend;
+
+    const onSmolProgress = (p: {
+      pct: number;
+      message: string;
+      loaded: number;
+      total: number;
+    }) => {
+      setLocalTextDownloadPct(p.pct);
+      setLocalTextDownloadLabel(p.message);
+      setProgress(p.pct);
+      if (p.message) {
+        loadingFileRef.current = p.message;
+        setLoadingFile(p.message);
+      }
+      setLoadingBytes({
+        loaded: p.loaded,
+        total: p.total,
+        speedBps: 0,
+      });
+    };
+
+    const runSmolLoad = async (deviceBackend: typeof backend) => {
+      await downloadLocalTextModel(
+        SMOLLM_RACK_ID,
+        SMOLLM_HF_MODEL_ID,
+        onSmolProgress,
+        deviceBackend,
+      );
+    };
 
     try {
-      if (!alreadyReady) {
-        await downloadLocalTextModel(
-          SMOLLM_RACK_ID,
-          SMOLLM_HF_MODEL_ID,
-          (p) => {
-            setLocalTextDownloadPct(p.pct);
-            setLocalTextDownloadLabel(p.message);
-            setProgress(p.pct);
-            if (p.message) {
-              loadingFileRef.current = p.message;
-              setLoadingFile(p.message);
-            }
-            setLoadingBytes({
-              loaded: p.loaded,
-              total: p.total,
-              speedBps: 0,
-            });
-          },
-          lt.inferenceBackend,
-        );
-      } else {
-        setProgress(100);
-        setStatus("SmolLM כבר מותקן — מכין…");
+      if (alreadyReady) {
+        setStatus(opts?.forceWasm ? "SmolLM מותקן — מאתחל ב-WASM…" : "SmolLM מותקן — מאתחל…");
+      }
+      try {
+        await runSmolLoad(backend);
+      } catch (firstErr) {
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (!opts?.forceWasm && backend !== "wasm" && isWebGpuInferenceError(msg)) {
+          terminateLocalTextWorker();
+          setStatus("WebGPU לא זמין — ממשיך ב-WASM (CPU)…");
+          await runSmolLoad("wasm");
+        } else {
+          throw firstErr;
+        }
       }
       setModelRack(loadModelRack());
       setWorkerBootError(null);
@@ -3848,7 +3876,14 @@ function App() {
       setLocalTextDownloadLabel("");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      enterCapabilitiesOnlyMode(msg);
+      setIsLoading(false);
+      setProgress(0);
+      setStatus(`שגיאת טעינת SmolLM: ${msg.slice(0, 120)}`);
+      setWorkerBootError(
+        isWebGpuInferenceError(msg)
+          ? `${msg} — לחץ «WASM» למטה, או הגדרות → SmolLM → WASM, והתחל שוב.`
+          : msg,
+      );
     }
   };
 
@@ -3903,7 +3938,13 @@ function App() {
     });
   };
 
-  const retryWasmLoad = () => loadModel({ forceWasm: true, persistWasm: true });
+  const retryWasmLoad = () => {
+    if (bootTarget === "local-text") {
+      void loadLocalTextBoot({ forceWasm: true });
+      return;
+    }
+    loadModel({ forceWasm: true, persistWasm: true });
+  };
 
   const clearModelCache = async () => {
     if (isGenerating || cacheClearing) return;
@@ -5811,7 +5852,7 @@ function App() {
           loadingByteLine={loadingByteLine}
           loadingFile={loadingFile}
           loadingTip={loadingTip}
-          showWasmRetry={bootTarget === "gemma" && isWebGpuInferenceError(workerBootError ?? "")}
+          showWasmRetry={isWebGpuInferenceError(workerBootError ?? "")}
           cacheClearing={cacheClearing}
           isLoading={isLoading}
           isGenerating={isGenerating}
