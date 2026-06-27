@@ -18,6 +18,11 @@ type HfProgress = {
 
 const post = (data: unknown) => self.postMessage(data);
 
+const bootLog = (step: string, detail?: Record<string, unknown>) => {
+  if (detail !== undefined) console.info("[GROVEE:boot]", step, detail);
+  else console.info("[GROVEE:boot]", step);
+};
+
 const generators = new Map<string, Awaited<ReturnType<typeof pipeline>>>();
 const loading = new Map<string, Promise<Awaited<ReturnType<typeof pipeline>>>>();
 let activeModelId: string | null = null;
@@ -64,13 +69,21 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
     ).navigator?.gpu;
     if (!g?.requestAdapter) {
       webGpuAdapterProbe = false;
+      bootLog("SmolLM worker: navigator.gpu missing");
       return false;
     }
     const adapter = await g.requestAdapter({ powerPreference: "low-power" });
     webGpuAdapterProbe = adapter != null;
+    bootLog("SmolLM worker: requestAdapter", {
+      adapter: webGpuAdapterProbe ? "found" : "null",
+      powerPreference: "low-power",
+    });
     return webGpuAdapterProbe;
-  } catch {
+  } catch (err) {
     webGpuAdapterProbe = false;
+    bootLog("SmolLM worker: requestAdapter threw", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 };
@@ -92,29 +105,38 @@ async function resolveDevice(
   modelId: string,
   backend: "auto" | "webgpu" | "wasm" = "auto",
 ): Promise<Awaited<ReturnType<typeof pipeline>>> {
+  bootLog("SmolLM resolveDevice", { modelId, backend });
   const tryWasm = () => loadOnDevice(modelId, "wasm");
   const tryWebGpuWithFallback = async () => {
     try {
       return await loadOnDevice(modelId, "webgpu");
-    } catch {
+    } catch (err) {
+      bootLog("SmolLM WebGPU load failed — WASM fallback", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       post({ type: "status", modelId, text: "WebGPU נכשל — עובר ל-WASM…" });
       return tryWasm();
     }
   };
 
   if (backend === "wasm") {
+    bootLog("SmolLM using WASM (settings)");
     return tryWasm();
   }
   if (backend === "webgpu") {
     if (await hasRunnableWebGpuAdapter()) {
+      bootLog("SmolLM trying WebGPU (settings)");
       return tryWebGpuWithFallback();
     }
+    bootLog("SmolLM no adapter — WASM (webgpu setting)");
     post({ type: "status", modelId, text: "אין WebGPU — טוען ב-WASM…" });
     return tryWasm();
   }
   if (await hasRunnableWebGpuAdapter()) {
+    bootLog("SmolLM auto: trying WebGPU first");
     return tryWebGpuWithFallback();
   }
+  bootLog("SmolLM auto: no adapter — WASM only");
   post({ type: "status", modelId, text: "אין WebGPU — טוען ב-WASM…" });
   return tryWasm();
 }

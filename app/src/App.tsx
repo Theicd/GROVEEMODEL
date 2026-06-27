@@ -49,6 +49,7 @@ import {
   revokePendingAttachment,
   type PendingAttachment,
 } from "./documentIngest";
+import { bootLog, bootWarn, readWebGpuBlockFlag, snapshotInferenceSettings } from "./inferenceBootLog";
 import { IntroScreen } from "./components/IntroScreen";
 import { CapabilitiesWelcomeToast } from "./components/CapabilitiesWelcomeToast";
 import { GroveeInfoModal } from "./components/GroveeInfoModal";
@@ -1920,6 +1921,10 @@ function App() {
   const phase = isLoaded ? "ready" : isLoading ? "loading" : "start";
 
   useEffect(() => {
+    bootLog("App inference settings at startup", snapshotInferenceSettings());
+  }, []);
+
+  useEffect(() => {
     if (phase !== "start") return;
     let cancelled = false;
     void (async () => {
@@ -3505,6 +3510,11 @@ function App() {
           setLoadingPhase(msg.phase === "init" ? "init" : "download");
         }
       } else if (msg.type === "loaded") {
+        bootLog("Gemma worker loaded", {
+          modelId: msg.modelId,
+          device: msg.device,
+          usesGpu: msg.device === "webgpu",
+        });
         setWorkerBootError(null);
         setIsGemmaLoaded(true);
         setChatModelAvailability("gemma");
@@ -3586,12 +3596,14 @@ function App() {
           const errText = msg.error;
           if (isWebGpuInferenceError(errText) && !wasmBootRetryRef.current) {
             wasmBootRetryRef.current = true;
+            bootWarn("Gemma load WebGPU failed — retrying WASM", { error: errText.slice(0, 240) });
             setWorkerBootError(null);
             setStatus("WebGPU לא זמין — ממשיך ב-WASM (CPU)…");
             loadModel({ forceWasm: true });
             return;
           }
           if (isLoadingRef.current) {
+            bootWarn("Gemma load failed during boot", { error: errText.slice(0, 240) });
             setIsLoading(false);
             setProgress(0);
             setStatus(`שגיאת טעינה: ${errText.slice(0, 120)}`);
@@ -3800,6 +3812,10 @@ function App() {
   }, [enterCapabilitiesOnlyMode]);
 
   const loadLocalTextBoot = async (opts?: { forceWasm?: boolean }) => {
+    bootLog("SmolLM boot start", {
+      forceWasm: !!opts?.forceWasm,
+      settings: snapshotInferenceSettings(),
+    });
     setWorkerBootError(null);
     setIsLoading(true);
     setIsLoaded(false);
@@ -3856,6 +3872,7 @@ function App() {
       } catch (firstErr) {
         const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
         if (!opts?.forceWasm && backend !== "wasm" && isWebGpuInferenceError(msg)) {
+          bootWarn("SmolLM WebGPU failed — retrying WASM", { error: msg.slice(0, 240) });
           terminateLocalTextWorker();
           setStatus("WebGPU לא זמין — ממשיך ב-WASM (CPU)…");
           await runSmolLoad("wasm");
@@ -3863,6 +3880,7 @@ function App() {
           throw firstErr;
         }
       }
+      bootLog("SmolLM boot OK", { backend, alreadyReady });
       setModelRack(loadModelRack());
       setWorkerBootError(null);
       setChatModelAvailability("local-text");
@@ -3876,6 +3894,7 @@ function App() {
       setLocalTextDownloadLabel("");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      bootWarn("SmolLM boot failed", { error: msg.slice(0, 240) });
       setIsLoading(false);
       setProgress(0);
       setStatus(`שגיאת טעינת SmolLM: ${msg.slice(0, 120)}`);
@@ -3889,7 +3908,16 @@ function App() {
 
   const startIntroLoad = () => {
     void (async () => {
+      bootLog("Intro load clicked", { settings: snapshotInferenceSettings() });
       const rec = await resolveStartupModelChoice(appSettingsRef.current.startupModel);
+      bootLog("Startup model resolved", {
+        choice: rec.choice,
+        reasonHe: rec.reasonHe,
+        fromPreference: rec.fromPreference,
+        isMobile: rec.signals.isMobile,
+        deviceMemoryGb: rec.signals.deviceMemoryGb,
+        webgpu: rec.signals.webgpu,
+      });
       setStartupRecommendation(rec);
       setBootTarget(rec.choice);
       if (rec.choice === "local-text") {
@@ -3915,6 +3943,12 @@ function App() {
     loadingFileRef.current = "";
     setLoadingFile("");
     const backend = opts?.forceWasm ? "wasm" : appSettingsRef.current.inferenceBackend;
+    bootLog("Gemma load start", {
+      backend,
+      forceWasm: !!opts?.forceWasm,
+      persistWasm: !!opts?.persistWasm,
+      webgpuBlockedFlag: readWebGpuBlockFlag(),
+    });
     if (opts?.forceWasm && opts?.persistWasm && appSettingsRef.current.inferenceBackend !== "wasm") {
       const next = { ...appSettingsRef.current, inferenceBackend: "wasm" as const };
       appSettingsRef.current = next;

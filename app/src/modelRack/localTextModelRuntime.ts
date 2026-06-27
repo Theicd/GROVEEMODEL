@@ -45,6 +45,11 @@ export function downloadLocalTextModel(
         });
       }
       if (data.type === "loaded" && data.modelId === modelId) {
+        console.info("[GROVEE:boot]", "SmolLM worker loaded", {
+          modelId: data.modelId,
+          device: data.device,
+          usesGpu: data.device === "webgpu",
+        });
         markLocalTextReady(rackId);
         w.removeEventListener("message", onMessage);
         resolve();

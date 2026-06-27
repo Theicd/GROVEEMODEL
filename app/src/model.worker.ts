@@ -248,13 +248,21 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
     ).navigator?.gpu;
     if (!g?.requestAdapter) {
       webGpuAdapterProbe = false;
+      bootLog("Gemma worker: navigator.gpu missing");
       return false;
     }
     const adapter = await g.requestAdapter({ powerPreference: "low-power" });
     webGpuAdapterProbe = adapter != null;
+    bootLog("Gemma worker: requestAdapter", {
+      adapter: webGpuAdapterProbe ? "found" : "null",
+      powerPreference: "low-power",
+    });
     return webGpuAdapterProbe;
-  } catch {
+  } catch (err) {
     webGpuAdapterProbe = false;
+    bootLog("Gemma worker: requestAdapter threw", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 };
@@ -322,6 +330,16 @@ const applyHubRemoteHost = (remoteHost: string) => {
 
 const post = (msg: unknown) => {
   self.postMessage(msg);
+};
+
+const bootLog = (step: string, detail?: Record<string, unknown>) => {
+  if (detail !== undefined) console.info("[GROVEE:boot]", step, detail);
+  else console.info("[GROVEE:boot]", step);
+};
+
+const postLoaded = (modelId: string, device: "webgpu" | "wasm") => {
+  bootLog("Gemma worker load complete", { modelId, device, usesGpu: device === "webgpu" });
+  post({ type: "loaded", modelId, device });
 };
 
 let lastWorkerErrorPostedAt = 0;
@@ -523,8 +541,14 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   }
 
   const pref = inferenceBackend;
+  bootLog("Gemma loadMultimodalModel", {
+    modelId,
+    inferenceBackend: pref,
+    webGpuOnnxBlocked,
+  });
 
   const tryWasm = async () => {
+    bootLog("Gemma loading on WASM (CPU)");
     const loaded = await loadWithDevice(modelId, dtype, "wasm");
     const entry: CachedModel = { ...loaded, device: "wasm" };
     modelCache.set(modelId, entry);
@@ -532,6 +556,7 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   };
 
   const tryWebGpu = async () => {
+    bootLog("Gemma loading on WebGPU");
     const loaded = await loadWithDevice(modelId, dtype, "webgpu");
     const entry: CachedModel = { ...loaded, device: "webgpu" };
     modelCache.set(modelId, entry);
@@ -555,6 +580,7 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
 
   const tryWebGpuWithFallback = async (): Promise<CachedModel> => {
     if (webGpuOnnxBlocked) {
+      bootLog("Gemma skip WebGPU — webGpuOnnxBlocked from prior failure");
       post({
         type: "status",
         text: `WebGPU lacks required ONNX ops on this GPU — loading ${modelId} on WASM (CPU).`,
@@ -566,6 +592,9 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
     } catch (err) {
       if (!isWebGpuRuntimeError(err)) throw err;
       webGpuOnnxBlocked = true;
+      bootLog("Gemma WebGPU runtime error — WASM fallback", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       modelCache.delete(modelId);
       post({
         type: "status",
@@ -576,6 +605,7 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   };
 
   if (pref === "wasm") {
+    bootLog("Gemma path: WASM (inferenceBackend=wasm)");
     post({
       type: "status",
       text: `Loading ${modelId} on WASM (CPU — slower; vision works best with WebGPU)…`,
@@ -585,9 +615,11 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
 
   if (pref === "webgpu") {
     if (await hasRunnableWebGpuAdapter()) {
+      bootLog("Gemma path: WebGPU (inferenceBackend=webgpu)");
       post({ type: "status", text: `Loading ${modelId} on WebGPU…` });
       return await tryWebGpuWithFallback();
     }
+    bootLog("Gemma path: WASM — no adapter (webgpu setting)");
     post({
       type: "status",
       text: `No WebGPU adapter — loading ${modelId} on WASM (CPU).`,
@@ -596,9 +628,11 @@ const loadMultimodalModel = async (modelId: string, dtype: LoadMessage["dtype"])
   }
 
   if (await hasRunnableWebGpuAdapter()) {
+    bootLog("Gemma path: auto — trying WebGPU first");
     return await tryWebGpuWithFallback();
   }
 
+  bootLog("Gemma path: auto — no adapter, WASM only");
   post({ type: "status", text: `No WebGPU adapter — loading ${modelId} on WASM (CPU).` });
   return await tryWasm();
 };
@@ -757,11 +791,17 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
     }
 
     if (message.type === "configure_inference") {
+      bootLog("Gemma worker configure_inference", { backend: message.backend });
       applyInferenceBackend(message.backend);
       return;
     }
 
     if (message.type === "load") {
+      bootLog("Gemma worker load message", {
+        modelId: message.modelId,
+        backend: message.backend,
+        inferenceBackend,
+      });
       if (isWorkerBusy()) {
         post({ type: "error", error: "Generation in progress. Please wait." });
         return;
@@ -774,7 +814,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
       }
 
       if (chatSlot.model && message.modelId === chatSlot.modelId && chatSlot.device !== "webgpu") {
-        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+        postLoaded(chatSlot.modelId, chatSlot.device);
         return;
       }
       if (chatSlot.device === "webgpu" && (webGpuOnnxBlocked || inferenceBackend === "wasm")) {
@@ -786,9 +826,12 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         chatSlot.processor = loaded.processor;
         chatSlot.device = loaded.device;
         chatSlot.modelId = message.modelId;
-        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+        postLoaded(chatSlot.modelId, chatSlot.device);
       } catch (loadErr) {
         if (!isWebGpuRuntimeError(loadErr)) throw loadErr;
+        bootLog("Gemma load threw WebGPU error — forceReloadWasm", {
+          error: loadErr instanceof Error ? loadErr.message : String(loadErr),
+        });
         post({
           type: "status",
           text: "WebGPU לא תומך ב-Gemma q4 במחשב זה — טוען ב-WASM (CPU)…",
@@ -798,7 +841,7 @@ self.onmessage = async (event: MessageEvent<WorkerInput>) => {
         chatSlot.processor = switched.processor;
         chatSlot.device = switched.device;
         chatSlot.modelId = message.modelId;
-        post({ type: "loaded", modelId: chatSlot.modelId, device: chatSlot.device });
+        postLoaded(chatSlot.modelId, chatSlot.device);
       }
       return;
     }

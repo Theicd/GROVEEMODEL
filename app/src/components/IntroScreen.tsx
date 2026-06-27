@@ -82,7 +82,19 @@ export function IntroScreen({
   const typewriterText = useIntroTypewriter(3200, isStart && stageAtLeast(stage, "typewriter"));
 
   useEffect(() => {
-    void navigator.gpu?.requestAdapter().then((adapter) => setWebgpu(!!adapter));
+    void navigator.gpu?.requestAdapter().then((adapter) => {
+      const ok = !!adapter;
+      setWebgpu(ok);
+      const info = (adapter as { info?: Record<string, string> } | null)?.info;
+      console.info("[GROVEE:boot]", "IntroScreen WebGPU probe (main thread)", {
+        adapter: ok ? "found" : "null",
+        vendor: info?.vendor ?? "",
+        architecture: info?.architecture ?? "",
+        description: info?.description ?? "",
+        isFallbackAdapter: !!(adapter as { info?: { isFallbackAdapter?: boolean } } | null)?.info
+          ?.isFallbackAdapter,
+      });
+    });
   }, []);
 
   const displayPct = Math.min(100, Math.max(0, progress));

@@ -37,7 +37,10 @@ export async function probeWebGpuAdapter(): Promise<WebGpuAdapterProbe> {
   };
   if (typeof navigator === "undefined") return empty;
   const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
-  if (!gpu) return empty;
+  if (!gpu) {
+    console.info("[GROVEE:boot]", "probeWebGpuAdapter: navigator.gpu missing");
+    return empty;
+  }
   try {
     const adapter = (await gpu.requestAdapter()) as {
       info?: {
@@ -47,16 +50,24 @@ export async function probeWebGpuAdapter(): Promise<WebGpuAdapterProbe> {
         description?: string;
       };
     } | null;
-    if (!adapter) return empty;
+    if (!adapter) {
+      console.info("[GROVEE:boot]", "probeWebGpuAdapter: requestAdapter() returned null");
+      return empty;
+    }
     const info = adapter.info;
-    return {
+    const result = {
       available: true,
       isFallbackAdapter: !!info?.isFallbackAdapter,
       vendor: info?.vendor ?? "",
       architecture: info?.architecture ?? "",
       description: info?.description ?? "",
     };
-  } catch {
+    console.info("[GROVEE:boot]", "probeWebGpuAdapter: OK", result);
+    return result;
+  } catch (err) {
+    console.warn("[GROVEE:boot]", "probeWebGpuAdapter: threw", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return empty;
   }
 }
