@@ -196,6 +196,7 @@ import {
 import { SearchResultsPanel } from "./searchResults/SearchResultsPanel";
 import { UiLanguageToggle } from "./ui/UiLanguageToggle";
 import { useUiLanguage } from "./ui/useUiLanguage";
+import { useMobileKeyboardInset } from "./ui/useMobileKeyboardInset";
 import {
   buildPanelSearchPlan,
   buildUnifiedSearchPayload,
@@ -1629,6 +1630,7 @@ function App() {
   );
 
   const uiLang = useUiLanguage();
+  useMobileKeyboardInset();
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 769px)");

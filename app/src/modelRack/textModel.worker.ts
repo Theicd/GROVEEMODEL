@@ -164,6 +164,14 @@ function extractReply(output: unknown): string {
   if (Array.isArray(output) && output[0]?.generated_text) {
     const gt = output[0].generated_text;
     if (Array.isArray(gt)) {
+      for (let i = gt.length - 1; i >= 0; i--) {
+        const entry = gt[i];
+        if (entry && typeof entry === "object" && "role" in entry && "content" in entry) {
+          if (String((entry as { role: string }).role) === "assistant") {
+            return String((entry as { content: string }).content).trim();
+          }
+        }
+      }
       const last = gt[gt.length - 1];
       if (last && typeof last === "object" && "content" in last) {
         return String((last as { content: string }).content).trim();
@@ -227,12 +235,19 @@ self.onmessage = async (ev: MessageEvent) => {
           })
         : undefined;
 
+      const historyLen = msg.history?.length ?? 0;
+      const promptLen = msg.prompt?.length ?? 0;
+      const simpleTurn = historyLen === 0 && promptLen < 64;
+      const temperature = simpleTurn
+        ? Math.min(msg.temperature ?? 0.35, 0.25)
+        : (msg.temperature ?? 0.35);
+
       try {
         const out = await pipe(messages, {
-          max_new_tokens: msg.maxNewTokens ?? 256,
-          temperature: msg.temperature ?? 0.7,
-          top_p: msg.topP ?? 0.9,
-          do_sample: true,
+          max_new_tokens: msg.maxNewTokens ?? 192,
+          temperature,
+          top_p: msg.topP ?? 0.85,
+          do_sample: temperature > 0.05,
           streamer,
           stopping_criteria: interrupt,
         });

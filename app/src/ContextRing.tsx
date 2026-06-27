@@ -28,7 +28,17 @@ const SEGMENTS: Array<{ key: keyof ContextUsage["breakdown"]; labelHe: string; c
  */
 export function ContextRing({ usage }: Props) {
   const [open, setOpen] = useState(false);
+  const [mobile, setMobile] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const sync = () => setMobile(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const freePercent = Math.max(0, Math.min(100, Math.round(usage.percent)));
   const usedPercent = 100 - freePercent;
@@ -61,7 +71,7 @@ export function ContextRing({ usage }: Props) {
   const dash = (usedPercent / 100) * CIRC;
 
   return (
-    <div className="context-ring-root" ref={rootRef} dir="rtl">
+    <div className="context-ring-root" ref={rootRef}>
       <button
         type="button"
         className={`context-ring context-ring--${tone}`}
@@ -85,7 +95,11 @@ export function ContextRing({ usage }: Props) {
       </button>
 
       {open ? (
-        <div className="context-popover" role="dialog" aria-label="פירוט הקשר שיחה">
+        <div
+          className={`context-popover${mobile ? " context-popover--mobile" : ""}`}
+          role="dialog"
+          aria-label="פירוט הקשר שיחה"
+        >
           <div className="context-popover-head">
             <div>
               <strong className="context-popover-title">חלון הקשר</strong>

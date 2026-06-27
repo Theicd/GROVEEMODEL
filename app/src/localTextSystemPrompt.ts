@@ -1,12 +1,4 @@
-import {
-  buildWebSearchGroundingAppend,
-  GAME_SEARCH_GROUNDING_APPEND,
-  GAME_SEARCH_NO_RESULTS_APPEND,
-  WEB_SEARCH_NO_RESULTS_APPEND,
-} from "./characterPrompts";
-import { GLOBE_PRESENTATION_APPEND } from "./realityGlobe/globePresentation";
 import { capWebContext } from "./chatResourceBudget";
-import { buildStartupPromptBlock, type StartupContext } from "./startupContext";
 import type { ChatTurnPreludeContinue, PendingWebSearchMeta } from "./chatTurnPrelude";
 import {
   DEFAULT_LOCAL_TEXT_SETTINGS,
@@ -14,6 +6,10 @@ import {
   type LocalTextModelSettings,
 } from "./modelRack/localTextModelSettings";
 import type { ChatUiLanguage } from "./ui/useUiLanguage";
+import type { StartupContext } from "./startupContext";
+
+/** SmolLM 360M collapses on long Gemma-style system blocks — keep this tiny. */
+export const LOCAL_TEXT_MAX_SYSTEM_CHARS = 900;
 
 /** @deprecated use settings.webBriefChars */
 export const LOCAL_TEXT_WEB_BRIEF_CHARS = DEFAULT_LOCAL_TEXT_SETTINGS.webBriefChars;
@@ -33,46 +29,48 @@ export type LocalTextContextInput = {
   settings?: LocalTextModelSettings;
 };
 
+function trimSystemPrompt(text: string): string {
+  const clean = text.trim();
+  if (clean.length <= LOCAL_TEXT_MAX_SYSTEM_CHARS) return clean;
+  return `${clean.slice(0, LOCAL_TEXT_MAX_SYSTEM_CHARS - 1)}…`;
+}
+
 export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string {
   const settings = input.settings ?? DEFAULT_LOCAL_TEXT_SETTINGS;
-  const { uiLang, prelude, pendingWebSearch, startupContext, webContext } = input;
+  const { uiLang, prelude, pendingWebSearch, webContext } = input;
   let systemPrompt = localTextBaseSystemForUi(uiLang, settings);
 
-  if (startupContext) {
-    systemPrompt = `${systemPrompt}\n\n${buildStartupPromptBlock(startupContext)}`;
+  if (prelude.greeting) {
+    return trimSystemPrompt(
+      `${systemPrompt}\nThe user sent a short greeting. Reply with one warm sentence only.`,
+    );
   }
 
   const searchHadLiveData =
     pendingWebSearch?.sources.some((s) => s.ok && s.text.trim()) ?? false;
-  if (searchHadLiveData) {
-    systemPrompt = `${systemPrompt}\n\n${buildWebSearchGroundingAppend({
-      answerShape: pendingWebSearch?.answerShape,
-      crossSource: pendingWebSearch?.crossSource,
-    })}`;
-  } else if (prelude.shouldRunWebSearch) {
-    systemPrompt = `${systemPrompt}\n\n${WEB_SEARCH_NO_RESULTS_APPEND}`;
+
+  const cappedWeb = capWebContext(webContext, Math.min(settings.webBriefChars, 420));
+  if (cappedWeb.trim() && searchHadLiveData) {
+    systemPrompt = `${systemPrompt}\n\nUse only these live facts:\n${cappedWeb}`;
+  } else if (prelude.shouldRunWebSearch && !searchHadLiveData) {
+    systemPrompt = `${systemPrompt}\n\nLive search returned no usable data. Say briefly that live fetch failed. Do not invent facts.`;
   }
 
   if (prelude.gameNoResults) {
-    systemPrompt = `${systemPrompt}\n\n${GAME_SEARCH_NO_RESULTS_APPEND}`;
+    systemPrompt = `${systemPrompt}\n\nNo games matched. Tell the user briefly and point to category browse.`;
   } else if (prelude.gameGroundingBlock.trim()) {
-    systemPrompt = `${systemPrompt}\n\n${GAME_SEARCH_GROUNDING_APPEND}\nGames found:\n${prelude.gameGroundingBlock}`;
+    systemPrompt = `${systemPrompt}\n\nGames are listed in the side panel only:\n${prelude.gameGroundingBlock.slice(0, 240)}`;
   }
 
   if (prelude.globePlaceLabel) {
-    systemPrompt = `${systemPrompt}\n\n${GLOBE_PRESENTATION_APPEND}\nPlace shown on map: ${prelude.globePlaceLabel}`;
+    systemPrompt = `${systemPrompt}\n\nMap focus: ${prelude.globePlaceLabel}`;
   }
 
-  const cappedWeb = capWebContext(webContext, settings.webBriefChars);
-  if (cappedWeb.trim()) {
-    systemPrompt = `${systemPrompt}\n\n[WEB CONTEXT — ground truth for this turn]\n${cappedWeb}`;
+  if (prelude.localTimeOnly) {
+    systemPrompt = `${systemPrompt}\n\nAnswer using local time context only.`;
   }
 
-  if (prelude.greeting) {
-    systemPrompt = `${systemPrompt}\n\nIf the user sends only a greeting, reply with one short warm sentence.`;
-  }
-
-  return systemPrompt;
+  return trimSystemPrompt(systemPrompt);
 }
 
 export function localTextMaxNewTokens(
@@ -80,7 +78,7 @@ export function localTextMaxNewTokens(
   settings: LocalTextModelSettings = DEFAULT_LOCAL_TEXT_SETTINGS,
 ): number {
   if (prelude.shouldRunWebSearch || prelude.localTimeOnly) {
-    return settings.maxNewTokensSearch;
+    return Math.min(settings.maxNewTokensSearch, 320);
   }
   if (prelude.greeting) return settings.maxNewTokensGreeting;
   return settings.maxNewTokens;

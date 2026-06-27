@@ -5,7 +5,7 @@ export type LocalTextChatTurn = { role: "user" | "assistant"; content: string };
 
 /** SmolLM works best in English — used when UI is Hebrew and we bridge via translate. */
 export const SMOLLM_MODEL_SYSTEM_EN =
-  "You are SmolLM, a helpful assistant. Reply clearly and concisely in English only.";
+  "You are a helpful assistant. Answer briefly and directly in plain English. For math, give the numeric result.";
 
 export const SMOLLM_CHAT_SYSTEM_EN_UI =
   "You are SmolLM, a helpful assistant. Reply clearly and concisely in the same language the user writes.";

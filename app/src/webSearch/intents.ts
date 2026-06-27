@@ -1,5 +1,6 @@
 import type { SearchIntent } from "./types";
 import { getIntentScanText, isInlineTextTaskRequest } from "../chatComposition";
+import { isSimpleMathQuery } from "../chatIntents";
 import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
 import { isLocalContextTimeQuery } from "../startupContext/localTime";
 import { hasUrlInQuery, isGitHubRepoUrlInQuery } from "./urlExtract";
@@ -120,6 +121,7 @@ export const isCasualConversation = (text: string): boolean => {
   if (!q) return true;
   if (CASUAL_CHAT_RE.test(q)) return true;
   if (/^(?:היי|הי|שלום|hey|hi|hello)\s+מה\s+שלומ/i.test(q)) return true;
+  if (/^(?:שלום\s+)?(?:בוקר|ערב|לילה)\s+טוב(?:[\s!?.،,]*)*$/i.test(q)) return true;
   if (/^מה\s+שלומ(?:ך|כם|ן|ה)?(?:[\s!?.،,]*)*$/i.test(q)) return true;
   if (/בינה\s+(?:ה)?מלאכותית|artificial\s+intelligence|\bai\b|machine\s+learning/i.test(q)) {
     return false;
@@ -380,7 +382,7 @@ export const isStarlinkRegionalQuery = (text: string): boolean =>
  */
 export const needsWebSearch = (text: string): boolean => {
   const q = text.trim();
-  if (!q || isInlineTextTaskRequest(q) || isCasualConversation(q)) return false;
+  if (!q || isInlineTextTaskRequest(q) || isCasualConversation(q) || isSimpleMathQuery(q)) return false;
   if (hasUrlInQuery(q)) return true;
   if (userRequestsSearch(q)) return true;
   if (isOpenWebTopicQuery(q)) return true;

@@ -10,7 +10,17 @@ export type ChatTurn = {
 
 export const isSimpleGreeting = (text: string): boolean => {
   const normalized = text.trim().toLowerCase();
-  return /^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized);
+  if (/^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized)) return true;
+  if (/^(?:שלום\s+)?(?:בוקר|ערב|לילה)\s+טוב(?:[\s!?.،,]*)*$/i.test(text.trim())) return true;
+  return false;
+};
+
+/** Simple arithmetic like "1+1" or "כמה זה 2+2" — no web search. */
+export const isSimpleMathQuery = (text: string): boolean => {
+  const q = text.trim();
+  return /^(?:(?:what\s+is|how\s+much\s+is|כמה\s+(?:זה|זהו)|מה\s+(?:זה|זהו))\s+)?\d+\s*[-+*/×÷]\s*\d+\s*\??$/i.test(
+    q,
+  );
 };
 
 /** User asks about live camera / environment / presence / consciousness. */

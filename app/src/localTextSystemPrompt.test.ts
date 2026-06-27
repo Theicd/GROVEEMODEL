@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildLocalTextSystemPrompt, localTextMaxNewTokens } from "./localTextSystemPrompt";
+import { buildLocalTextSystemPrompt, LOCAL_TEXT_MAX_SYSTEM_CHARS, localTextMaxNewTokens } from "./localTextSystemPrompt";
 import type { ChatTurnPreludeContinue } from "./chatTurnPrelude";
 import { DEFAULT_LOCAL_TEXT_SETTINGS } from "./modelRack/localTextModelSettings";
 
@@ -16,7 +16,7 @@ const basePrelude: ChatTurnPreludeContinue = {
 };
 
 describe("localTextSystemPrompt", () => {
-  it("includes web context when provided", () => {
+  it("keeps compact prompt for SmolLM with live web context", () => {
     const prompt = buildLocalTextSystemPrompt({
       uiLang: "en",
       prelude: { ...basePrelude, shouldRunWebSearch: true },
@@ -28,12 +28,24 @@ describe("localTextSystemPrompt", () => {
       startupContext: null,
       webContext: "Live weather: sunny",
     });
-    expect(prompt).toContain("WEB CONTEXT");
     expect(prompt).toContain("sunny");
-    expect(prompt).toContain("ground truth");
+    expect(prompt).toContain("Use only these live facts");
+    expect(prompt.length).toBeLessThanOrEqual(LOCAL_TEXT_MAX_SYSTEM_CHARS);
   });
 
-  it("adds game grounding block when games found", () => {
+  it("uses short greeting instruction", () => {
+    const prompt = buildLocalTextSystemPrompt({
+      uiLang: "he",
+      prelude: { ...basePrelude, greeting: true },
+      pendingWebSearch: null,
+      startupContext: null,
+      webContext: "",
+    });
+    expect(prompt).toContain("greeting");
+    expect(prompt.length).toBeLessThan(220);
+  });
+
+  it("adds compact game grounding block when games found", () => {
     const prompt = buildLocalTextSystemPrompt({
       uiLang: "en",
       prelude: { ...basePrelude, gameGroundingBlock: "1. Tetris" },
@@ -42,12 +54,12 @@ describe("localTextSystemPrompt", () => {
       webContext: "",
     });
     expect(prompt).toContain("Tetris");
-    expect(prompt).toContain("ONLINE GAMES");
+    expect(prompt).toContain("side panel");
   });
 
   it("uses higher token budget on search turns from settings", () => {
     const custom = { ...DEFAULT_LOCAL_TEXT_SETTINGS, maxNewTokensSearch: 512 };
-    expect(localTextMaxNewTokens({ ...basePrelude, shouldRunWebSearch: true }, custom)).toBe(512);
+    expect(localTextMaxNewTokens({ ...basePrelude, shouldRunWebSearch: true }, custom)).toBe(320);
     expect(localTextMaxNewTokens({ ...basePrelude, greeting: true }, custom)).toBe(
       custom.maxNewTokensGreeting,
     );

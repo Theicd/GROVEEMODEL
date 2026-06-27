@@ -22,13 +22,13 @@ export type LocalTextModelSettings = {
 
 export const DEFAULT_LOCAL_TEXT_SETTINGS: LocalTextModelSettings = {
   inferenceBackend: "auto",
-  temperature: 0.7,
-  maxNewTokens: 256,
-  maxNewTokensSearch: 384,
-  maxNewTokensGreeting: 48,
-  topP: 0.9,
-  historyTurns: 8,
-  webBriefChars: 600,
+  temperature: 0.35,
+  maxNewTokens: 192,
+  maxNewTokensSearch: 280,
+  maxNewTokensGreeting: 40,
+  topP: 0.85,
+  historyTurns: 6,
+  webBriefChars: 420,
   systemPrompt: SMOLLM_CHAT_SYSTEM_EN_UI,
 };
 
@@ -74,8 +74,7 @@ export function localTextBaseSystemForUi(
 ): string {
   const custom = settings.systemPrompt.trim() || DEFAULT_LOCAL_TEXT_SETTINGS.systemPrompt;
   if (uiLang === "he") {
-    if (/english only/i.test(custom)) return custom;
-    return `${SMOLLM_MODEL_SYSTEM_EN}\n\n${custom}`;
+    return SMOLLM_MODEL_SYSTEM_EN;
   }
   return custom;
 }
