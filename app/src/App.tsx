@@ -3817,6 +3817,9 @@ function App() {
   }, [enterCapabilitiesOnlyMode]);
 
   const loadLocalTextBoot = async (opts?: { forceWasm?: boolean }) => {
+    const lt = appSettingsRef.current.localText;
+    const alreadyReady = readLocalTextReadyIds().includes(SMOLLM_RACK_ID);
+    const backend = resolveLocalTextBootBackend(lt.inferenceBackend, opts);
     bootLog("SmolLM boot start", {
       forceWasm: !!opts?.forceWasm,
       backend,
@@ -3835,10 +3838,6 @@ function App() {
     setLoadingFile("");
     setSelectedRackModelId(SMOLLM_RACK_ID);
     persistSelectedModelId(SMOLLM_RACK_ID);
-
-    const lt = appSettingsRef.current.localText;
-    const alreadyReady = readLocalTextReadyIds().includes(SMOLLM_RACK_ID);
-    const backend = resolveLocalTextBootBackend(lt.inferenceBackend, opts);
 
     const onSmolProgress = (p: {
       pct: number;
