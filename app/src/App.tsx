@@ -253,6 +253,7 @@ import {
 } from "./modelRack/localTextModelSettings";
 import {
   detectMobileDevice,
+  quickStartupModelChoice,
   resolveLocalTextBootBackend,
   resolveStartupModelChoice,
   startupChoiceLabelHe,
@@ -3849,6 +3850,7 @@ function App() {
       setLocalTextDownloadLabel(p.message);
       setProgress(p.pct);
       if (p.message) {
+        setStatus(p.message);
         loadingFileRef.current = p.message;
         setLoadingFile(p.message);
       }
@@ -3913,22 +3915,18 @@ function App() {
 
   const startIntroLoad = () => {
     const pref = appSettingsRef.current.startupModel;
-    const guessTarget: StartupModelChoice =
-      pref === "local-text" || pref === "gemma"
-        ? pref
-        : detectMobileDevice()
-          ? "local-text"
-          : "gemma";
+    const target = quickStartupModelChoice(pref);
     setIsLoading(true);
     setIsLoaded(false);
     setProgress(0);
     setLoadingPhase("download");
     setLoadingBytes({ loaded: 0, total: 0, speedBps: 0 });
-    setStatus("מתכונן לטעינה…");
-    setBootTarget(guessTarget);
-    void (async () => {
-      bootLog("Intro load clicked", { settings: snapshotInferenceSettings() });
-      const rec = await resolveStartupModelChoice(appSettingsRef.current.startupModel);
+    setStatus(target === "local-text" ? "מתחיל הורדת SmolLM…" : "מתחיל הורדת Gemma…");
+    setBootTarget(target);
+    bootLog("Intro load clicked", { target, settings: snapshotInferenceSettings() });
+    void resolveStartupModelChoice(pref).then((rec) => {
+      setStartupRecommendation(rec);
+      setBootTarget(rec.choice);
       bootLog("Startup model resolved", {
         choice: rec.choice,
         reasonHe: rec.reasonHe,
@@ -3937,12 +3935,20 @@ function App() {
         deviceMemoryGb: rec.signals.deviceMemoryGb,
         webgpu: rec.signals.webgpu,
       });
-      setStartupRecommendation(rec);
-      setBootTarget(rec.choice);
-      if (rec.choice === "local-text") {
-        await loadLocalTextBoot();
-      } else {
-        loadModel();
+    });
+    void (async () => {
+      try {
+        if (target === "local-text") {
+          await loadLocalTextBoot();
+        } else {
+          loadModel();
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        bootWarn("Intro load failed", { error: msg.slice(0, 240) });
+        setIsLoading(false);
+        setStatus(`שגיאת טעינה: ${msg.slice(0, 120)}`);
+        setWorkerBootError(msg);
       }
     })();
   };

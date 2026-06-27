@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   detectMobileDevice,
+  quickStartupModelChoice,
   recommendStartupModel,
   resolveLocalTextBootBackend,
   resolveStartupModelChoice,
@@ -76,5 +77,12 @@ describe("startupModelProfile", () => {
     vi.stubGlobal("window", { innerWidth: 1280, matchMedia: () => ({ matches: false }) });
     expect(resolveLocalTextBootBackend("webgpu")).toBe("webgpu");
     expect(resolveLocalTextBootBackend("auto")).toBe("auto");
+  });
+
+  it("quickStartupModelChoice picks SmolLM on mobile without awaiting WebGPU", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Linux; Android 14) Mobile" });
+    vi.stubGlobal("window", { innerWidth: 412, matchMedia: () => ({ matches: true }) });
+    expect(quickStartupModelChoice("auto")).toBe("local-text");
+    expect(quickStartupModelChoice("gemma")).toBe("gemma");
   });
 });

@@ -1,9 +1,11 @@
 import { formatDownloadPercent } from "../introProgressFormat";
 import { useIntroFooterCarousel } from "../hooks/useIntroFooterCarousel";
+import { startupChoiceLabelHe, type StartupModelChoice } from "../startupModelProfile";
 
 type IntroMarqueeFooterProps = {
   webgpu: boolean;
   phase: "start" | "loading";
+  startupTarget?: StartupModelChoice;
   isLoading: boolean;
   isGenerating: boolean;
   cacheClearing: boolean;
@@ -21,6 +23,7 @@ type IntroMarqueeFooterProps = {
 export function IntroMarqueeFooter({
   webgpu,
   phase,
+  startupTarget = "gemma",
   isLoading,
   isGenerating,
   cacheClearing,
@@ -35,6 +38,7 @@ export function IntroMarqueeFooter({
   onContinueWithoutChat,
 }: IntroMarqueeFooterProps) {
   const isStart = phase === "start";
+  const modelLabel = startupChoiceLabelHe(startupTarget);
   const {
     current,
     typedText,
@@ -108,7 +112,7 @@ export function IntroMarqueeFooter({
               </div>
               <div className="lcars-footer__text-slot">
                 <span className="lcars-footer__chip-text lcars-footer__chip-text--in">
-                  מוריד ומאתחל Gemma 4 E2B…
+                  מוריד ומאתחל {modelLabel}…
                 </span>
               </div>
             </div>
@@ -134,7 +138,7 @@ export function IntroMarqueeFooter({
                 />
               </div>
               <span className="lcars-footer__progress-meta" dir="ltr">
-                {loadingByteLine || (compilePulse ? "INIT ONNX / WebGPU" : "טוען Gemma 4 E2B…")}
+                {loadingByteLine || (compilePulse ? "INIT ONNX / WebGPU" : `טוען ${modelLabel}…`)}
               </span>
             </div>
           ) : null}

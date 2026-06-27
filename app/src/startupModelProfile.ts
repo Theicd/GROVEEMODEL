@@ -152,6 +152,13 @@ export function recommendStartupModel(signals: StartupDeviceSignals): StartupMod
   };
 }
 
+export function quickStartupModelChoice(
+  preference: StartupModelPreference = "auto",
+): StartupModelChoice {
+  if (preference === "local-text" || preference === "gemma") return preference;
+  return detectMobileDevice() ? "local-text" : "gemma";
+}
+
 export async function resolveStartupModelChoice(
   preference: StartupModelPreference = "auto",
 ): Promise<StartupModelRecommendation> {

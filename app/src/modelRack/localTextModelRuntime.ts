@@ -15,7 +15,7 @@ type WorkerOut =
   | { type: "token"; text: string }
   | { type: "complete"; text: string }
   | { type: "aborted"; scope?: string }
-  | { type: "error"; error: string; scope?: string };
+  | { type: "error"; error: string; scope?: "load" | "chat" };
 
 let worker: Worker | null = null;
 
@@ -64,7 +64,7 @@ export function downloadLocalTextModel(
       }
       if (data.type === "error" && data.scope !== "chat") {
         w.removeEventListener("message", onMessage);
-        reject(new Error(data.error));
+        reject(new Error(data.error || "SmolLM load failed"));
       }
     };
     w.addEventListener("message", onMessage);

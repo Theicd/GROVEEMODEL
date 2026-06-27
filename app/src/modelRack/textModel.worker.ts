@@ -23,6 +23,20 @@ const bootLog = (step: string, detail?: Record<string, unknown>) => {
   else console.info("[GROVEE:boot]", step);
 };
 
+self.onunhandledrejection = (ev: PromiseRejectionEvent) => {
+  console.error("[GROVEE:boot] SmolLM worker unhandledrejection", ev.reason);
+  try {
+    ev.preventDefault();
+  } catch {
+    /* ignore */
+  }
+  post({
+    type: "error",
+    error: ev.reason instanceof Error ? ev.reason.message : String(ev.reason),
+    scope: "load",
+  });
+};
+
 const generators = new Map<string, Awaited<ReturnType<typeof pipeline>>>();
 const loading = new Map<string, Promise<Awaited<ReturnType<typeof pipeline>>>>();
 let activeModelId: string | null = null;
@@ -277,10 +291,11 @@ self.onmessage = async (ev: MessageEvent) => {
   } catch (err) {
     chatBusy = false;
     activeInterrupt = null;
+    const scope = msg.type === "load" ? "load" : "chat";
     post({
       type: "error",
       error: err instanceof Error ? err.message : String(err),
-      scope: "chat",
+      scope,
     });
   }
 };
