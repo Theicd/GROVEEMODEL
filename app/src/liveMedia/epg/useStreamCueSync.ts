@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchHlsCueState, type HlsCueState } from "./hlsCueSync";
 
-const POLL_MS = 8_000;
+const POLL_MS = 4_000;
 
 export function useStreamCueSync(streamUrl: string | undefined, enabled: boolean): HlsCueState | null {
   const [cue, setCue] = useState<HlsCueState | null>(null);
@@ -12,6 +12,7 @@ export function useStreamCueSync(streamUrl: string | undefined, enabled: boolean
       return;
     }
 
+    setCue(null);
     let alive = true;
     const poll = async () => {
       const state = await fetchHlsCueState(streamUrl);

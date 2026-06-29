@@ -1,7 +1,12 @@
 import type { Connect } from "vite";
 import type { Plugin } from "vite";
 
-const MJH_EPG_HOST = "i.mjh.nz";
+const ALLOWED_EPG_HOSTS = new Set([
+  "i.mjh.nz",
+  "epg.pw",
+  "iptv-org.github.io",
+  "raw.githubusercontent.com",
+]);
 
 function attachEpgProxy(middlewares: Connect.Server) {
   middlewares.use("/api/epg/raw", async (req, res) => {
@@ -25,9 +30,9 @@ function attachEpgProxy(middlewares: Connect.Server) {
       res.end("Invalid url");
       return;
     }
-    if (parsed.hostname !== MJH_EPG_HOST || parsed.protocol !== "https:") {
+    if (!ALLOWED_EPG_HOSTS.has(parsed.hostname) || parsed.protocol !== "https:") {
       res.statusCode = 403;
-      res.end("EPG proxy only allows https://i.mjh.nz/");
+      res.end(`EPG proxy host not allowed: ${parsed.hostname}`);
       return;
     }
     try {

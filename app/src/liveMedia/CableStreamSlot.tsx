@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { UnifiedSearchHit } from "../searchResults/types";
 import { HlsStreamPlayer } from "../searchResults/HlsStreamPlayer";
 import { CABLE_STREAM_LOAD_MS } from "./cableTunerUtils";
@@ -18,6 +18,8 @@ type Props = {
   multiView?: boolean;
   loadTimeoutMs?: number;
   channelBadgeTopRight?: boolean;
+  /** Ref to video element (single-channel view only). */
+  mediaRef?: RefObject<HTMLVideoElement | null>;
   quadJumpOpen?: boolean;
   quadJumpLabel?: string;
   onSelect?: () => void;
@@ -25,6 +27,8 @@ type Props = {
   onDoubleActivate?: () => void;
   onStreamReady?: () => void;
   onStreamFail?: () => void;
+  /** Skip tuning snow when the same stream was already playing (e.g. quad → full screen). */
+  assumeReady?: boolean;
 };
 
 export function CableStreamSlot({
@@ -41,6 +45,7 @@ export function CableStreamSlot({
   multiView = false,
   loadTimeoutMs = CABLE_STREAM_LOAD_MS,
   channelBadgeTopRight = false,
+  mediaRef,
   quadJumpOpen = false,
   quadJumpLabel = "",
   onSelect,
@@ -48,8 +53,9 @@ export function CableStreamSlot({
   onDoubleActivate,
   onStreamReady,
   onStreamFail,
+  assumeReady = false,
 }: Props) {
-  const [signalReady, setSignalReady] = useState(false);
+  const [signalReady, setSignalReady] = useState(() => assumeReady);
   const failedRef = useRef(false);
   const src = hit?.mediaPlayUrl || hit?.url || "";
 
@@ -59,8 +65,12 @@ export function CableStreamSlot({
       setSignalReady(false);
       return;
     }
+    if (assumeReady) {
+      setSignalReady(true);
+      return;
+    }
     setSignalReady(false);
-  }, [hit, src]);
+  }, [assumeReady, hit, src]);
 
   const onStreamReadyInternal = useCallback(() => {
     setSignalReady(true);
@@ -143,6 +153,7 @@ export function CableStreamSlot({
           controls={false}
           autoPlay
           multiView={multiView}
+          mediaRef={single ? mediaRef : undefined}
           className="lm-cable-tile-video"
           onCanPlay={onStreamReadyInternal}
           onStreamFail={onStreamFailInternal}

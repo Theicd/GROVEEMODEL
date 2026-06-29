@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 type Props = {
   src: string;
@@ -11,6 +11,8 @@ type Props = {
   volume?: number;
   /** Lighter HLS settings when several players run together (quad view). */
   multiView?: boolean;
+  /** Expose underlying &lt;video&gt; for single-channel features (captions). */
+  mediaRef?: RefObject<HTMLVideoElement | null>;
   onCanPlay?: () => void;
   onStreamFail?: () => void;
 };
@@ -25,6 +27,7 @@ export function HlsStreamPlayer({
   muted = false,
   volume = 1,
   multiView = false,
+  mediaRef,
   onCanPlay,
   onStreamFail,
 }: Props) {
@@ -143,6 +146,15 @@ export function HlsStreamPlayer({
     if (!el || muted) return;
     void el.play().catch(() => {});
   }, [muted]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !mediaRef) return;
+    mediaRef.current = el as HTMLVideoElement;
+    return () => {
+      if (mediaRef.current === el) mediaRef.current = null;
+    };
+  }, [mediaRef, src]);
 
   if (tag === "audio") {
     return (

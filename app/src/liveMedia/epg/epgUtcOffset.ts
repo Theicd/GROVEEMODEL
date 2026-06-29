@@ -1,5 +1,6 @@
 import type { HlsCueState } from "./hlsCueSync";
 import { cueWindow } from "./hlsCueSync";
+import { preferredOffsetHoursFromTvgFeed } from "./epgStreamAffinity";
 import type { EpgProgram } from "./types";
 
 const streamOffsetCache = new Map<string, number>();
@@ -8,6 +9,10 @@ const US_MJH_SOURCES = new Set([
   "mjh-plex-us",
   "mjh-pluto-us",
   "mjh-samsung-us",
+  "mjh-samsung-gb",
+  "mjh-samsung-au",
+  "mjh-samsung-ca",
+  "mjh-samsung-de",
   "mjh-roku",
 ]);
 
@@ -85,17 +90,22 @@ export function detectEpgOffsetHoursForCue(
 }
 
 /** When no HLS cue yet, pick smallest offset that yields a plausible live slot. */
-export function inferUsEpgOffsetHours(programs: EpgProgram[], now: Date): number {
+export function inferUsEpgOffsetHours(programs: EpgProgram[], now: Date, preferredOffsets: number[] = []): number {
   let bestOffset = 0;
   let bestScore = -Infinity;
 
-  for (let offset = -8; offset <= 8; offset++) {
+  const offsets = new Set<number>();
+  for (const o of preferredOffsets) offsets.add(o);
+  for (let offset = -12; offset <= 12; offset++) offsets.add(offset);
+
+  for (const offset of offsets) {
     const shifted = shiftEpgPrograms(programs, offset);
     const live = shifted.find((p) => p.start <= now && p.end > now);
     if (!live) continue;
     const slotMin = (live.end.getTime() - live.start.getTime()) / 60_000;
-    if (slotMin < 12 || slotMin > 300) continue;
-    const score = 200 - Math.abs(offset) * 12 - Math.abs(slotMin - 60) * 0.5;
+    if (slotMin < 8 || slotMin > 360) continue;
+    const preferredBoost = preferredOffsets.includes(offset) ? 24 : 0;
+    const score = 200 + preferredBoost - Math.abs(offset) * 10 - Math.abs(slotMin - 60) * 0.5;
     if (score > bestScore) {
       bestScore = score;
       bestOffset = offset;
@@ -113,9 +123,9 @@ export function guessUsEpgOffsetHours(programs: EpgProgram[], now: Date): number
 export function resolveEpgOffsetHours(
   programs: EpgProgram[],
   now: Date,
-  opts?: { cue?: HlsCueState | null; streamUrl?: string; sourceKey?: string },
+  opts?: { cue?: HlsCueState | null; streamUrl?: string; sourceKey?: string; tvgId?: string },
 ): number {
-  const { cue, streamUrl, sourceKey } = opts ?? {};
+  const { cue, streamUrl, sourceKey, tvgId } = opts ?? {};
   if (cue) {
     const detected = detectEpgOffsetHoursForCue(programs, cue, now);
     if (detected) {
@@ -128,7 +138,7 @@ export function resolveEpgOffsetHours(
   if (cached) return cached;
 
   if (isUsMjhEpgSource(sourceKey) && programs.length > 0) {
-    const guessed = inferUsEpgOffsetHours(programs, now);
+    const guessed = inferUsEpgOffsetHours(programs, now, preferredOffsetHoursFromTvgFeed(tvgId));
     if (guessed && streamUrl) cacheStreamEpgOffset(streamUrl, guessed);
     return guessed;
   }

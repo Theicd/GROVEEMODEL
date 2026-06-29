@@ -31,14 +31,18 @@ import {
   loadUserPrefs,
   restoreChannelFromBlacklist,
   restoreRadioFromBlacklist,
+  sanitizeStaleLanguageOverrides,
   saveUserPrefs,
+  setChannelOverride,
   setChannelFavorite,
   setRadioFavorite,
+  updateTunerPreferences,
   visibleChannels,
   visibleRadio,
   type LiveMediaUserPrefs,
 } from "./userPrefs";
 import { channelQualityScore, radioQualityScore } from "./ranking";
+import type { ChannelUserOverride } from "./channelUserTaxonomy";
 import {
   fetchCuratedFavoritesFromRepo,
   injectCuratedChannels,
@@ -436,6 +440,11 @@ export async function ensureLiveMediaLibrary(): Promise<{
     prefs = repaired;
   }
   prefs = await applyDefaultBlacklistOnce(channels, radio, prefs);
+  const langSanitized = sanitizeStaleLanguageOverrides(channels, prefs);
+  if (langSanitized.changed) {
+    await saveUserPrefs(langSanitized.prefs);
+    prefs = langSanitized.prefs;
+  }
   channels = applyPrefsToChannels(channels, prefs);
   radio = applyPrefsToRadio(radio, prefs);
   memoryChannels = channels;
@@ -550,6 +559,22 @@ export async function restoreHiddenRadio(stationId: string): Promise<void> {
   invalidateLiveMediaMemoryCache();
   await syncAllLiveMediaSources();
   await ensureLiveMediaLibrary();
+}
+
+export async function saveChannelUserOverride(
+  channelId: string,
+  patch: ChannelUserOverride | null,
+): Promise<void> {
+  memoryPrefs = await setChannelOverride(channelId, patch);
+  invalidateLiveMediaMemoryCache();
+  await ensureLiveMediaLibrary();
+}
+
+export async function saveTunerPreferences(
+  patch: Parameters<typeof updateTunerPreferences>[0],
+): Promise<void> {
+  memoryPrefs = await updateTunerPreferences(patch);
+  invalidateLiveMediaMemoryCache();
 }
 
 export async function getFavoriteChannels(): Promise<Channel[]> {

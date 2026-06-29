@@ -13,7 +13,7 @@ let guidePending: Promise<EpgGuideEntry[]> | null = null;
 let guideKey = "";
 
 function guideCacheKey(hits: UnifiedSearchHit[]): string {
-  return `v4|${hits.map((h) => `${h.id}:${h.title}`).join("|")}`;
+  return `v5|${hits.map((h) => `${h.id}:${h.title}:${h.mediaPlayUrl || h.url || ""}`).join("|")}`;
 }
 
 function sortEntries(entries: EpgGuideEntry[]): EpgGuideEntry[] {

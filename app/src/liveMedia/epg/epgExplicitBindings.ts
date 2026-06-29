@@ -2,7 +2,14 @@ import { stripTvgFeed } from "./normalize";
 
 export type EpgExplicitTarget = {
   sourceKey: string;
-  channelId: string;
+  /** Fast-path id hint. Samsung/FAST platforms recycle ids, so it is verified against channelName at runtime. */
+  channelId?: string;
+  /** Canonical XMLTV display-name — used to re-resolve the current id when channelId has rotated. */
+  channelName?: string;
+  /** Direct per-channel XMLTV feed (e.g. epg.pw API) — used instead of the static source registry. */
+  feedUrl?: string;
+  /** Display label shown in the OSD when feedUrl is used. */
+  sourceLabel?: string;
 };
 
 /** Verified MJH XMLTV channel ids — bypass fuzzy match when tvg-id or stream is known. */
@@ -48,7 +55,34 @@ const BY_TVG_BASE: Record<string, EpgExplicitTarget[]> = {
   ],
   "HistoryHunters.uk": [{ sourceKey: "rakuten-uk", channelId: "history-hunters" }],
   "history-hunters": [{ sourceKey: "rakuten-uk", channelId: "history-hunters" }],
-  "ABCKids.au": [{ sourceKey: "mjh-all", channelId: "mjh-abc-kids" }],
+  "MovieSphere.us": [
+    { sourceKey: "mjh-samsung-us", channelId: "USBA370000104", channelName: "MovieSphere" },
+    { sourceKey: "mjh-samsung-us", channelId: "USBD17000117B", channelName: "MovieSphere" },
+    { sourceKey: "mjh-roku", channelId: "e1192d17771c5a059930192d439957ee", channelName: "MovieSphere" },
+  ],
+  "ABCKids.au": [{ sourceKey: "mjh-all", channelId: "mjh-abc-kids", channelName: "ABC Kids" }],
+};
+
+/** Regional tvg-id feeds (@UK, @AU, …) — must win over generic .us base. */
+const BY_TVG_FEED: Record<string, EpgExplicitTarget[]> = {
+  "MovieSphere.us@UK": [
+    { sourceKey: "mjh-samsung-gb", channelId: "GBBA33000557H", channelName: "Moviesphere by Lionsgate" },
+  ],
+  "MovieSphere.us@US": [{ sourceKey: "mjh-samsung-us", channelId: "USBA370000104", channelName: "MovieSphere" }],
+  "MovieSphere.us@CA": [{ sourceKey: "mjh-samsung-ca", channelId: "CA1400004AE", channelName: "MovieSphere" }],
+  "ComedyCentral.us@East": [
+    // Real linear Comedy Central (East) from epg.pw — matches the actual broadcast (South Park etc.).
+    {
+      sourceKey: "epgpw-comedycentral-east",
+      channelId: "464922",
+      channelName: "Comedy Central HD",
+      feedUrl: "https://epg.pw/api/epg.xml?channel_id=464922",
+      sourceLabel: "epg.pw",
+    },
+    // Pluto/Roku FAST feeds are a different schedule — kept only as a last-resort fallback.
+    { sourceKey: "mjh-pluto-us", channelId: "5ca671f215a62078d2ec0abf", channelName: "Comedy Central Pluto TV" },
+    { sourceKey: "mjh-roku", channelId: "3d3f3113ff49ca22c3ad51ee00fe7e9d", channelName: "Comedy Central Pluto TV" },
+  ],
 };
 
 const STREAM_HINTS: Array<{ test: RegExp; targets: EpgExplicitTarget[] }> = [
@@ -61,6 +95,8 @@ const STREAM_HINTS: Array<{ test: RegExp; targets: EpgExplicitTarget[] }> = [
   { test: /enterbcef|entertainmenttonight/i, targets: BY_TVG_BASE["EntertainmentTonight.us"]! },
   { test: /globalfashionchannel|pubgfc/i, targets: BY_TVG_BASE["GlobalFashionChannel.us"]! },
   { test: /abc-kids|abckids/i, targets: BY_TVG_BASE["ABCKids.au"]! },
+  { test: /moviesphereuk-samsunguk|moviesphereuk\.amagi/i, targets: BY_TVG_FEED["MovieSphere.us@UK"]! },
+  { test: /usa_comedy_central/i, targets: BY_TVG_FEED["ComedyCentral.us@East"]! },
 ];
 
 function dedupeTargets(targets: EpgExplicitTarget[]): EpgExplicitTarget[] {
@@ -75,11 +111,26 @@ function dedupeTargets(targets: EpgExplicitTarget[]): EpgExplicitTarget[] {
   return out;
 }
 
-/** Ordered explicit XMLTV targets for a favorite (highest confidence first). */
-export function explicitEpgTargets(tvgId?: string, streamUrl?: string): EpgExplicitTarget[] {
+import { israelEpgTargets } from "./israelEpgBindings";
+import { VERIFIED_EPG_BY_ORG } from "./epgVerifiedCatalog";
+
+/**
+ * Ordered explicit XMLTV targets for a favorite (highest confidence first).
+ * `orgId` lets channels without a tvg-id (resolved from the title alias) still use the verified catalog.
+ */
+export function explicitEpgTargets(tvgId?: string, streamUrl?: string, orgId?: string): EpgExplicitTarget[] {
   const out: EpgExplicitTarget[] = [];
-  const base = tvgId?.trim() ? stripTvgFeed(tvgId.trim()) : "";
+  const raw = tvgId?.trim() ?? "";
+  if (raw && BY_TVG_FEED[raw]) out.push(...BY_TVG_FEED[raw]);
+  const base = raw ? stripTvgFeed(raw) : "";
   if (base && BY_TVG_BASE[base]) out.push(...BY_TVG_BASE[base]);
+  if (base && VERIFIED_EPG_BY_ORG[base]) out.push(...VERIFIED_EPG_BY_ORG[base]);
+  const org = orgId?.trim();
+  if (org && org !== base) {
+    if (BY_TVG_BASE[org]) out.push(...BY_TVG_BASE[org]);
+    if (VERIFIED_EPG_BY_ORG[org]) out.push(...VERIFIED_EPG_BY_ORG[org]);
+  }
+  out.push(...israelEpgTargets(tvgId));
   for (const hint of STREAM_HINTS) {
     if (hint.test.test(streamUrl ?? "")) out.push(...hint.targets);
   }

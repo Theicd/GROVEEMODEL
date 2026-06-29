@@ -56,6 +56,7 @@ const MJH_NAME_HINTS: Record<string, string[]> = {
   "ThePetCollective.us": ["the pet collective", "pet collective"],
   "BBCTopGear.uk": ["bbc top gear", "top gear"],
   "RedBullTV.us": ["red bull tv", "redbull tv"],
+  "ComedyCentral.us": ["comedy central", "comedy central pluto tv"],
   "MovieSphere.us": ["moviesphere", "movie sphere"],
   "IonMystery.us": ["ion mystery", "on mystery", "wfxt-dt2", "wfxt dt2", "wfxt 66 2"],
   "WFXT662.us": ["ion mystery", "on mystery", "wfxt-dt2", "wfxt dt2"],
@@ -153,6 +154,8 @@ export function resolveEpgMatchTitles(title: string, tvgId?: string, streamUrl?:
   if (/enterbcef|entertainmenttonight/i.test(streamUrl ?? "")) add("ET");
   if (/historyhuntersrakuten|history-hunters/i.test(streamUrl ?? "")) add("History Hunters");
   if (/globalfashionchannel|pubgfc/i.test(streamUrl ?? "")) add("FashionTV");
+  if (/moviesphereuk|moviesphereaus/i.test(streamUrl ?? "")) add("Moviesphere by Lionsgate");
+  if (/moviesphereuk/i.test(streamUrl ?? "")) add("MovieSphere");
   if (/sofast\.tv/i.test(streamUrl ?? "")) add("Space & Beyond");
   return out;
 }

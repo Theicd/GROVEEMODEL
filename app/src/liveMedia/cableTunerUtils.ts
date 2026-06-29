@@ -139,6 +139,29 @@ export function nextQuadCursor(slots: number[], injected: number, total: number)
   return (injected + 1) % total;
 }
 
+/** Shift every quad tile forward/back along favorites; stays on page 0. */
+export function shiftQuadLineup(
+  slots: number[],
+  delta: 1 | -1,
+  total: number,
+  deadFavorites: ReadonlySet<number>,
+): { slots: number[]; cursor: number } {
+  if (total <= 0) return { slots, cursor: 0 };
+  const occupied = new Set<number>();
+  const nextSlots: number[] = [];
+  for (let i = 0; i < QUAD_TILES; i += 1) {
+    let candidate = nextWorkingFavoriteIndex(slots[i] ?? 0, delta, total, deadFavorites);
+    let guard = 0;
+    while (occupied.has(candidate) && guard < total) {
+      candidate = nextWorkingFavoriteIndex(candidate, delta, total, deadFavorites);
+      guard += 1;
+    }
+    occupied.add(candidate);
+    nextSlots.push(candidate);
+  }
+  return { slots: nextSlots, cursor: nextQuadCursor(nextSlots, nextSlots[0] ?? 0, total) };
+}
+
 /** Replace one quad tile; each slot rotates in turn before any repeats on that tile. */
 export function advanceQuadRotation(
   slots: number[],

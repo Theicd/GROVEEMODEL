@@ -116,46 +116,46 @@ export function scoreChannelMatch(
 ): number {
   const normTitle = normalizeForMatch(title);
   const normName = normalizeForMatch(channel.name);
-  if (normTitle && normTitle === normName) return 100;
+  let raw = 0;
+  if (normTitle && normTitle === normName) raw = 100;
+  else {
+    const idCompact = compactAlpha(channel.id);
+    const nameCompact = compactAlpha(channel.name);
 
-  const idCompact = compactAlpha(channel.id);
-  const nameCompact = compactAlpha(channel.name);
+    for (const variant of tvgIdVariants(tvgId)) {
+      if (idCompact.includes(variant) || nameCompact.includes(variant)) {
+        raw = 96;
+        break;
+      }
+    }
 
-  for (const variant of tvgIdVariants(tvgId)) {
-    if (idCompact.includes(variant) || nameCompact.includes(variant)) return 96;
+    if (!raw) {
+      const titleSig = significantTokens(title);
+      const nameSig = significantTokens(channel.name);
+      const pathSig = streamPathTokens(streamUrl);
+
+      if (titleSig.length >= 2 && titleSig.every((t) => nameHasToken(channel.name, t))) {
+        raw = 85 + titleSig.length * 4;
+      } else if (titleSig.length === 1 && titleSig[0].length >= 6 && nameHasToken(channel.name, titleSig[0])) {
+        raw = 84;
+      } else if (nameSig.length >= 2 && nameSig.every((t) => tokensOf(title).includes(t))) {
+        raw = 80 + nameSig.length * 4;
+      } else if (pathSig.length >= 2 && pathSig.every((t) => nameHasToken(channel.name, t))) {
+        raw = 78 + pathSig.length * 4;
+      } else if (pathSig.length === 1 && pathSig[0].length >= 6 && nameHasToken(channel.name, pathSig[0])) {
+        raw = 77;
+      } else {
+        const pathCompact = streamPathCompact(streamUrl);
+        if (nameCompact.length >= 6 && pathCompact.includes(nameCompact)) raw = 86;
+        else {
+          const sharedSig = titleSig.filter((t) => nameSig.includes(t));
+          if (sharedSig.length >= 2) raw = 70 + sharedSig.length * 5;
+        }
+      }
+    }
   }
 
-  const titleSig = significantTokens(title);
-  const nameSig = significantTokens(channel.name);
-  const pathSig = streamPathTokens(streamUrl);
-
-  if (titleSig.length >= 2 && titleSig.every((t) => nameHasToken(channel.name, t))) {
-    return 85 + titleSig.length * 4;
-  }
-  if (titleSig.length === 1 && titleSig[0].length >= 6 && nameHasToken(channel.name, titleSig[0])) {
-    return 84;
-  }
-
-  if (nameSig.length >= 2 && nameSig.every((t) => tokensOf(title).includes(t))) {
-    return 80 + nameSig.length * 4;
-  }
-
-  if (pathSig.length >= 2 && pathSig.every((t) => nameHasToken(channel.name, t))) {
-    return 78 + pathSig.length * 4;
-  }
-  if (pathSig.length === 1 && pathSig[0].length >= 6 && nameHasToken(channel.name, pathSig[0])) {
-    return 77;
-  }
-
-  const pathCompact = streamPathCompact(streamUrl);
-  if (nameCompact.length >= 6 && pathCompact.includes(nameCompact)) {
-    return 86;
-  }
-
-  const sharedSig = titleSig.filter((t) => nameSig.includes(t));
-  if (sharedSig.length >= 2) return 70 + sharedSig.length * 5;
-
-  return 0;
+  return raw;
 }
 
 export function findBestChannelMatch(

@@ -106,14 +106,16 @@ export async function dbGetStats() {
   return { channels, radio };
 }
 
-const PREFS_KEY = 1;
+const PREFS_DB_KEY = 2;
 
 export async function dbGetUserPrefs(): Promise<LiveMediaUserPrefs | undefined> {
   const db = await getLiveMediaDB();
-  return db.get("userPrefs", PREFS_KEY);
+  const v2 = await db.get("userPrefs", PREFS_DB_KEY);
+  if (v2) return v2;
+  return db.get("userPrefs", 1);
 }
 
 export async function dbPutUserPrefs(prefs: LiveMediaUserPrefs): Promise<void> {
   const db = await getLiveMediaDB();
-  await db.put("userPrefs", { ...prefs, version: 1 });
+  await db.put("userPrefs", { ...prefs, version: PREFS_DB_KEY });
 }

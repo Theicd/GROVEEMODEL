@@ -70,31 +70,75 @@ async function tmdbFetch<T>(path: string, params: Record<string, string>): Promi
   }
 }
 
-function pickMovie(
-  results: Array<{ id: number; title?: string; release_date?: string; vote_average?: number }>,
+function lc(s?: string): string {
+  return s?.trim().toLowerCase() ?? "";
+}
+
+type TmdbScored = { vote_count?: number; popularity?: number };
+
+/** Order matches: exact title first, then by votes/popularity (avoids obscure 0-vote junk winning). */
+function bestByRelevance<T extends TmdbScored>(matches: T[], isExact: (m: T) => boolean): T | null {
+  if (!matches.length) return null;
+  return [...matches].sort((a, b) => {
+    const ax = isExact(a) ? 1 : 0;
+    const bx = isExact(b) ? 1 : 0;
+    if (ax !== bx) return bx - ax;
+    const av = a.vote_count ?? 0;
+    const bv = b.vote_count ?? 0;
+    if (av !== bv) return bv - av;
+    return (b.popularity ?? 0) - (a.popularity ?? 0);
+  })[0];
+}
+
+export function pickMovie(
+  results: Array<{
+    id: number;
+    title?: string;
+    original_title?: string;
+    release_date?: string;
+    vote_average?: number;
+    vote_count?: number;
+    popularity?: number;
+  }>,
   title: string,
 ) {
-  const norm = title.trim().toLowerCase();
-  const hit =
-    results.find((r) => r.title?.trim().toLowerCase() === norm) ??
-    results.find((r) => r.title?.trim().toLowerCase().includes(norm));
+  const norm = lc(title);
+  // Match the EPG title against both the localized and the original (English) title.
+  const isExact = (r: { title?: string; original_title?: string }) =>
+    lc(r.title) === norm || lc(r.original_title) === norm;
+  const matches = results.filter(
+    (r) => isExact(r) || lc(r.title).includes(norm) || lc(r.original_title).includes(norm),
+  );
+  const hit = bestByRelevance(matches, isExact);
   if (!hit) return null;
+  // Reject obscure non-exact matches (e.g. a 0-vote home video that merely contains the title).
+  if (!isExact(hit) && (hit.vote_count ?? 0) === 0 && (hit.popularity ?? 0) < 1) return null;
   const year = yearFromDate(hit.release_date);
   const wordCount = norm.split(/\s+/).filter(Boolean).length;
   if (wordCount >= 3 && year != null && year < 1965) return null;
   return hit;
 }
 
-function pickTv(
-  results: Array<{ id: number; name?: string; first_air_date?: string; vote_average?: number }>,
+export function pickTv(
+  results: Array<{
+    id: number;
+    name?: string;
+    original_name?: string;
+    first_air_date?: string;
+    vote_average?: number;
+    vote_count?: number;
+    popularity?: number;
+  }>,
   title: string,
 ) {
-  const norm = title.trim().toLowerCase();
-  return (
-    results.find((r) => r.name?.trim().toLowerCase() === norm) ??
-    results.find((r) => r.name?.trim().toLowerCase().includes(norm)) ??
-    null
+  const norm = lc(title);
+  // Localized name may differ from the EPG title (e.g. Hebrew UI) — also match original_name.
+  const isExact = (r: { name?: string; original_name?: string }) =>
+    lc(r.name) === norm || lc(r.original_name) === norm;
+  const matches = results.filter(
+    (r) => isExact(r) || lc(r.name).includes(norm) || lc(r.original_name).includes(norm),
   );
+  return bestByRelevance(matches, isExact);
 }
 
 function resolveSearchTitle(title: string, channelTitle?: string): string {
@@ -142,8 +186,11 @@ export async function lookupTmdbProgram(
     results?: Array<{
       id: number;
       name?: string;
+      original_name?: string;
       first_air_date?: string;
       vote_average?: number;
+      vote_count?: number;
+      popularity?: number;
       overview?: string;
       poster_path?: string;
     }>;
@@ -243,8 +290,11 @@ export async function lookupTmdbProgram(
     results?: Array<{
       id: number;
       title?: string;
+      original_title?: string;
       release_date?: string;
       vote_average?: number;
+      vote_count?: number;
+      popularity?: number;
       overview?: string;
       poster_path?: string;
     }>;

@@ -10,6 +10,8 @@ import {
   importLiveMediaUserPrefs,
   restoreHiddenChannel,
   restoreHiddenRadio,
+  saveChannelUserOverride,
+  saveTunerPreferences,
   syncAllLiveMediaSources,
   toggleChannelFavorite,
   toggleRadioFavorite,
@@ -29,7 +31,29 @@ import { fetchStartupContext, getStartupContextSync } from "../startupContext";
 import { buildRegionalRadioLineup } from "./cableTunerRadio";
 import { channelQualityScore } from "./ranking";
 import { ApiKeysPanelContent } from "../apiKeys/ApiKeysPanel";
+import { channelToDisplayHit, hitChannelId } from "./channelDisplay";
+import {
+  effectiveCategoryOrder,
+  effectiveTunerCategories,
+  effectiveViewLanguages,
+  filterTunerFavorites,
+  groupHitsByUserCategory,
+  sortHitsByCategoryOrder,
+} from "./liveMediaFilters";
+import {
+  USER_CHANNEL_CATEGORIES,
+  VIEW_LANGUAGE_OPTIONS,
+  categoryLabelEn,
+  categoryLabelHe,
+  type UserChannelCategory,
+  type ViewLanguageCode,
+  type ChannelUserOverride,
+  defaultBroadcastLanguageForChannel,
+} from "./channelUserTaxonomy";
+import { clearCableTunerSession } from "./cableTunerSession";
+import { ChannelEditModal } from "./ChannelEditModal";
 import "./liveMediaPanel.css";
+import "./channelEditModal.css";
 import "../apiKeys/apiKeys.css";
 
 type HubView = "watch" | "browse" | "favorites" | "radio" | "settings";
@@ -56,6 +80,13 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
   const [language, setLanguage] = useState("");
   const [page, setPage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editHit, setEditHit] = useState<UnifiedSearchHit | null>(null);
+  const editChannel = useMemo(() => {
+    if (!editHit) return null;
+    const id = hitChannelId(editHit);
+    if (!id) return null;
+    return channels.find((c) => c.id === id) ?? null;
+  }, [editHit, channels]);
   const [libraryReady, setLibraryReady] = useState(false);
   const [geoCountry, setGeoCountry] = useState(() => getStartupContextSync()?.countryCode ?? "");
   const rtl = uiLang === "he";
@@ -101,6 +132,15 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
           tmdbHint: "משך סרט, תקציר ופוסטר בתצוגת Live TV (EPG / OSD).",
           brandLive: "שידור חי",
           brandTag: "ערוצים · רדיו · מועדפים",
+          tunerPrefs: "מסנני טיונר ולוח שידורים",
+          tunerPrefsHint: "בחר קטגוריות ושפות שיופיעו בטיונר ובלוח השידורים. עריכת ערוץ בודד לא משנה את זיהוי ה-EPG.",
+          tunerCategories: "קטגוריות בטיונר",
+          viewLanguages: "שפות תצוגה",
+          tunerFiltered: (n: number, total: number) => `${n} מתוך ${total} מועדפים בטיונר`,
+          categoryOrder: "סדר קבוצות בדפדוף",
+          categoryOrderHint: "קבע איזו קטגוריה מופיעה קודם בטיונר, מועדפים ולוח שידורים (↑↓)",
+          moveUp: "העלה",
+          moveDown: "הורד",
         }
       : {
           title: "TV LIVE / Radio",
@@ -141,6 +181,15 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
           tmdbHint: "Movie runtime, overview, and poster in Live TV (EPG / OSD).",
           brandLive: "LIVE",
           brandTag: "Channels · Radio · Favorites",
+          tunerPrefs: "Tuner & TV guide filters",
+          tunerPrefsHint: "Choose categories and languages for the cable tuner and TV guide. Per-channel edits do not change EPG matching.",
+          tunerCategories: "Tuner categories",
+          viewLanguages: "View languages",
+          tunerFiltered: (n: number, total: number) => `${n} of ${total} favorites in tuner`,
+          categoryOrder: "Browse group order",
+          categoryOrderHint: "Set which category comes first when browsing tuner, favorites, and TV guide (↑↓)",
+          moveUp: "Move up",
+          moveDown: "Move down",
         };
 
   const refreshLibrary = useCallback(async () => {
@@ -228,10 +277,37 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
           (c.type === "tv" || c.type === "youtube"),
       )
       .sort((a, b) => channelQualityScore(b) - channelQualityScore(a));
-    return list.map((c) => channelToSearchHit(c));
-  }, [channels, userPrefs?.favoriteChannelIds]);
+    return list.map((c) => channelToDisplayHit(c, userPrefs));
+  }, [channels, userPrefs]);
 
-  const tunerFavorites = favoriteTvHits;
+  const tunerFavorites = useMemo(() => {
+    const filtered = filterTunerFavorites(favoriteTvHits, channels, userPrefs, geoCountry);
+    return sortHitsByCategoryOrder(filtered, channels, userPrefs);
+  }, [favoriteTvHits, channels, userPrefs, geoCountry]);
+
+  const categoryBrowseOrder = useMemo(
+    () => (userPrefs ? effectiveCategoryOrder(userPrefs) : USER_CHANNEL_CATEGORIES.map((c) => c.id)),
+    [userPrefs],
+  );
+
+  const groupedFavoriteTv = useMemo(
+    () => groupHitsByUserCategory(favoriteTvHits, channels, userPrefs),
+    [favoriteTvHits, channels, userPrefs],
+  );
+
+  const activeTunerCategories = useMemo(
+    () => (userPrefs ? effectiveTunerCategories(userPrefs) : []),
+    [userPrefs],
+  );
+
+  const activeViewLanguages = useMemo(
+    () => (userPrefs ? effectiveViewLanguages(userPrefs, geoCountry) : []),
+    [userPrefs, geoCountry],
+  );
+
+  useEffect(() => {
+    clearCableTunerSession();
+  }, [userPrefs?.tunerEnabledCategories, userPrefs?.tunerCategoryOrder, userPrefs?.viewLanguages, geoCountry]);
 
   const regionalRadio = useMemo(
     () => buildRegionalRadioLineup(radio, geoCountry || "us"),
@@ -274,6 +350,58 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
       await refreshLibrary();
     },
     [refreshLibrary],
+  );
+
+  const handleEditChannel = useCallback((hit: UnifiedSearchHit) => {
+    setEditHit(hit);
+  }, []);
+
+  const handleSaveChannelEdit = useCallback(
+    async (patch: ChannelUserOverride | null) => {
+      if (!editHit) return;
+      const channelId = hitChannelId(editHit);
+      if (!channelId) return;
+      await saveChannelUserOverride(channelId, patch);
+      await refreshLibrary();
+    },
+    [editHit, refreshLibrary],
+  );
+
+  const toggleTunerCategory = useCallback(
+    async (cat: UserChannelCategory) => {
+      if (!userPrefs) return;
+      const current = effectiveTunerCategories(userPrefs);
+      const next = current.includes(cat) ? current.filter((c) => c !== cat) : [...current, cat];
+      await saveTunerPreferences({ tunerEnabledCategories: next.length ? next : [...USER_CHANNEL_CATEGORIES.map((c) => c.id)] });
+      await refreshLibrary();
+    },
+    [userPrefs, refreshLibrary],
+  );
+
+  const toggleViewLanguage = useCallback(
+    async (lang: ViewLanguageCode) => {
+      if (!userPrefs) return;
+      const stored = userPrefs.viewLanguages ?? [];
+      const base = stored.length ? stored : effectiveViewLanguages(userPrefs, geoCountry);
+      const next = base.includes(lang) ? base.filter((c) => c !== lang) : [...base, lang];
+      await saveTunerPreferences({ viewLanguages: next });
+      await refreshLibrary();
+    },
+    [userPrefs, geoCountry, refreshLibrary],
+  );
+
+  const moveCategoryOrder = useCallback(
+    async (cat: UserChannelCategory, dir: -1 | 1) => {
+      if (!userPrefs) return;
+      const order = [...categoryBrowseOrder];
+      const idx = order.indexOf(cat);
+      const swap = idx + dir;
+      if (idx < 0 || swap < 0 || swap >= order.length) return;
+      [order[idx], order[swap]] = [order[swap]!, order[idx]!];
+      await saveTunerPreferences({ tunerCategoryOrder: order });
+      await refreshLibrary();
+    },
+    [userPrefs, categoryBrowseOrder, refreshLibrary],
   );
 
   const languageOptions = useMemo(() => {
@@ -341,6 +469,13 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
     favoriteIds,
     onToggleFavorite: handleToggleFavorite,
     onHideChannel: handleHideChannel,
+  };
+
+  const gridFavoriteDetailProps = {
+    ...gridFavProps,
+    onEditChannel: handleEditChannel,
+    showCategoryBadge: true,
+    showEpgBadge: true,
   };
 
   return (
@@ -434,6 +569,7 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
         <div className="lm-panel-body lm-panel-body--watch">
           <CableTunerView
             favorites={tunerFavorites}
+            categoryOrder={categoryBrowseOrder}
             regionalRadio={regionalRadio}
             uiLang={uiLang}
             loading={!libraryReady || loading}
@@ -503,16 +639,30 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
 
               {view === "favorites" && !loading ? (
                 <div className="lm-favorites">
-                  <section>
-                    <h3>
-                      ★ {L.tv} · {favoriteTvHits.length}
-                    </h3>
-                    {favoriteTvHits.length ? (
-                      <LiveMediaResultsGrid hits={favoriteTvHits} uiLang={uiLang} mode="livetv" {...gridFavProps} />
-                    ) : (
-                      <p className="lm-empty-favorites">{L.noFavorites}</p>
-                    )}
-                  </section>
+                  <p className="lm-count">{L.tunerFiltered(tunerFavorites.length, favoriteTvHits.length)}</p>
+                  {favoriteTvHits.length ? (
+                    categoryBrowseOrder.map((catId) => {
+                      const cat = USER_CHANNEL_CATEGORIES.find((c) => c.id === catId);
+                      if (!cat) return null;
+                      const sectionHits = groupedFavoriteTv.get(cat.id) ?? [];
+                      if (!sectionHits.length) return null;
+                      return (
+                        <section key={cat.id} className="lm-fav-category-section">
+                          <h3>
+                            {rtl ? cat.nameHe : cat.nameEn} · {sectionHits.length}
+                          </h3>
+                          <LiveMediaResultsGrid
+                            hits={sectionHits}
+                            uiLang={uiLang}
+                            mode="livetv"
+                            {...gridFavoriteDetailProps}
+                          />
+                        </section>
+                      );
+                    })
+                  ) : (
+                    <p className="lm-empty-favorites">{L.noFavorites}</p>
+                  )}
                   {favoriteRadioHits.length > 0 ? (
                     <section>
                       <h3>
@@ -582,6 +732,82 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
                       </button>
                     </div>
                   </section>
+                  <section className="lm-settings-tuner">
+                    <h3>{L.tunerPrefs}</h3>
+                    <p>{L.tunerPrefsHint}</p>
+                    <div className="lm-tuner-prefs">
+                      <div className="lm-tuner-prefs-group">
+                        <h4>{L.tunerCategories}</h4>
+                        <div className="lm-tuner-prefs-chips">
+                          {USER_CHANNEL_CATEGORIES.map((cat) => {
+                            const on = activeTunerCategories.includes(cat.id);
+                            return (
+                              <label key={cat.id} className={`lm-tuner-chip${on ? " is-on" : ""}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={on}
+                                  onChange={() => void toggleTunerCategory(cat.id)}
+                                />
+                                {rtl ? categoryLabelHe(cat.id) : categoryLabelEn(cat.id)}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="lm-tuner-prefs-group">
+                        <h4>{L.categoryOrder}</h4>
+                        <p className="lm-settings-note">{L.categoryOrderHint}</p>
+                        <div className="lm-tuner-order-list">
+                          {categoryBrowseOrder.map((catId, idx) => (
+                            <div key={catId} className="lm-tuner-order-row">
+                              <span className="lm-tuner-order-num">{idx + 1}</span>
+                              <span className="lm-tuner-order-label">
+                                {rtl ? categoryLabelHe(catId) : categoryLabelEn(catId)}
+                              </span>
+                              <button
+                                type="button"
+                                className="lm-tuner-order-btn"
+                                disabled={idx === 0}
+                                title={L.moveUp}
+                                aria-label={L.moveUp}
+                                onClick={() => void moveCategoryOrder(catId, -1)}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                className="lm-tuner-order-btn"
+                                disabled={idx === categoryBrowseOrder.length - 1}
+                                title={L.moveDown}
+                                aria-label={L.moveDown}
+                                onClick={() => void moveCategoryOrder(catId, 1)}
+                              >
+                                ↓
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="lm-tuner-prefs-group">
+                        <h4>{L.viewLanguages}</h4>
+                        <div className="lm-tuner-prefs-chips">
+                          {VIEW_LANGUAGE_OPTIONS.map((opt) => {
+                            const on = activeViewLanguages.includes(opt.code);
+                            return (
+                              <label key={opt.code} className={`lm-tuner-chip${on ? " is-on" : ""}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={on}
+                                  onChange={() => void toggleViewLanguage(opt.code)}
+                                />
+                                {rtl ? opt.nameHe : opt.nameEn}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
                   <section className="lm-settings-tmdb">
                     <h3>{L.tmdbTitle}</h3>
                     <p>{L.tmdbHint}</p>
@@ -618,6 +844,20 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
       )}
 
       <LiveMediaControlPanel uiLang={uiLang} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {editHit && editChannel ? (
+        <ChannelEditModal
+          hit={editHit}
+          channelName={editChannel.name}
+          catalogLogo={editChannel.logo}
+          catalogStream={editChannel.stream}
+          defaultBroadcastLanguage={defaultBroadcastLanguageForChannel(editChannel)}
+          initial={userPrefs?.channelOverrides?.[editChannel.id] ?? {}}
+          uiLang={uiLang}
+          onSave={handleSaveChannelEdit}
+          onClose={() => setEditHit(null)}
+        />
+      ) : null}
     </div>
   );
 }

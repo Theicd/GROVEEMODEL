@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from "react";
 import type { ChatUiLanguage } from "../ui/useUiLanguage";
 
 const WELCOME_DISMISS_KEY = "grovee-tv-welcome-dismissed";
@@ -19,6 +20,13 @@ export function dismissTvWelcome(): void {
   }
 }
 
+type TourStep = {
+  icon: string;
+  title: string;
+  body: string;
+  bullets?: string[];
+};
+
 type Props = {
   uiLang: ChatUiLanguage;
   booting: boolean;
@@ -26,90 +34,237 @@ type Props = {
   onStart: () => void;
 };
 
+function tourSteps(he: boolean, channelCount: number): TourStep[] {
+  if (he) {
+    return [
+      {
+        icon: "📺",
+        title: "ברוכים הבאים לשידור חי",
+        body: "כאן צופים בערוצי הטלוויזיה והרדיו מהמועדפים שלך — עם מסך מפוצל, מדריך שידורים וחיפוש.",
+        bullets: [
+          channelCount > 0 ? `${channelCount} ערוצים מוכנים לצפייה` : "טוען מועדפים…",
+          "הסיור לוקח כדקה — אפשר לדלג בכל שלב",
+        ],
+      },
+      {
+        icon: "⊞",
+        title: "מסך מפוצל — 4 ערוצים",
+        body: "בפתיחה רואים 4 ערוצים במקביל. כל ריבוע מציג שידור חי; אחד מהם מנגן שמע.",
+        bullets: [
+          "לחיצה על ערוץ בבקר = בחירת שמע",
+          "לחיצה כפולה או ▶ = מעבר לערוץ במסך מלא",
+        ],
+      },
+      {
+        icon: "▲▼",
+        title: "חצים למעלה / למטה",
+        body: "במסך מפוצל — מחליפים את כל 4 הערוצים קדימה או אחורה ברשימה. בערוץ בודד — עוברים לערוץ הבא או הקודם.",
+        bullets: ["או השתמשו בכפתורי ▲ ▼ בתחתית המסך"],
+      },
+      {
+        icon: "◀▶",
+        title: "חצים ימין / שמאל",
+        body: "במסך מפוצל בלבד — בוחרים איזה מהריבועים מנגן שמע, בלי לעזוב את המסך המפוצל.",
+      },
+      {
+        icon: "▦",
+        title: "מדריך שידורים (EPG)",
+        body: "כפתור EPG בתחתית פותח לוח שידורים לפי קטגוריות. רואים מה משודר עכשיו ומה בהמשך.",
+        bullets: ["זמין בערוץ בודד או כשבוחרים ערוץ במסך מפוצל"],
+      },
+      {
+        icon: "⌕",
+        title: "חיפוש ומועדפים",
+        body: "כפתור החיפוש מחזיר לרשימת הערוצים — הוסיפו ☆ למועדפים, ערכו שם וקטגוריה, וסדרו קטגוריות בהגדרות.",
+      },
+      {
+        icon: "✓",
+        title: "מוכנים?",
+        body: "הזיזו עכבר או לחצו על המסך כדי להציג את הבקר. תהנו!",
+      },
+    ];
+  }
+  return [
+    {
+      icon: "📺",
+      title: "Welcome to live TV",
+      body: "Watch your favorite TV and radio channels — split view, TV guide, and search.",
+      bullets: [
+        channelCount > 0 ? `${channelCount} channels ready` : "Loading favorites…",
+        "This tour takes about a minute — skip anytime",
+      ],
+    },
+    {
+      icon: "⊞",
+      title: "Split screen — 4 channels",
+      body: "You start with four live channels at once. One tile plays audio.",
+      bullets: ["Tap a tile in the bar to pick audio", "Double-tap or ▶ for full-screen channel"],
+    },
+    {
+      icon: "▲▼",
+      title: "Up / Down arrows",
+      body: "On split screen — shift all four channels forward or back. On a single channel — next or previous.",
+      bullets: ["Or use the ▲ ▼ buttons on the bottom bar"],
+    },
+    {
+      icon: "◀▶",
+      title: "Left / Right arrows",
+      body: "On split screen only — choose which tile plays audio without leaving quad view.",
+    },
+    {
+      icon: "▦",
+      title: "TV guide (EPG)",
+      body: "The EPG button opens a program guide by category — now playing and upcoming.",
+      bullets: ["Works on single channel or when a quad tile is focused"],
+    },
+    {
+      icon: "⌕",
+      title: "Search & favorites",
+      body: "Search finds channels — star ☆ to favorite, edit names and categories, reorder categories in settings.",
+    },
+    {
+      icon: "✓",
+      title: "Ready?",
+      body: "Move the mouse or tap the screen to show controls. Enjoy!",
+    },
+  ];
+}
+
 export function CableTunerWelcome({ uiLang, booting, channelCount, onStart }: Props) {
   const he = uiLang === "he";
+  const steps = tourSteps(he, channelCount);
+  const [step, setStep] = useState(0);
+  const last = step >= steps.length - 1;
+  const canAdvance = !booting && channelCount > 0;
+
   const L = he
     ? {
         kicker: "TV LIVE",
-        title: "ברוכים הבאים לשידור חי",
-        lead: "ערוצי הטלוויזיה והרדיו שלך — מסך מפוצל, מדריך שידורים וחיפוש.",
-        loading: "טוען מועדפים…",
-        ready: (n: number) => `${n} ערוצים מוכנים לצפייה`,
-        tips: [
-          { icon: "▲▼", label: "למעלה / למטה", hint: "מעבר בין ערוצים" },
-          { icon: "⊞", label: "תפריט", hint: "מסך מפוצל — 4 ערוצים" },
-          { icon: "▦", label: "EPG", hint: "לוח שידורים" },
-          { icon: "⌕", label: "חיפוש", hint: "מצא ערוצים והוסף ☆" },
-          { icon: "⛶", label: "מסך מלא", hint: "הרחבת וידאו" },
-          { icon: "🔊", label: "ווליום", hint: "עוצמת שמע" },
-        ],
+        back: "הקודם",
+        next: "הבא",
+        skip: "דלג",
         start: "התחל לצפות",
         wait: "מכין ערוצים…",
         close: "סגור",
+        stepOf: (a: number, b: number) => `שלב ${a} מתוך ${b}`,
       }
     : {
         kicker: "TV LIVE",
-        title: "Welcome to live TV",
-        lead: "Your TV and radio channels — split view, TV guide, and search.",
-        loading: "Loading favorites…",
-        ready: (n: number) => `${n} channels ready`,
-        tips: [
-          { icon: "▲▼", label: "Up / Down", hint: "Change channel" },
-          { icon: "⊞", label: "Menu", hint: "4-up split screen" },
-          { icon: "▦", label: "EPG", hint: "TV guide" },
-          { icon: "⌕", label: "Search", hint: "Find channels & star ☆" },
-          { icon: "⛶", label: "Full screen", hint: "Expand video" },
-          { icon: "🔊", label: "Volume", hint: "Audio level" },
-        ],
+        back: "Back",
+        next: "Next",
+        skip: "Skip",
         start: "Start watching",
         wait: "Preparing channels…",
         close: "Close",
+        stepOf: (a: number, b: number) => `Step ${a} of ${b}`,
       };
 
-  const canDismiss = !booting && channelCount > 0;
+  const finish = useCallback(() => {
+    if (!canAdvance) return;
+    onStart();
+  }, [canAdvance, onStart]);
+
+  const goNext = useCallback(() => {
+    if (!canAdvance) return;
+    if (last) finish();
+    else setStep((s) => Math.min(s + 1, steps.length - 1));
+  }, [canAdvance, finish, last, steps.length]);
+
+  const goBack = useCallback(() => {
+    setStep((s) => Math.max(0, s - 1));
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        finish();
+        return;
+      }
+      if (e.key === "ArrowRight" || e.key === "Enter") {
+        e.preventDefault();
+        goNext();
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        if (step > 0) goBack();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [finish, goBack, goNext, step]);
+
+  const current = steps[step]!;
 
   return (
     <div className="lm-cable-welcome" role="dialog" aria-modal="true" aria-labelledby="lm-cable-welcome-title">
-      <div className="lm-cable-welcome__card" dir={he ? "rtl" : "ltr"}>
+      <div className="lm-cable-welcome__card lm-cable-welcome__card--tour" dir={he ? "rtl" : "ltr"}>
         <button
           type="button"
           className="lm-cable-welcome__close"
-          onClick={onStart}
-          disabled={!canDismiss}
+          onClick={finish}
+          disabled={!canAdvance}
           aria-label={L.close}
           title={L.close}
         >
           ×
         </button>
         <p className="lm-cable-welcome__kicker">{L.kicker}</p>
-        <h2 id="lm-cable-welcome-title" className="lm-cable-welcome__title">
-          {L.title}
-        </h2>
-        <p className="lm-cable-welcome__lead">{L.lead}</p>
-        <p className="lm-cable-welcome__status" aria-live="polite">
-          {booting ? L.loading : channelCount > 0 ? L.ready(channelCount) : L.loading}
+        <p className="lm-cable-welcome__step-label" aria-live="polite">
+          {L.stepOf(step + 1, steps.length)}
         </p>
-        <ul className="lm-cable-welcome__tips">
-          {L.tips.map((tip) => (
-            <li key={tip.label} className="lm-cable-welcome__tip">
-              <span className="lm-cable-welcome__tip-icon" aria-hidden="true">
-                {tip.icon}
-              </span>
-              <span className="lm-cable-welcome__tip-body">
-                <strong>{tip.label}</strong>
-                <span>{tip.hint}</span>
-              </span>
-            </li>
+        <div className="lm-cable-welcome__tour-icon" aria-hidden="true">
+          {current.icon}
+        </div>
+        <h2 id="lm-cable-welcome-title" className="lm-cable-welcome__title">
+          {current.title}
+        </h2>
+        <p className="lm-cable-welcome__lead">{current.body}</p>
+        {current.bullets?.length ? (
+          <ul className="lm-cable-welcome__bullets">
+            {current.bullets.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="lm-cable-welcome__dots" role="tablist" aria-label={L.stepOf(step + 1, steps.length)}>
+          {steps.map((_, i) => (
+            <button
+              key={i}
+              type="button"
+              role="tab"
+              className={`lm-cable-welcome__dot${i === step ? " is-active" : ""}`}
+              aria-selected={i === step}
+              aria-label={L.stepOf(i + 1, steps.length)}
+              onClick={() => setStep(i)}
+            />
           ))}
-        </ul>
-        <button
-          type="button"
-          className="lm-cable-welcome__start"
-          onClick={onStart}
-          disabled={!canDismiss}
-        >
-          {canDismiss ? L.start : L.wait}
-        </button>
+        </div>
+        <div className="lm-cable-welcome__nav">
+          {step > 0 ? (
+            <button type="button" className="lm-cable-welcome__nav-btn lm-cable-welcome__nav-btn--ghost" onClick={goBack}>
+              {L.back}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="lm-cable-welcome__nav-btn lm-cable-welcome__nav-btn--ghost"
+              onClick={finish}
+              disabled={!canAdvance}
+            >
+              {L.skip}
+            </button>
+          )}
+          <button
+            type="button"
+            className="lm-cable-welcome__nav-btn lm-cable-welcome__nav-btn--primary"
+            onClick={goNext}
+            disabled={!canAdvance}
+          >
+            {last ? (canAdvance ? L.start : L.wait) : L.next}
+          </button>
+        </div>
       </div>
     </div>
   );

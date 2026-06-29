@@ -16,6 +16,7 @@ import {
   pickNextQuadIndex,
   prevFavoriteIndex,
   quadOsdChannelRange,
+  shiftQuadLineup,
   singleFavoriteIndex,
   spreadQuadSlots,
   targetFavoriteAfterStep,
@@ -92,5 +93,23 @@ describe("cableTunerUtils", () => {
     expect(pageIndexForFavorite(3)).toBe(4);
     expect(prevFavoriteIndex(0, 6)).toBe(5);
     expect(nextFavoriteIndex(-1, 6)).toBe(0);
+  });
+
+  it("shiftQuadLineup moves all tiles without duplicates", () => {
+    const total = 66;
+    const slots = spreadQuadSlots(total);
+    const forward = shiftQuadLineup(slots, 1, total, new Set());
+    expect(new Set(forward.slots).size).toBe(4);
+    expect(forward.slots).not.toEqual(slots);
+    const back = shiftQuadLineup(forward.slots, -1, total, new Set());
+    expect(back.slots).toEqual(slots);
+  });
+
+  it("shiftQuadLineup skips dead favorites", () => {
+    const slots = [0, 1, 2, 3];
+    const dead = new Set([4]);
+    const shifted = shiftQuadLineup(slots, 1, 6, dead);
+    expect(shifted.slots).not.toContain(4);
+    expect(new Set(shifted.slots).size).toBe(4);
   });
 });

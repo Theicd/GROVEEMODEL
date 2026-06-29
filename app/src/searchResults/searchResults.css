@@ -1408,6 +1408,7 @@
 .serp-live-grid .serp-live-card {
   border: 1px solid rgba(255, 80, 80, 0.15);
   background: linear-gradient(145deg, rgba(30, 20, 35, 0.85), rgba(15, 15, 22, 0.9));
+  cursor: default;
 }
 
 .serp-live-thumb-wrap {
@@ -1822,6 +1823,45 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.serp-media-title--editable {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  text-align: inherit;
+  cursor: text;
+  font: inherit;
+  color: #e8eeff;
+  text-decoration: underline dotted rgba(120, 160, 255, 0.45);
+  text-underline-offset: 3px;
+}
+
+.serp-media-title--editable:hover,
+.serp-media-title--editable:focus-visible {
+  color: #fff;
+  text-decoration-color: rgba(120, 200, 255, 0.85);
+  outline: none;
+}
+
+.serp-live-thumb-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.serp-live-thumb-btn:focus-visible {
+  outline: 2px solid rgba(100, 180, 255, 0.75);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .serp-media-author {

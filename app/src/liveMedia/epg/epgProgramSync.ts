@@ -10,7 +10,39 @@ export function findLiveProgram(programs: EpgProgram[], now = new Date()): EpgPr
   return programs.find((p) => p.start <= now && p.end > now) ?? null;
 }
 
-const MIN_CUE_MATCH_SCORE = 320;
+const MIN_CUE_MATCH_SCORE = 180;
+
+/** Programme whose slot contains the stream cue start (after timezone shift). */
+export function findProgramContainingCueStart(
+  programs: EpgProgram[],
+  now: Date,
+  cue: HlsCueState,
+): EpgProgram | null {
+  const { start: winStart } = cueWindow(now, cue);
+  const winStartMs = winStart.getTime();
+  return programs.find((p) => p.start.getTime() <= winStartMs && p.end.getTime() > winStartMs) ?? null;
+}
+
+/** Nearest programme start to the stream cue window — handles EPG drift. */
+export function findProgramNearestCueStart(
+  programs: EpgProgram[],
+  now: Date,
+  cue: HlsCueState,
+  maxDeltaMs = 30 * 60_000,
+): EpgProgram | null {
+  const containing = findProgramContainingCueStart(programs, now, cue);
+  if (containing) return containing;
+
+  const { start: winStart } = cueWindow(now, cue);
+  const winStartMs = winStart.getTime();
+  let best: { program: EpgProgram; delta: number } | null = null;
+  for (const program of programs) {
+    const delta = Math.abs(program.start.getTime() - winStartMs);
+    if (delta > maxDeltaMs) continue;
+    if (!best || delta < best.delta) best = { program, delta };
+  }
+  return best?.program ?? null;
+}
 
 /** Match EPG title to the stream's real programme window (from HLS cues), not wall-clock slot only. */
 export function findProgramForStreamCue(
@@ -50,7 +82,7 @@ export function findProgramForStreamCue(
 export function resolveLiveEpgProgram(
   programs: EpgProgram[],
   now: Date,
-  opts?: { cue?: HlsCueState | null; streamUrl?: string; sourceKey?: string },
+  opts?: { cue?: HlsCueState | null; streamUrl?: string; sourceKey?: string; tvgId?: string },
 ): EpgProgram | null {
   if (!programs.length) return null;
   const offset = resolveEpgOffsetHours(programs, now, opts);
@@ -58,8 +90,8 @@ export function resolveLiveEpgProgram(
   if (opts?.cue) {
     const fromCue = findProgramForStreamCue(shifted, now, opts.cue);
     if (fromCue) return fromCue;
-    // Stream has live segment timing — wall-clock EPG slot is often wrong (timezone drift).
-    return null;
+    const nearCue = findProgramNearestCueStart(shifted, now, opts.cue);
+    if (nearCue) return nearCue;
   }
   return findLiveProgram(shifted, now);
 }

@@ -2,15 +2,33 @@ import { dbGetUserPrefs, dbPutUserPrefs } from "./indexeddb";
 import type { Channel, RadioStation } from "./types";
 import { collectDefaultBlacklistIds } from "./defaultBlacklist";
 import { channelPassesHeEnCatalog, isPlutoTvChannel, radioPassesHeEnCatalog } from "./heEnCatalogFilter";
+import {
+  ALL_USER_CATEGORIES,
+  defaultBroadcastLanguageForChannel,
+  isIsraeliChannel,
+  normalizeChannelImageUrl,
+  normalizeChannelStreamUrl,
+  type ChannelUserOverride,
+  type UserChannelCategory,
+  type ViewLanguageCode,
+} from "./channelUserTaxonomy";
 
-export const PREFS_LOCAL_KEY = "grovee-live-media-user-prefs-v1";
+export const PREFS_LOCAL_KEY = "grovee-live-media-user-prefs-v2";
 
 export type LiveMediaUserPrefs = {
-  version: 1;
+  version: 1 | 2;
   favoriteChannelIds: string[];
   favoriteRadioIds: string[];
   blacklistChannelIds: string[];
   blacklistRadioIds: string[];
+  /** Per-channel display name, category, broadcast language. */
+  channelOverrides?: Record<string, ChannelUserOverride>;
+  /** Categories included in cable tuner + TV guide filter. Empty = all. */
+  tunerEnabledCategories?: UserChannelCategory[];
+  /** Languages shown in tuner + guide. Empty = geo default. */
+  viewLanguages?: ViewLanguageCode[];
+  /** Browse order for category groups in tuner, favorites, and TV guide. */
+  tunerCategoryOrder?: UserChannelCategory[];
   /** One-time seed of default blacklist patterns. */
   defaultBlacklistApplied?: boolean;
   /** Increment when default blacklist rules expand (e.g. Spanish filter v2). */
@@ -20,20 +38,51 @@ export type LiveMediaUserPrefs = {
 
 export function emptyUserPrefs(): LiveMediaUserPrefs {
   return {
-    version: 1,
+    version: 2,
     favoriteChannelIds: [],
     favoriteRadioIds: [],
     blacklistChannelIds: [],
     blacklistRadioIds: [],
+    channelOverrides: {},
+    tunerEnabledCategories: [...ALL_USER_CATEGORIES],
+    tunerCategoryOrder: [...ALL_USER_CATEGORIES],
+    viewLanguages: [],
     updatedAt: Date.now(),
+  };
+}
+
+function normalizeCategoryOrder(raw: UserChannelCategory[] | undefined): UserChannelCategory[] {
+  const valid = (raw ?? []).filter((c) => ALL_USER_CATEGORIES.includes(c));
+  const missing = ALL_USER_CATEGORIES.filter((c) => !valid.includes(c));
+  return valid.length ? [...valid, ...missing] : [...ALL_USER_CATEGORIES];
+}
+
+function normalizePrefs(parsed: LiveMediaUserPrefs): LiveMediaUserPrefs {
+  return {
+    version: 2,
+    favoriteChannelIds: [...new Set(parsed.favoriteChannelIds ?? [])],
+    favoriteRadioIds: [...new Set(parsed.favoriteRadioIds ?? [])],
+    blacklistChannelIds: [...new Set(parsed.blacklistChannelIds ?? [])],
+    blacklistRadioIds: [...new Set(parsed.blacklistRadioIds ?? [])],
+    channelOverrides: { ...(parsed.channelOverrides ?? {}) },
+    tunerEnabledCategories:
+      parsed.tunerEnabledCategories?.filter((c) => ALL_USER_CATEGORIES.includes(c)) ?? [...ALL_USER_CATEGORIES],
+    tunerCategoryOrder: normalizeCategoryOrder(parsed.tunerCategoryOrder),
+    viewLanguages: [...new Set(parsed.viewLanguages ?? [])],
+    defaultBlacklistApplied: parsed.defaultBlacklistApplied,
+    defaultBlacklistVersion: parsed.defaultBlacklistVersion,
+    updatedAt: parsed.updatedAt ?? Date.now(),
   };
 }
 
 function readLocalPrefs(): LiveMediaUserPrefs | null {
   try {
-    const raw = localStorage.getItem(PREFS_LOCAL_KEY);
+    let raw = localStorage.getItem(PREFS_LOCAL_KEY);
+    if (!raw) {
+      raw = localStorage.getItem("grovee-live-media-user-prefs-v1");
+    }
     if (!raw) return null;
-    return JSON.parse(raw) as LiveMediaUserPrefs;
+    return normalizePrefs(JSON.parse(raw) as LiveMediaUserPrefs);
   } catch {
     return null;
   }
@@ -51,6 +100,7 @@ export async function loadUserPrefs(): Promise<LiveMediaUserPrefs> {
   let prefs = await dbGetUserPrefs();
   if (!prefs) prefs = readLocalPrefs();
   if (!prefs) prefs = emptyUserPrefs();
+  prefs = normalizePrefs(prefs);
   writeLocalPrefs(prefs);
   return prefs;
 }
@@ -111,17 +161,101 @@ export function releaseBlacklistedFavorites(prefs: LiveMediaUserPrefs): LiveMedi
 
 export function importUserPrefsJson(raw: string): LiveMediaUserPrefs {
   const parsed = JSON.parse(raw) as LiveMediaUserPrefs;
-  if (parsed.version !== 1) throw new Error("Unsupported prefs version");
+  if (parsed.version !== 1 && parsed.version !== 2) throw new Error("Unsupported prefs version");
+  return normalizePrefs({ ...parsed, updatedAt: Date.now() });
+}
+
+export async function setChannelOverride(
+  channelId: string,
+  patch: ChannelUserOverride | null,
+): Promise<LiveMediaUserPrefs> {
+  const prefs = await loadUserPrefs();
+  const overrides = { ...(prefs.channelOverrides ?? {}) };
+  if (!patch) {
+    delete overrides[channelId];
+  } else {
+    const prev = overrides[channelId] ?? {};
+    const next: ChannelUserOverride = { ...prev };
+    if ("displayName" in patch) {
+      const dn = patch.displayName?.trim();
+      if (dn) next.displayName = dn;
+      else delete next.displayName;
+    }
+    if (patch.category !== undefined) next.category = patch.category;
+    if ("broadcastLanguage" in patch) {
+      if (patch.broadcastLanguage) next.broadcastLanguage = patch.broadcastLanguage;
+      else delete next.broadcastLanguage;
+    }
+    if ("imageUrl" in patch) {
+      const img = normalizeChannelImageUrl(patch.imageUrl);
+      if (img) next.imageUrl = img;
+      else delete next.imageUrl;
+    }
+    if ("streamUrl" in patch) {
+      const stream = normalizeChannelStreamUrl(patch.streamUrl);
+      if (stream) next.streamUrl = stream;
+      else delete next.streamUrl;
+    }
+    if (!next.displayName && !next.category && !next.broadcastLanguage && !next.imageUrl && !next.streamUrl) {
+      delete overrides[channelId];
+    } else {
+      overrides[channelId] = next;
+    }
+  }
+  const next = { ...prefs, channelOverrides: overrides };
+  await saveUserPrefs(next);
+  return next;
+}
+
+/** Remove Hebrew language overrides mistakenly saved on international channels. */
+export function sanitizeStaleLanguageOverrides(
+  channels: Channel[],
+  prefs: LiveMediaUserPrefs,
+): { prefs: LiveMediaUserPrefs; changed: boolean } {
+  const overrides = prefs.channelOverrides ?? {};
+  let changed = false;
+  const nextOverrides: Record<string, ChannelUserOverride> = { ...overrides };
+
+  for (const [id, o] of Object.entries(overrides)) {
+    if (o.broadcastLanguage !== "heb") continue;
+    const c = channels.find((ch) => ch.id === id);
+    if (!c || isIsraeliChannel(c)) continue;
+    if (defaultBroadcastLanguageForChannel(c) === "heb") continue;
+    const copy = { ...o };
+    delete copy.broadcastLanguage;
+    changed = true;
+    if (!copy.displayName && !copy.category && !copy.imageUrl && !copy.streamUrl) {
+      delete nextOverrides[id];
+    } else {
+      nextOverrides[id] = copy;
+    }
+  }
+
+  if (!changed) return { prefs, changed: false };
   return {
-    version: 1,
-    favoriteChannelIds: [...new Set(parsed.favoriteChannelIds ?? [])],
-    favoriteRadioIds: [...new Set(parsed.favoriteRadioIds ?? [])],
-    blacklistChannelIds: [...new Set(parsed.blacklistChannelIds ?? [])],
-    blacklistRadioIds: [...new Set(parsed.blacklistRadioIds ?? [])],
-    defaultBlacklistApplied: parsed.defaultBlacklistApplied,
-    defaultBlacklistVersion: parsed.defaultBlacklistVersion,
-    updatedAt: Date.now(),
+    prefs: { ...prefs, channelOverrides: nextOverrides, updatedAt: Date.now() },
+    changed: true,
   };
+}
+
+export async function updateTunerPreferences(patch: {
+  tunerEnabledCategories?: UserChannelCategory[];
+  tunerCategoryOrder?: UserChannelCategory[];
+  viewLanguages?: ViewLanguageCode[];
+}): Promise<LiveMediaUserPrefs> {
+  const prefs = await loadUserPrefs();
+  const next = {
+    ...prefs,
+    ...(patch.tunerEnabledCategories !== undefined
+      ? { tunerEnabledCategories: [...patch.tunerEnabledCategories] }
+      : {}),
+    ...(patch.tunerCategoryOrder !== undefined
+      ? { tunerCategoryOrder: normalizeCategoryOrder(patch.tunerCategoryOrder) }
+      : {}),
+    ...(patch.viewLanguages !== undefined ? { viewLanguages: [...patch.viewLanguages] } : {}),
+  };
+  await saveUserPrefs(next);
+  return next;
 }
 
 export function blacklistChannelSet(prefs: LiveMediaUserPrefs): Set<string> {

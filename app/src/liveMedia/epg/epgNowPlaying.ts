@@ -29,7 +29,8 @@ export function nowPlayingFromEntry(
   const programs = entry?.schedule?.programs ?? [];
   const streamUrl = entry?.hit?.mediaPlayUrl || entry?.hit?.url;
   const sourceKey = entry?.schedule?.channel?.sourceKey;
-  const program = resolveLiveEpgProgram(programs, now, { cue, streamUrl, sourceKey });
+  const tvgId = typeof entry?.hit?.meta?.tvgId === "string" ? entry.hit.meta.tvgId : undefined;
+  const program = resolveLiveEpgProgram(programs, now, { cue, streamUrl, sourceKey, tvgId });
   if (!program) return null;
 
   const { start: displayStart, end: displayEnd, durationMinutes } = resolveProgramWindow(

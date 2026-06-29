@@ -1,5 +1,6 @@
 import { gunzipSync } from "fflate";
 import { isStaticWebHost } from "../../webSearch/proxyFetch";
+import { ISRAEL_EPG_SOURCES } from "./israelEpgBindings";
 import { parsedChannelsForXml, resetParsedChannelCacheForTests } from "./xmltvParse";
 
 export type MjhEpgSource = {
@@ -32,7 +33,31 @@ export const MJH_EPG_SOURCES: MjhEpgSource[] = [
     key: "mjh-samsung-us",
     label: "Samsung TV+ US",
     url: "https://i.mjh.nz/SamsungTVPlus/us.xml.gz",
-    streamHint: /samsung|samsungtvplus/i,
+    streamHint: /samsungtvplus\/us|samsungus|samsung-us(?!uk)|xumo|zh5u0\.amagi/i,
+  },
+  {
+    key: "mjh-samsung-gb",
+    label: "Samsung TV+ UK",
+    url: "https://i.mjh.nz/SamsungTVPlus/gb.xml.gz",
+    streamHint: /samsunguk|samsung-uk|moviesphereuk|gb\.amagi|terninternation.*samsunguk/i,
+  },
+  {
+    key: "mjh-samsung-au",
+    label: "Samsung TV+ AU",
+    url: "https://i.mjh.nz/SamsungTVPlus/au.xml.gz",
+    streamHint: /samsungau|samsung-au|moviesphereaus/i,
+  },
+  {
+    key: "mjh-samsung-ca",
+    label: "Samsung TV+ CA",
+    url: "https://i.mjh.nz/SamsungTVPlus/ca.xml.gz",
+    streamHint: /samsungca|samsung-ca/i,
+  },
+  {
+    key: "mjh-samsung-de",
+    label: "Samsung TV+ DE",
+    url: "https://i.mjh.nz/SamsungTVPlus/de.xml.gz",
+    streamHint: /samsungde|samsung-de/i,
   },
   {
     key: "mjh-roku",
@@ -47,6 +72,12 @@ export const MJH_EPG_SOURCES: MjhEpgSource[] = [
     streamHint: /historyhuntersrakuten|rakuten-uk|amg00841.*rakuten/i,
   },
 ];
+
+export const ALL_EPG_SOURCES: MjhEpgSource[] = [...MJH_EPG_SOURCES, ...ISRAEL_EPG_SOURCES];
+
+export function findEpgSourceByKey(key: string): MjhEpgSource | undefined {
+  return ALL_EPG_SOURCES.find((s) => s.key === key);
+}
 
 const xmlCache = new Map<string, Promise<string | null>>();
 
@@ -174,7 +205,11 @@ export function orderedSourcesForStream(streamUrl: string): MjhEpgSource[] {
   const all = MJH_EPG_SOURCES.find((s) => s.key === "mjh-all");
   const hinted = MJH_EPG_SOURCES.filter((s) => s.key !== "mjh-all" && s.streamHint?.test(streamUrl));
   const rest = MJH_EPG_SOURCES.filter((s) => s.key !== "mjh-all" && !s.streamHint?.test(streamUrl));
-  return [...(all ? [all] : []), ...hinted, ...rest];
+  const israel =
+    /\.il@/i.test(streamUrl) || /siliconweb|kan\.org|13tv|now14|mako|kancdn/i.test(streamUrl)
+      ? [...ISRAEL_EPG_SOURCES]
+      : [];
+  return [...israel, ...(all ? [all] : []), ...hinted, ...rest];
 }
 
 export function resetMjhEpgCacheForTests(): void {

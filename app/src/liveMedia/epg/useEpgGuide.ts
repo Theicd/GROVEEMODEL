@@ -8,7 +8,7 @@ export function useEpgGuide(hits: UnifiedSearchHit[], enabled: boolean) {
   const [loading, setLoading] = useState(false);
   const [readyCount, setReadyCount] = useState(0);
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
-  const hitKey = hits.map((h) => `${h.id}:${h.title}`).join("|");
+  const hitKey = hits.map((h) => `${h.id}:${h.title}:${h.mediaPlayUrl || h.url || ""}`).join("|");
 
   useEffect(() => {
     if (!enabled || !hits.length) {

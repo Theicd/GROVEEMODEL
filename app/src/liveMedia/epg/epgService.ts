@@ -1,8 +1,11 @@
 import type { UnifiedSearchHit } from "../../searchResults/types";
 import { channelMayHaveEpg, resolveEpgMatchTitles, resolveIptvOrgChannelId } from "./channelAliases";
 import { findBestChannelMatch, scoreChannelMatch } from "./channelMatch";
-import { explicitEpgTargets } from "./epgExplicitBindings";
-import { fetchMjhXmltv, MJH_EPG_SOURCES, orderedSourcesForStream, warmMjhEpgCaches } from "./mjhSources";
+import { explicitEpgTargets, type EpgExplicitTarget } from "./epgExplicitBindings";
+import { streamEpgAffinityBonus } from "./epgStreamAffinity";
+import type { EpgChannelRef } from "./types";
+import { isIsraelTvgId } from "./israelEpgBindings";
+import { fetchMjhXmltv, findEpgSourceByKey, MJH_EPG_SOURCES, orderedSourcesForStream, warmMjhEpgCaches } from "./mjhSources";
 import { normalizeChannelTitle, normalizeForMatch } from "./normalize";
 import type { EpgSchedule } from "./types";
 import {
@@ -20,7 +23,7 @@ export type EpgLookupInput = {
   tvgId?: string;
 };
 
-const EPG_MATCH_VERSION = 3;
+const EPG_MATCH_VERSION = 4;
 const availabilityCache = new Map<string, boolean>();
 
 function lookupCacheKey(input: EpgLookupInput): string {
@@ -29,8 +32,12 @@ function lookupCacheKey(input: EpgLookupInput): string {
 
 export function hitToEpgLookup(hit: UnifiedSearchHit | null): EpgLookupInput | null {
   if (!hit || (hit.kind !== "livetv" && hit.kind !== "youtube")) return null;
+  const epgTitle =
+    typeof hit.meta?.epgTitle === "string" && hit.meta.epgTitle
+      ? hit.meta.epgTitle
+      : hit.titleOriginal || hit.title;
   return {
-    title: hit.title,
+    title: epgTitle,
     streamUrl: hit.mediaPlayUrl || hit.url,
     tvgId: typeof hit.meta?.tvgId === "string" ? hit.meta.tvgId : undefined,
   };
@@ -39,6 +46,39 @@ export function hitToEpgLookup(hit: UnifiedSearchHit | null): EpgLookupInput | n
 /** iptv-org ids for regions without a public MJH/XMLTV programme feed. */
 function lacksOpenProgrammeFeed(orgId: string | null): boolean {
   return orgId != null && /\.il$/i.test(orgId);
+}
+
+/**
+ * Resolve an explicit target to a live channel in the feed.
+ * Samsung/FAST platforms recycle ids, so a hardcoded channelId can point at the wrong
+ * channel later. When channelName is known we verify the id still matches that name and,
+ * if not, re-resolve by name so the binding self-heals as ids rotate.
+ */
+export function resolveExplicitChannel(
+  channels: EpgChannelRef[],
+  target: EpgExplicitTarget,
+): EpgChannelRef | null {
+  const wantName = target.channelName ? normalizeForMatch(target.channelName) : "";
+
+  if (target.channelId) {
+    const byId = channels.find((c) => c.id === target.channelId);
+    if (byId && (!wantName || normalizeForMatch(byId.name) === wantName)) return byId;
+  }
+
+  if (wantName) {
+    const exact = channels.find((c) => normalizeForMatch(c.name) === wantName);
+    if (exact) return exact;
+    const contains = channels.find((c) => {
+      const n = normalizeForMatch(c.name);
+      return n.length >= 4 && (n.includes(wantName) || wantName.includes(n));
+    });
+    if (contains) return contains;
+  }
+
+  if (target.channelId && !wantName) {
+    return channels.find((c) => c.id === target.channelId) ?? null;
+  }
+  return null;
 }
 
 export { channelMayHaveEpg, warmMjhEpgCaches };
@@ -64,46 +104,58 @@ export async function fetchEpgSchedule(
 ): Promise<EpgSchedule | null> {
   const title = normalizeChannelTitle(input.title);
   const orgId = resolveIptvOrgChannelId(title, input.tvgId);
-  if (lacksOpenProgrammeFeed(orgId)) return null;
+  const israelOnly = lacksOpenProgrammeFeed(orgId) || isIsraelTvgId(input.tvgId);
 
   const stream = input.streamUrl ?? "";
   const sources = orderedSourcesForStream(stream);
-  const matchTitles = resolveEpgMatchTitles(title, input.tvgId, stream);
+  const matchTitles = israelOnly ? [] : resolveEpgMatchTitles(title, input.tvgId, stream);
 
   await warmMjhEpgCaches(stream);
 
   let best: {
     channel: NonNullable<ReturnType<typeof findBestChannelMatch>>;
     xml: string;
-    source: (typeof sources)[number];
+    source: (typeof MJH_EPG_SOURCES)[number];
     score: number;
   } | null = null;
 
   const tryCandidate = (
     channel: NonNullable<ReturnType<typeof findBestChannelMatch>>,
     xml: string,
-    source: (typeof MJH_EPG_SOURCES)[number],
+    source: { key: string; label: string; url: string },
     score: number,
   ) => {
     if (!best || score > best.score) best = { channel, xml, source, score };
   };
 
-  for (const target of explicitEpgTargets(input.tvgId, stream)) {
-    const source = MJH_EPG_SOURCES.find((s) => s.key === target.sourceKey);
+  for (const target of explicitEpgTargets(input.tvgId, stream, orgId ?? undefined)) {
+    const source = target.feedUrl
+      ? { key: target.sourceKey, label: target.sourceLabel ?? "EPG", url: target.feedUrl }
+      : findEpgSourceByKey(target.sourceKey);
     if (!source) continue;
     const xml = await fetchMjhXmltv(source.url);
     if (!xml) continue;
     const channels = parsedChannelsForXml(source.key, xml);
-    const channel = channels.find((c) => c.id === target.channelId);
+    const channel = resolveExplicitChannel(channels, target);
     if (!channel) continue;
+    if (!xmlHasProgrammesForChannel(xml, channel.id)) continue;
+
     if (opts?.probeOnly) {
-      if (xmlHasProgrammesForChannel(xml, channel.id)) tryCandidate(channel, xml, source, 100);
-    } else {
-      const programs = opts?.guide
-        ? pickProgramsForGuide(parseXmltvPrograms(xml, channel.id))
-        : pickCurrentAndUpcoming(parseXmltvPrograms(xml, channel.id));
-      if (programs.length > 0) tryCandidate(channel, xml, source, 100);
+      tryCandidate(channel, xml, source, 1000);
+      continue;
     }
+
+    const allPrograms = parseXmltvPrograms(xml, channel.id);
+    const programs = opts?.guide
+      ? pickProgramsForGuide(allPrograms)
+      : pickCurrentAndUpcoming(allPrograms);
+    const usable = programs.length > 0 ? programs : allPrograms.slice(0, 48);
+    if (usable.length > 0) tryCandidate(channel, xml, source, 1000);
+  }
+
+  // Explicit bindings are authoritative — skip the expensive fuzzy scan when one resolved.
+  if (best) {
+    return finalizeSchedule(best, opts);
   }
 
   for (const source of sources) {
@@ -115,11 +167,28 @@ export async function fetchEpgSchedule(
       const channel = findBestChannelMatch(channels, matchTitle, input.tvgId, stream);
       if (!channel) continue;
 
-      const score = scoreChannelMatch(channel, matchTitle, input.tvgId, stream);
+      const baseScore = scoreChannelMatch(channel, matchTitle, input.tvgId, stream);
+      const score =
+        baseScore + streamEpgAffinityBonus(stream, channel.name, source.key);
+      if (score < 65) continue;
       tryCandidate(channel, xml, source, score);
     }
   }
 
+  return finalizeSchedule(best, opts);
+}
+
+type BestCandidate = {
+  channel: NonNullable<ReturnType<typeof findBestChannelMatch>>;
+  xml: string;
+  source: { key: string; label: string; url: string };
+  score: number;
+};
+
+function finalizeSchedule(
+  best: BestCandidate | null,
+  opts?: { probeOnly?: boolean; guide?: boolean },
+): EpgSchedule | null {
   if (!best) return null;
 
   if (opts?.probeOnly) {
@@ -129,9 +198,9 @@ export async function fetchEpgSchedule(
     return null;
   }
 
-  const programs = opts?.guide
-    ? pickProgramsForGuide(parseXmltvPrograms(best.xml, best.channel.id))
-    : pickCurrentAndUpcoming(parseXmltvPrograms(best.xml, best.channel.id));
+  const allPrograms = parseXmltvPrograms(best.xml, best.channel.id);
+  const windowed = opts?.guide ? pickProgramsForGuide(allPrograms) : pickCurrentAndUpcoming(allPrograms);
+  const programs = windowed.length > 0 ? windowed : allPrograms.slice(0, 48);
   if (programs.length > 0) {
     return { channel: best.channel, programs, sourceLabel: best.source.label };
   }

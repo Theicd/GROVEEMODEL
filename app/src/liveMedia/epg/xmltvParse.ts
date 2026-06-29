@@ -17,7 +17,7 @@ export function parseXmltvChannels(xml: string, sourceKey: string): EpgChannelRe
 /** Regex channel list — DOMParser on multi-MB XMLTV hangs in the browser. */
 export function parseXmltvChannelsFast(xml: string, sourceKey: string): EpgChannelRef[] {
   const out: EpgChannelRef[] = [];
-  const re = /<channel id="([^"]+)"[^>]*>[\s\S]*?<display-name>([^<]*)<\/display-name>/gi;
+  const re = /<channel id="([^"]+)"[^>]*>[\s\S]*?<display-name[^>]*>([^<]*)<\/display-name>/gi;
   let m;
   while ((m = re.exec(xml))) {
     out.push({ id: m[1], name: decodeXmlText(m[2]) || m[1], sourceKey });

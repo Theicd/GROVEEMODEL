@@ -44,7 +44,7 @@ const NAME_LANG_HINTS: { code: string; re: RegExp }[] = [
   { code: "hin", re: /\b(hindi|bhojpuri|bollywood|b4u\s*bhojpuri|zee\s*tv|sony\s*tv|star\s*plus)\b/i },
   { code: "urd", re: /\b(urdu|pakistan\s*tv|geo\s*tv|ary\s*)\b/i },
   { code: "ara", re: /\b(arabic|al\s*arabiya|mbc\s|bein\s|quran|islam|muslim|ال[\u0600-\u06FF])/i },
-  { code: "heb", re: /\b(hebrew|עברית|כאן|ערוץ\s*1|ערוץ\s*12|reshet|keshet|mako)\b/i },
+  { code: "heb", re: /\b(hebrew|עברית|כאן|kan\s*11|now\s*14|now14|ערוץ\s*1|ערוץ\s*12|ערוץ\s*13|ערוץ\s*14|reshet|keshet|mako)\b/i },
   { code: "eng", re: /\b(english|bbc|cnn|sky\s|itv|nbc|abc\s|fox\s|hbo|discovery)\b/i },
   { code: "rus", re: /\b(russian|рос|rt\s|russia\s*1|ntv\s)\b/i },
   { code: "fra", re: /\b(french|france\s*24|tf1|canal\+|arte)\b/i },
@@ -106,11 +106,13 @@ function inferFromSource(source: string, out: Set<string>): void {
   if (country === "il") out.add("heb");
 }
 
-export function inferChannelLanguages(c: Pick<Channel, "name" | "language" | "groupTitle" | "tags" | "category" | "source" | "country">): string[] {
+export function inferChannelLanguages(c: Pick<Channel, "name" | "language" | "groupTitle" | "tags" | "category" | "source" | "country" | "tvgId">): string[] {
   const out = new Set<string>();
   if (c.language) {
     for (const part of c.language.split(/[,;|/\s]+/)) addLangCode(out, part);
   }
+  if (c.tvgId && /\.il@/i.test(c.tvgId)) out.add("heb");
+  if (c.tvgId && /\.(us|uk|gb|au|ca)@/i.test(c.tvgId)) out.add("eng");
   inferFromSource(c.source, out);
   if (c.country === "il") out.add("heb");
   if (c.country === "us" || c.country === "gb") out.add("eng");
