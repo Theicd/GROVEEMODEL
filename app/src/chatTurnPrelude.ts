@@ -254,10 +254,13 @@ export async function runTextChatTurnPrelude(
         );
       if (shouldOpenSearchResultsPanel(unifiedSearchPayload) && !placeOrRouteOnly) {
         deps.setSearchResultsPayload(unifiedSearchPayload);
-        deps.setSearchResultsOpen(true);
-        deps.setArtifactOpen(false);
-        deps.setGlobePanelOpen(false);
-        deps.setGamesPanelOpen(false);
+        // Mobile: keep the answer inline in chat; don't cover it with the side panel.
+        if (desktopLayout) {
+          deps.setSearchResultsOpen(true);
+          deps.setArtifactOpen(false);
+          deps.setGlobePanelOpen(false);
+          deps.setGamesPanelOpen(false);
+        }
       }
       const newsPayloadAfterSearch = unifiedSearchPayload.hits.length
         ? { cardCount: unifiedSearchPayload.facets.rss, mode: "search" as const }
@@ -452,8 +455,11 @@ export async function runTextChatTurnPrelude(
       const gameResult = await searchOnlineGamesWithFallback(gameReq, 12);
       deps.setGamesPanelCategory(panelCategory);
       deps.setGamesPanelLayout("side");
-      deps.setGamesPanelOpen(true);
-      deps.setArtifactOpen(false);
+      // Mobile: games panel opens off-screen; show results inline in chat instead.
+      if (desktopLayout) {
+        deps.setGamesPanelOpen(true);
+        deps.setArtifactOpen(false);
+      }
       deps.setGamesEmbedGame(null);
 
       if (gameResult.matchFound && gameResult.games.length) {
@@ -462,6 +468,13 @@ export async function runTextChatTurnPrelude(
         gameSearchHint = ` · ${gameResult.games.length} משחקים`;
         gameGroundingBlock = gameResult.games.map((g, i) => `${i + 1}. ${g.title}`).join("\n");
         gameSearchCannedReply = buildGameSearchFoundReply(gameResult.games.length, gameReq);
+        if (!desktopLayout) {
+          const list = gameResult.games
+            .slice(0, 8)
+            .map((g) => `• [${g.title}](${g.playUrl})`)
+            .join("\n");
+          gameSearchCannedReply = `${gameSearchCannedReply}\n\n${list}`;
+        }
         deps.pushActivity({
           direction: "system",
           kind: "game_search",

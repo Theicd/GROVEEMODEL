@@ -12,7 +12,7 @@ import {
   summarizeRackCounts,
   upsertFreeRackModel,
 } from "./modelRack";
-import { SMOLLM_RACK_ID } from "./localTextModels";
+import { SMOLLM_RACK_ID, SMOLLM_135M_RACK_ID } from "./localTextModels";
 import { pollinationsEntry } from "./pollinationsScan";
 
 describe("modelRack", () => {
@@ -20,6 +20,7 @@ describe("modelRack", () => {
     const rack = loadModelRack();
     expect(rack.some((r) => r.id === GEMMA_RACK_ID && r.source === "builtin")).toBe(true);
     expect(rack.some((r) => r.id === SMOLLM_RACK_ID && r.adapter === "hf-local-text")).toBe(true);
+    expect(rack.some((r) => r.id === SMOLLM_135M_RACK_ID && r.adapter === "hf-local-text")).toBe(true);
     expect(rack.some((r) => r.id === "pollinations-flux" && r.source === "cloud-scan")).toBe(true);
     expect(rack.some((r) => r.id === "sd-turbo-local")).toBe(false);
   });
