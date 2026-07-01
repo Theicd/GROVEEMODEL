@@ -36,7 +36,7 @@ export function pollinationsDisplayName(model: string): string {
 
 export function rackPickerTitle(entry: RackModelEntry): string {
   if (entry.id === GEMMA_RACK_ID) return "Gemma 4 E2B";
-  if (entry.id === SMOLLM_RACK_ID) return "SmolLM2 135M";
+  if (entry.adapter === "hf-local-text") return entry.label;
   if (entry.adapter === "pollinations" && entry.pollinationsModel) {
     return pollinationsDisplayName(entry.pollinationsModel);
   }
@@ -45,8 +45,8 @@ export function rackPickerTitle(entry: RackModelEntry): string {
 
 export function rackPickerHint(entry: RackModelEntry): string | null {
   if (entry.id === GEMMA_RACK_ID) return "שיחה מקומית";
-  if (entry.id === SMOLLM_RACK_ID) {
-    if (entry.status === "ready") return "מודל קל · שיחה טקסט";
+  if (entry.adapter === "hf-local-text") {
+    if (entry.status === "ready") return "מודל מקומי · שיחה טקסט";
     if (entry.status === "downloading") return "מוריד…";
     return "לחץ הורדה לפני שיחה";
   }
