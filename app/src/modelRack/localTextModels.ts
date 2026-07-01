@@ -1,10 +1,17 @@
 /**
- * Official ONNX build for browser (Instruct). Switched from the 360M build to the
- * smaller 135M model: the 360M weights exceed the per-tab WASM memory ceiling on
- * mobile browsers (iOS Safari / Android WebView), which made it fail to load on phones.
+ * Official ONNX builds for browser (Instruct). Two sizes are offered:
+ * - 360M is the default: noticeably more coherent conversation. With the WASM
+ *   single-thread config, q8 preference and load watchdog now in place it loads on
+ *   capable phones.
+ * - 135M is kept as a lightweight fallback for weak/low-memory devices, selectable
+ *   from the model picker.
  */
-export const SMOLLM_HF_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
+export const SMOLLM_HF_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
 export const SMOLLM_RACK_ID = `hf--${SMOLLM_HF_MODEL_ID.replace(/\//g, "--")}`;
+
+export const SMOLLM_135M_HF_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
+export const SMOLLM_135M_RACK_ID = `hf--${SMOLLM_135M_HF_MODEL_ID.replace(/\//g, "--")}`;
+
 export const LOCAL_TEXT_READY_KEY = "grovee_local_text_ready_v1";
 
 import type { RackModelEntry, RackModelStatus } from "./modelRack";
@@ -12,7 +19,7 @@ import type { RackModelEntry, RackModelStatus } from "./modelRack";
 const DOWNLOADABLE_TEXT_BUILTINS: RackModelEntry[] = [
   {
     id: SMOLLM_RACK_ID,
-    label: "SmolLM2 135M",
+    label: "SmolLM2 360M",
     modality: "text",
     adapter: "hf-local-text",
     status: "not_downloaded",
@@ -20,6 +27,17 @@ const DOWNLOADABLE_TEXT_BUILTINS: RackModelEntry[] = [
     hfModelId: SMOLLM_HF_MODEL_ID,
     pipelineTag: "text-generation",
     addedAt: 0,
+  },
+  {
+    id: SMOLLM_135M_RACK_ID,
+    label: "SmolLM2 135M",
+    modality: "text",
+    adapter: "hf-local-text",
+    status: "not_downloaded",
+    source: "builtin",
+    hfModelId: SMOLLM_135M_HF_MODEL_ID,
+    pipelineTag: "text-generation",
+    addedAt: 1,
   },
 ];
 

@@ -503,7 +503,7 @@ export async function runTextChatTurnPrelude(
       deps.pendingGameCategoryPickerRef.current = true;
       deps.setStreamingGameCategoryPicker(true);
       deps.setGamesPanelLayout("side");
-      deps.setGamesPanelOpen(true);
+      if (desktopLayout) deps.setGamesPanelOpen(true);
       deps.setGamesPanelGames([]);
       gameSearchCannedReply = buildGameSearchNotFoundReply(
         parseGameUserRequest(trimmed || effectivePrompt),

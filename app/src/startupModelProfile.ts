@@ -175,5 +175,5 @@ export async function resolveStartupModelChoice(
 }
 
 export function startupChoiceLabelHe(choice: StartupModelChoice): string {
-  return choice === "local-text" ? "SmolLM2 135M" : "Gemma 4 E2B";
+  return choice === "local-text" ? "SmolLM2 360M" : "Gemma 4 E2B";
 }

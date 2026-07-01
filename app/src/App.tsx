@@ -4635,7 +4635,7 @@ function App() {
         pendingGameCategoryPickerRef.current = true;
         setStreamingGameCategoryPicker(true);
         setGamesPanelLayout("side");
-        setGamesPanelOpen(true);
+        if (desktopLayout) setGamesPanelOpen(true);
         setGamesPanelGames([]);
         gameSearchCannedReply = buildGameSearchNotFoundReply(
           parseGameUserRequest(trimmed || effectivePrompt),

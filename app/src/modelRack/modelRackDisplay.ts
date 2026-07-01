@@ -1,4 +1,3 @@
-import { SMOLLM_RACK_ID } from "./localTextModels";
 import { GEMMA_RACK_ID, type RackModelEntry } from "./modelRack";
 
 export type ImageModelMeta = {
