@@ -34,8 +34,15 @@ export async function localTextToModelLanguage(
 ): Promise<string> {
   if (!needsLocalTextTranslationBridge(uiLang)) return text;
   try {
-    return await translateOne(text, "en", "he");
-  } catch {
+    const out = await translateOne(text, "en", "he");
+    console.info(`[translate] he→en ok: "${text.slice(0, 40)}" → "${out.slice(0, 40)}"`);
+    return out;
+  } catch (err) {
+    console.warn(
+      `[translate] he→en FAILED, sending original Hebrew to model: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return text;
   }
 }
@@ -47,8 +54,15 @@ export async function localTextToUiLanguage(
 ): Promise<string> {
   if (!needsLocalTextTranslationBridge(uiLang)) return text;
   try {
-    return await translateOne(text, "he", "en");
-  } catch {
+    const out = await translateOne(text, "he", "en");
+    console.info(`[translate] en→he ok: "${text.slice(0, 40)}" → "${out.slice(0, 40)}"`);
+    return out;
+  } catch (err) {
+    console.warn(
+      `[translate] en→he FAILED, showing English reply to user: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
     return text;
   }
 }
