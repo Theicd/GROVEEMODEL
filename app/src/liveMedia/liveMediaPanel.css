@@ -604,3 +604,24 @@
     padding: 10px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   SUPER SPORT launch: full-bleed, no app chrome (sidebar/chat hidden).
+   Applies at every breakpoint so the shareable link opens edge-to-edge.
+   ══════════════════════════════════════════════════════════════ */
+.app-container--supersport .sidebar,
+.app-container--supersport .sb-overlay,
+.app-container--supersport .sidebar-toggle {
+  display: none !important;
+}
+
+.app-container--supersport .artifact-panel.side-panel {
+  position: fixed;
+  inset: 0;
+  width: 100vw !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: 100dvh;
+  border: none !important;
+  z-index: 50;
+}

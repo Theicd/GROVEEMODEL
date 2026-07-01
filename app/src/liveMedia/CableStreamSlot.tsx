@@ -3,7 +3,6 @@ import type { UnifiedSearchHit } from "../searchResults/types";
 import { HlsStreamPlayer } from "../searchResults/HlsStreamPlayer";
 import { CABLE_STREAM_LOAD_MS } from "./cableTunerUtils";
 import { TvStaticOverlay } from "./TvStaticOverlay";
-import { TvTuningScan } from "./TvTuningScan";
 
 type Props = {
   hit: UnifiedSearchHit | null;
@@ -30,8 +29,6 @@ type Props = {
   onStreamFail?: () => void;
   /** Skip tuning snow when the same stream was already playing (e.g. quad → full screen). */
   assumeReady?: boolean;
-  /** RTL locale for the tuning scan meter labels. */
-  rtl?: boolean;
 };
 
 export function CableStreamSlot({
@@ -57,7 +54,6 @@ export function CableStreamSlot({
   onStreamReady,
   onStreamFail,
   assumeReady = false,
-  rtl = false,
 }: Props) {
   const [signalReady, setSignalReady] = useState(() => assumeReady);
   const failedRef = useRef(false);
@@ -163,7 +159,6 @@ export function CableStreamSlot({
           onStreamFail={onStreamFailInternal}
         />
         <TvStaticOverlay active={showSnow} />
-        <TvTuningScan active={showSnow} rtl={rtl} compact={multiView} />
         {audioFocus && !showSnow ? (
           <div className="lm-cable-tile-audio" aria-hidden="true">
             🔊

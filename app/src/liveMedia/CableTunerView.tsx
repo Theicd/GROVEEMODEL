@@ -987,31 +987,27 @@ export function CableTunerView({
       onTouchStart={onPointerActivity}
     >
       {superSport && bootSplash ? (
-        <div className="lm-ss-splash" role="dialog" aria-modal="true" aria-label="SUPER SPORT">
+        <div className="lm-ss-splash" role="dialog" aria-modal="true" aria-label="SUPER SPORT" dir="ltr">
           <div className="lm-ss-splash__glow" aria-hidden="true" />
           <div className="lm-ss-splash__brand">
             <span className="lm-ss-splash__super">SUPER</span>
             <span className="lm-ss-splash__sport">SPORT</span>
           </div>
-          <p className="lm-ss-splash__tag">{rtl ? "חבילת הזהב · שידורי ספורט" : "GOLD PACKAGE · LIVE SPORTS"}</p>
+          <p className="lm-ss-splash__tag">GOLD PACKAGE · LIVE SPORTS</p>
           <div className="lm-ss-splash__bar" aria-hidden="true">
             <span className="lm-ss-splash__bar-fill" />
           </div>
           <p className="lm-ss-splash__status">
             {loading || total < 1
-              ? rtl
-                ? "מתחבר לשידור…"
-                : "Connecting to broadcast…"
-              : rtl
-                ? `${total} ערוצי ספורט מוכנים`
-                : `${total} sports channels ready`}
+              ? "Connecting to broadcast…"
+              : `${total} sports channels ready`}
           </p>
         </div>
       ) : null}
       {superSport ? (
         <div className="lm-ss-rotate-hint" aria-hidden="true">
           <span className="lm-ss-rotate-hint__icon">📱↻</span>
-          <span>{rtl ? "סובבו את המכשיר לרוחב לחוויית הצפייה המלאה" : "Rotate your device to landscape for the full experience"}</span>
+          <span>Rotate your device to landscape for the full experience</span>
         </div>
       ) : null}
       {welcomeOpen ? (
@@ -1053,7 +1049,6 @@ export function CableTunerView({
                 osdVisible={osdVisible}
                 channelNum={chNum}
                 channelBadgeTopRight
-                rtl={rtl}
                 selected={audioFocus}
                 audioFocus={audioFocus && audioUnlocked && !userMuted && !headerRadioAudio}
                 muted={slotMuted(audioFocus && !headerRadioAudio)}
@@ -1089,7 +1084,6 @@ export function CableTunerView({
             osdVisible={osdVisible}
             channelNum={singleFavoriteIndex(pageIndex) + 1}
             channelBadgeTopRight
-            rtl={rtl}
             audioFocus={audioUnlocked && !userMuted}
             muted={slotMuted(true)}
             volume={volume}
@@ -1107,14 +1101,14 @@ export function CableTunerView({
         </div>
       ) : null}
 
-      {superSport && showQuad && !bootSplash ? (
-        <div className="lm-ss-quad-ui" dir="ltr">
+      {superSport && (showQuad || singleChannelView) && !bootSplash ? (
+        <div className={`lm-ss-ui${showQuad ? " lm-ss-ui--quad" : " lm-ss-ui--single"}`} dir="ltr">
           <button
             type="button"
             className="lm-ss-rail lm-ss-rail--left"
             onClick={() => changePage(-1)}
             disabled={globalSnow || total <= 1}
-            aria-label={rtl ? "ערוצים קודמים" : "Previous channels"}
+            aria-label="Previous channel"
           >
             <span aria-hidden="true">‹</span>
           </button>
@@ -1123,12 +1117,24 @@ export function CableTunerView({
             className="lm-ss-rail lm-ss-rail--right"
             onClick={() => changePage(1)}
             disabled={globalSnow || total <= 1}
-            aria-label={rtl ? "ערוצים הבאים" : "Next channels"}
+            aria-label="Next channel"
           >
             <span aria-hidden="true">›</span>
           </button>
 
-          <div className="lm-ss-quad-dock">
+          <div className="lm-ss-dock">
+            {!showQuad ? (
+              <button
+                type="button"
+                className="lm-ss-back-btn"
+                onClick={goToQuad}
+                disabled={globalSnow}
+                aria-label="Back to split screen"
+              >
+                <span aria-hidden="true">⊞</span>
+                <span className="lm-ss-back-btn__label">Split screen</span>
+              </button>
+            ) : null}
             <div className={`lm-ss-vol${volumeOpen ? " is-open" : ""}`}>
               <button
                 type="button"
@@ -1139,7 +1145,7 @@ export function CableTunerView({
                   setAudioUnlocked(true);
                   pokeOsd();
                 }}
-                aria-label={rtl ? "עוצמת קול" : "Volume"}
+                aria-label="Volume"
                 aria-expanded={volumeOpen}
               >
                 <span aria-hidden="true">{userMuted || volume === 0 ? "🔇" : volume < 0.45 ? "🔉" : "🔊"}</span>
@@ -1156,19 +1162,21 @@ export function CableTunerView({
                   onVolumeChange(Number(e.target.value) / 100);
                   pokeOsd();
                 }}
-                aria-label={rtl ? "עוצמת קול" : "Volume"}
+                aria-label="Volume"
               />
             </div>
             <button
               type="button"
-              className="lm-ss-fs-pulse"
+              className={`lm-ss-fs-btn${showQuad ? " lm-ss-fs-btn--pulse" : ""}`}
               onClick={() => void toggleFullscreen()}
-              aria-label={isFullscreen ? (rtl ? "צא ממסך מלא" : "Exit full screen") : rtl ? "מסך מלא" : "Full screen"}
+              aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
             >
-              <span className="lm-ss-fs-pulse__icon" aria-hidden="true">
+              <span className="lm-ss-fs-btn__icon" aria-hidden="true">
                 {isFullscreen ? "⤢" : "⛶"}
               </span>
-              <span className="lm-ss-fs-pulse__label">{isFullscreen ? (rtl ? "צא" : "Exit") : rtl ? "מסך מלא" : "Full screen"}</span>
+              {showQuad ? (
+                <span className="lm-ss-fs-btn__label">{isFullscreen ? "Exit" : "Full screen"}</span>
+              ) : null}
             </button>
           </div>
         </div>

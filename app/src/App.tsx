@@ -5928,7 +5928,7 @@ function App() {
       {phase === "ready" && (
         <div
           id="app-container"
-          className={`app-container app-container--visible ${sidePanelBesideChat ? "app-container--artifact-open" : ""}${showLiveMediaFullscreen ? " app-container--livemedia-full" : ""}${showGamesFullscreen ? " app-container--games-full" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}`}
+          className={`app-container app-container--visible ${sidePanelBesideChat ? "app-container--artifact-open" : ""}${showLiveMediaFullscreen ? " app-container--livemedia-full" : ""}${showGamesFullscreen ? " app-container--games-full" : ""} ${sidebarOpen ? "app-container--sidebar-open" : ""}${launchedViaSuperSport.current && showLiveMediaPanel ? " app-container--supersport" : ""}`}
         >
           <div
             className={`sb-overlay ${sidebarOpen ? "active" : ""}`}

@@ -2540,134 +2540,6 @@
 }
 
 /* ══════════════════════════════════════════════════════════════
-   Antenna auto-tuning scan meter (shown over analog snow)
-   ══════════════════════════════════════════════════════════════ */
-.lm-tune-scan {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  pointer-events: none;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.lm-tune-scan__sweep {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 3px;
-  top: 0;
-  background: linear-gradient(90deg, transparent, rgba(120, 210, 255, 0.95), transparent);
-  box-shadow: 0 0 14px 4px rgba(90, 190, 255, 0.55);
-  animation: lm-tune-sweep 1.15s linear infinite;
-}
-
-@keyframes lm-tune-sweep {
-  0% { top: -4%; opacity: 0; }
-  12% { opacity: 1; }
-  88% { opacity: 1; }
-  100% { top: 104%; opacity: 0; }
-}
-
-.lm-tune-scan__panel {
-  position: relative;
-  z-index: 2;
-  width: min(78%, 420px);
-  margin-bottom: clamp(14px, 6vh, 48px);
-  padding: 10px 14px 11px;
-  border-radius: 10px;
-  border: 1px solid rgba(120, 200, 255, 0.35);
-  background: rgba(6, 12, 24, 0.62);
-  backdrop-filter: blur(3px);
-  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5);
-}
-
-.lm-tune-scan--compact .lm-tune-scan__panel {
-  width: min(88%, 220px);
-  padding: 6px 9px 7px;
-  margin-bottom: 10px;
-  border-radius: 8px;
-}
-
-.lm-tune-scan__row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.lm-tune-scan__label {
-  font-family: "Orbitron", "Rajdhani", monospace;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: #7fd0ff;
-  text-transform: uppercase;
-}
-
-.lm-tune-scan--compact .lm-tune-scan__label {
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
-}
-
-.lm-tune-scan__freq {
-  font-family: "Orbitron", monospace;
-  font-size: 0.68rem;
-  color: #cfe8ff;
-  opacity: 0.9;
-}
-
-.lm-tune-scan--compact .lm-tune-scan__freq {
-  font-size: 0.54rem;
-}
-
-.lm-tune-scan__meter {
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 34px;
-  margin: 7px 0 6px;
-}
-
-.lm-tune-scan--compact .lm-tune-scan__meter {
-  height: 20px;
-  gap: 2px;
-  margin: 4px 0 3px;
-}
-
-.lm-tune-scan__bar {
-  flex: 1;
-  min-width: 0;
-  border-radius: 2px 2px 0 0;
-  background: rgba(120, 160, 200, 0.22);
-  transition: background 0.12s ease, box-shadow 0.12s ease;
-}
-
-.lm-tune-scan__bar.is-lit {
-  background: linear-gradient(180deg, #9be2ff 0%, #2db4ff 100%);
-  box-shadow: 0 0 8px rgba(45, 180, 255, 0.7);
-}
-
-.lm-tune-scan__row--foot .lm-tune-scan__sub {
-  font-size: 0.62rem;
-  color: #9fb8d4;
-  letter-spacing: 0.04em;
-}
-
-.lm-tune-scan--compact .lm-tune-scan__row--foot {
-  display: none;
-}
-
-.lm-tune-scan__pct {
-  font-family: "Orbitron", monospace;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: #eaf6ff;
-}
-
-/* ══════════════════════════════════════════════════════════════
    SUPER SPORT — distributable sports-only cable experience
    ══════════════════════════════════════════════════════════════ */
 .lm-cable--supersport {
@@ -2780,7 +2652,7 @@
 }
 
 /* Edge channel-scroll rails (glued to screen sides, vertically centered) */
-.lm-ss-quad-ui {
+.lm-ss-ui {
   position: absolute;
   inset: 0;
   z-index: 30;
@@ -2832,47 +2704,84 @@
   cursor: default;
 }
 
-/* Bottom dock: volume + pulsing full-screen prompt */
-.lm-ss-quad-dock {
+/* Control dock — quad: bottom-center; single: top-center (leaves the EPG strip clear) */
+.lm-ss-dock {
   position: absolute;
   left: 50%;
-  bottom: max(16px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   pointer-events: auto;
 }
 
-.lm-ss-fs-pulse {
+.lm-ss-ui--quad .lm-ss-dock {
+  bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.lm-ss-ui--single .lm-ss-dock {
+  top: max(14px, env(safe-area-inset-top));
+}
+
+/* Back-to-split pill (single view) */
+.lm-ss-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 22px;
+  gap: 8px;
+  padding: 10px 18px;
   border-radius: 999px;
   border: 1px solid var(--ss-gold);
   color: var(--ss-ink);
   font-family: "Rajdhani", sans-serif;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  background: linear-gradient(180deg, #ffd873 0%, var(--ss-gold) 100%);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+.lm-ss-back-btn:active {
+  transform: scale(0.96);
+}
+
+.lm-ss-fs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--ss-gold-dim);
+  color: #fff;
+  font-family: "Rajdhani", sans-serif;
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.03em;
   cursor: pointer;
+  background: rgba(6, 16, 31, 0.78);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.lm-ss-fs-btn__icon {
+  font-size: 1.2rem;
+}
+
+/* Quad view: the full-screen button is the primary call-to-action → gold + pulse */
+.lm-ss-fs-btn--pulse {
+  padding: 12px 22px;
+  border: 1px solid var(--ss-gold);
+  color: var(--ss-ink);
+  font-size: 1rem;
   background: linear-gradient(180deg, #ffd873 0%, var(--ss-gold) 100%);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
-  opacity: 0.55;
+  opacity: 0.6;
   animation: lm-ss-fs-pulse 1.6s ease-in-out infinite;
 }
 
-.lm-ss-fs-pulse__icon {
-  font-size: 1.25rem;
-}
-
 @keyframes lm-ss-fs-pulse {
-  0%, 100% { opacity: 0.5; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 0 0 rgba(245, 196, 81, 0.5); }
+  0%, 100% { opacity: 0.55; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 0 0 rgba(245, 196, 81, 0.5); }
   50% { opacity: 0.98; box-shadow: 0 6px 26px rgba(0, 0, 0, 0.55), 0 0 0 10px rgba(245, 196, 81, 0); }
 }
 
-.lm-ss-fs-pulse:active {
+.lm-ss-fs-btn:active {
   transform: scale(0.96);
 }
 
@@ -2918,6 +2827,12 @@
   color: var(--ss-gold);
 }
 
+/* Single channel: drop the heavy button toolbar — navigation lives in the lean rails/dock.
+   Keep the slim EPG strip (now-playing + clock) so the sports guide stays visible. */
+.lm-cable--supersport:not(.lm-cable--quad) .lm-cable-osd-toolbar {
+  display: none !important;
+}
+
 /* Portrait hint on phones — SUPER SPORT is landscape-first */
 .lm-ss-rotate-hint {
   display: none;
@@ -2957,9 +2872,17 @@
 
 /* Compact mobile dock */
 @media (max-width: 640px) {
-  .lm-ss-fs-pulse {
+  .lm-ss-fs-btn {
+    padding: 9px 14px;
+    font-size: 0.85rem;
+  }
+  .lm-ss-fs-btn--pulse {
     padding: 10px 16px;
     font-size: 0.9rem;
+  }
+  .lm-ss-back-btn {
+    padding: 8px 14px;
+    font-size: 0.85rem;
   }
   .lm-ss-rail {
     width: clamp(38px, 12vw, 54px);
