@@ -1,5 +1,5 @@
-/** SmolLM2 360M Instruct ONNX q4 — approximate browser download size. */
-export const SMOLLM_ESTIMATED_BYTES = 220_000_000;
+/** SmolLM2 135M Instruct ONNX q4 — approximate browser download size. */
+export const SMOLLM_ESTIMATED_BYTES = 175_000_000;
 
 export type StartupModelChoice = "gemma" | "local-text";
 
@@ -175,5 +175,5 @@ export async function resolveStartupModelChoice(
 }
 
 export function startupChoiceLabelHe(choice: StartupModelChoice): string {
-  return choice === "local-text" ? "SmolLM2 360M" : "Gemma 4 E2B";
+  return choice === "local-text" ? "SmolLM2 135M" : "Gemma 4 E2B";
 }

@@ -1,5 +1,9 @@
-/** ONNX build for browser (Instruct), based on HuggingFaceTB/SmolLM2-360M-Instruct */
-export const SMOLLM_HF_MODEL_ID = "PengZhang424242/SmolLM2-360M-Instruct-ONNX";
+/**
+ * Official ONNX build for browser (Instruct). Switched from the 360M build to the
+ * smaller 135M model: the 360M weights exceed the per-tab WASM memory ceiling on
+ * mobile browsers (iOS Safari / Android WebView), which made it fail to load on phones.
+ */
+export const SMOLLM_HF_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
 export const SMOLLM_RACK_ID = `hf--${SMOLLM_HF_MODEL_ID.replace(/\//g, "--")}`;
 export const LOCAL_TEXT_READY_KEY = "grovee_local_text_ready_v1";
 
@@ -8,7 +12,7 @@ import type { RackModelEntry, RackModelStatus } from "./modelRack";
 const DOWNLOADABLE_TEXT_BUILTINS: RackModelEntry[] = [
   {
     id: SMOLLM_RACK_ID,
-    label: "SmolLM2 360M",
+    label: "SmolLM2 135M",
     modality: "text",
     adapter: "hf-local-text",
     status: "not_downloaded",

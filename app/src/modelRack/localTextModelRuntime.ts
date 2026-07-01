@@ -26,6 +26,15 @@ function getWorker(): Worker {
   return worker;
 }
 
+/**
+ * If the worker goes silent for this long (no progress/status/loaded/error), we treat
+ * the load as hung and fail loudly. On mobile a crashed WASM instantiation (e.g. OOM)
+ * can die without ever posting an "error", which previously left the UI stuck on
+ * "loading" forever. The watchdog resets on every message, so slow-but-progressing
+ * downloads on mobile networks are not affected.
+ */
+const LOCAL_TEXT_LOAD_STALL_MS = 120_000;
+
 export function downloadLocalTextModel(
   rackId: string,
   modelId: string,
@@ -34,8 +43,42 @@ export function downloadLocalTextModel(
 ): Promise<void> {
   const w = getWorker();
   return new Promise((resolve, reject) => {
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    const cleanup = () => {
+      settled = true;
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
+      w.removeEventListener("message", onMessage);
+    };
+
+    const armStall = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (settled) return;
+        cleanup();
+        // A hung worker is unrecoverable — terminate so the next attempt starts clean.
+        terminateLocalTextWorker();
+        reject(
+          new Error(
+            "Model load stalled (no progress). The device may be low on memory — " +
+              "try closing tabs/apps and loading again.",
+          ),
+        );
+      }, LOCAL_TEXT_LOAD_STALL_MS);
+    };
+
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
       const data = ev.data;
+      if (settled) return;
+      // Any activity for this model counts as progress toward completion.
+      if (
+        (data.type === "progress" || data.type === "status" || data.type === "loaded") &&
+        data.modelId === modelId
+      ) {
+        armStall();
+      }
       if (data.type === "progress" && data.modelId === modelId) {
         onProgress({
           pct: data.pct,
@@ -59,15 +102,16 @@ export function downloadLocalTextModel(
           usesGpu: data.device === "webgpu",
         });
         markLocalTextReady(rackId);
-        w.removeEventListener("message", onMessage);
+        cleanup();
         resolve();
       }
       if (data.type === "error" && data.scope !== "chat") {
-        w.removeEventListener("message", onMessage);
+        cleanup();
         reject(new Error(data.error || "SmolLM load failed"));
       }
     };
     w.addEventListener("message", onMessage);
+    armStall();
     w.postMessage({ type: "load", modelId, backend });
   });
 }

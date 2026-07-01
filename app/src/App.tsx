@@ -892,7 +892,7 @@ function SettingsModal({
     settingsTab === "api-keys"
       ? { title: "מפתחות API", sub: "TMDB · AIS חי · Tavily · Scavio" }
       : settingsTab === "localText"
-      ? { title: "הגדרות SmolLM", sub: "SmolLM2 360M · מקומי בדפדפן" }
+      ? { title: "הגדרות SmolLM", sub: "SmolLM2 135M · מקומי בדפדפן" }
       : settingsTab === "vision"
         ? { title: "הגדרות מצלמה", sub: "עיניים ואסיטואציות" }
         : { title: "הגדרות Gemma", sub: "GEMMA 4 E2B · מקומי בדפדפן" };

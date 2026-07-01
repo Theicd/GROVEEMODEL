@@ -6,6 +6,32 @@ import { InterruptableStoppingCriteria, pipeline, env, TextStreamer } from "@hug
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
+// Mobile / GitHub Pages hardening for ONNX Runtime Web (WASM CPU path).
+// GitHub Pages cannot serve COOP/COEP headers, so `crossOriginIsolated` is false
+// and SharedArrayBuffer is unavailable. Forcing single-threaded WASM (no pthreads,
+// no proxy worker) prevents the silent hang that made SmolLM never finish loading
+// on phones. When a host does provide cross-origin isolation, we keep multi-thread.
+try {
+  const onnxWasm = (env as unknown as {
+    backends?: { onnx?: { wasm?: { numThreads?: number; proxy?: boolean; simd?: boolean } } };
+  }).backends?.onnx?.wasm;
+  if (onnxWasm) {
+    const isolated =
+      typeof (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === "boolean"
+        ? (self as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated
+        : false;
+    if (!isolated) onnxWasm.numThreads = 1;
+    onnxWasm.proxy = false;
+    onnxWasm.simd = true;
+    console.info("[GROVEE:boot] SmolLM worker: wasm config", {
+      numThreads: onnxWasm.numThreads,
+      isolated,
+    });
+  }
+} catch (err) {
+  console.warn("[GROVEE:boot] SmolLM worker: failed to configure onnx wasm", err);
+}
+
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
 type HfProgress = {
@@ -105,17 +131,45 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
   }
 };
 
+// Quantization fallback per device. WebGPU handles fp16 activations natively, so
+// q4f16 (smallest) is a fine secondary. WASM/CPU cannot rely on fp16 activations,
+// so it falls back to int8 (q8 → model_quantized.onnx) which is broadly supported.
+function dtypeChainFor(device: "webgpu" | "wasm"): string[] {
+  return device === "webgpu" ? ["q4", "q4f16"] : ["q4", "q8"];
+}
+
 async function loadOnDevice(modelId: string, device: "webgpu" | "wasm") {
-  post({ type: "status", modelId, text: `טוען ${modelId} (${device})…` });
-  const pipe = await pipeline("text-generation", modelId, {
-    device,
-    dtype: "q4",
-    progress_callback: makeProgressCallback(modelId),
-  });
-  generators.set(modelId, pipe);
-  activeModelId = modelId;
-  post({ type: "loaded", modelId, device });
-  return pipe;
+  const chain = dtypeChainFor(device);
+  let lastErr: unknown = null;
+  for (let i = 0; i < chain.length; i++) {
+    const dtype = chain[i];
+    post({ type: "status", modelId, text: `טוען ${modelId} (${device} · ${dtype})…` });
+    try {
+      const pipe = await pipeline("text-generation", modelId, {
+        device,
+        dtype,
+        progress_callback: makeProgressCallback(modelId),
+      });
+      generators.set(modelId, pipe);
+      activeModelId = modelId;
+      bootLog("SmolLM loaded", { modelId, device, dtype });
+      post({ type: "loaded", modelId, device });
+      return pipe;
+    } catch (err) {
+      lastErr = err;
+      bootLog("SmolLM dtype failed", {
+        modelId,
+        device,
+        dtype,
+        next: chain[i + 1] ?? null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      if (i < chain.length - 1) {
+        post({ type: "status", modelId, text: `דחיסה ${dtype} נכשלה — מנסה ${chain[i + 1]}…` });
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 async function resolveDevice(

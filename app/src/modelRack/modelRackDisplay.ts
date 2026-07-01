@@ -37,7 +37,7 @@ export function pollinationsDisplayName(model: string): string {
 
 export function rackPickerTitle(entry: RackModelEntry): string {
   if (entry.id === GEMMA_RACK_ID) return "Gemma 4 E2B";
-  if (entry.id === SMOLLM_RACK_ID) return "SmolLM2 360M";
+  if (entry.id === SMOLLM_RACK_ID) return "SmolLM2 135M";
   if (entry.adapter === "pollinations" && entry.pollinationsModel) {
     return pollinationsDisplayName(entry.pollinationsModel);
   }

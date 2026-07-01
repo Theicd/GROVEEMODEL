@@ -8,7 +8,7 @@ import {
 import type { ChatUiLanguage } from "./ui/useUiLanguage";
 import type { StartupContext } from "./startupContext";
 
-/** SmolLM 360M collapses on long Gemma-style system blocks — keep this tiny. */
+/** Small SmolLM models collapse on long Gemma-style system blocks — keep this tiny. */
 export const LOCAL_TEXT_MAX_SYSTEM_CHARS = 900;
 
 /** @deprecated use settings.webBriefChars */
