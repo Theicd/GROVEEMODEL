@@ -287,15 +287,10 @@ export function IntroScreen({
       <IntroMarqueeFooter
         webgpu={webgpu}
         phase={phase}
-        startupTarget={startupTarget}
         isLoading={isLoading}
         isGenerating={isGenerating}
         cacheClearing={cacheClearing}
         showWasmRetry={showWasmRetry}
-        displayPct={displayPct}
-        loadingByteLine={loadingByteLine}
-        compilePulse={compilePulse}
-        indeterminate={indeterminate}
         onRetryWasm={onRetryWasm}
         onOpenInfo={onOpenInfo}
         onClearCache={onClearCache}
