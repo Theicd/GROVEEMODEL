@@ -6,8 +6,10 @@ const QUAD_TILES = 4;
 /** Spread initial quad tiles across the lineup (not 1–4 sequential). */
 const QUAD_SPREAD_FRACS = [0.35, 0.455, 0.718, 0.963];
 export const QUAD_ROTATE_MS = 30_000;
-/** If a tile never reaches playable state, skip to the next favorite. */
+/** If a single channel never reaches playable state, skip to the next favorite. */
 export const CABLE_STREAM_LOAD_MS = 11_000;
+/** Quad tiles bail out faster: a stuck tile should swap to another channel quickly. */
+export const CABLE_QUAD_LOAD_MS = 6_000;
 export const CABLE_WARM_SWITCH_MS = 350;
 
 /** First page only: four favorites in a 2×2 grid (rotating). */

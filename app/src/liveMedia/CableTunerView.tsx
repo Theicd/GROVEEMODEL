@@ -16,15 +16,16 @@ import {
   radioCablePageIndex,
 } from "./cableTunerRadio";
 import {
+  CABLE_QUAD_LOAD_MS,
   CABLE_STREAM_LOAD_MS,
   CABLE_WARM_SWITCH_MS,
   QUAD_ROTATE_MS,
-  advanceQuadRotation,
   cableOsdRangeLabel,
   favoriteForPage,
   initialRotationCursor,
   isQuadPage,
   nextFavoriteIndex,
+  nextQuadCursor,
   nextWorkingFavoriteIndex,
   pageIndexForFavorite,
   pickCableQuadFromSlots,
@@ -37,6 +38,7 @@ import { saveCableTunerSession } from "./cableTunerSession";
 import {
   knownBadFavoriteSet,
   pickHealthyQuadSlots,
+  pickHealthyReplacement,
   recordChannelFail,
   recordChannelReady,
 } from "./channelHealth";
@@ -469,15 +471,33 @@ export function CableTunerView({
     tuneTimer.current = null;
   }, []);
 
-  const handleQuadSlotFail = useCallback(
+  // Swap one quad tile for a fresh, health-weighted channel that isn't already on screen.
+  // Used both for the 30s variety rotation and to rescue a tile stuck on snow.
+  const replaceQuadSlot = useCallback(
     (slotIndex: number) => {
       if (total < 2) return;
-      const advanced = advanceQuadRotation(quadStateRef.current.slots, slotIndex, quadStateRef.current.cursor, total);
-      quadStateRef.current = advanced;
-      setQuadSlots(advanced.slots);
-      setRotationCursor(advanced.cursor);
+      const slots = quadStateRef.current.slots;
+      const exclude = new Set<number>();
+      slots.forEach((v, i) => {
+        if (i !== slotIndex) exclude.add(v);
+      });
+      deadFavorites.forEach((d) => exclude.add(d));
+      const replacement = pickHealthyReplacement(favorites, exclude);
+      const nextSlots = [...slots];
+      nextSlots[slotIndex % 4] = replacement;
+      const cursor = nextQuadCursor(nextSlots, replacement, total);
+      quadStateRef.current = { slots: nextSlots, cursor };
+      setQuadSlots(nextSlots);
+      setRotationCursor(cursor);
     },
-    [total],
+    [deadFavorites, favorites, total],
+  );
+
+  const handleQuadSlotFail = useCallback(
+    (slotIndex: number) => {
+      replaceQuadSlot(slotIndex);
+    },
+    [replaceQuadSlot],
   );
 
   const advancePreloadCandidate = useCallback(() => {
@@ -743,10 +763,7 @@ export function CableTunerView({
     const id = window.setInterval(() => {
       const slot = rotationSlotRef.current % 4;
       rotationSlotRef.current += 1;
-      const advanced = advanceQuadRotation(quadStateRef.current.slots, slot, quadStateRef.current.cursor, total);
-      quadStateRef.current = advanced;
-      setQuadSlots(advanced.slots);
-      setRotationCursor(advanced.cursor);
+      replaceQuadSlot(slot);
 
       radioRotateRef.current += 1;
       if (regionalRadio.length > 0 && radioRotateRef.current % RADIO_INTERSTITIAL_EVERY === 0) {
@@ -758,7 +775,7 @@ export function CableTunerView({
       pokeOsd();
     }, QUAD_ROTATE_MS);
     return () => window.clearInterval(id);
-  }, [bumpHeaderRadio, showQuad, total, regionalRadio, pokeOsd]);
+  }, [bumpHeaderRadio, showQuad, total, regionalRadio, pokeOsd, replaceQuadSlot]);
 
   useEffect(() => {
     if (!showQuad || !osdVisible || regionalRadio.length < 2) return;
@@ -1052,7 +1069,7 @@ export function CableTunerView({
                 muted={slotMuted(audioFocus && !headerRadioAudio)}
                 volume={volume}
                 multiView
-                loadTimeoutMs={CABLE_STREAM_LOAD_MS}
+                loadTimeoutMs={CABLE_QUAD_LOAD_MS}
                 quadJumpOpen={selectedQuadSlot === i && osdVisible && !globalSnow}
                 quadJumpLabel={chNum > 0 ? L.jumpToChannel(chNum) : ""}
                 onQuadJump={() => jumpToFavoriteFromQuad(quadSlots[i] ?? 0)}

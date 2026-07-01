@@ -2850,7 +2850,8 @@
     position: absolute;
     z-index: 55;
     left: 50%;
-    bottom: max(18px, env(safe-area-inset-bottom));
+    /* Sit clear of the bottom dock (full-screen / volume) instead of overlapping it. */
+    bottom: calc(78px + env(safe-area-inset-bottom));
     transform: translateX(-50%);
     display: flex;
     align-items: center;

@@ -129,6 +129,35 @@ export function knownBadFavoriteSet(favorites: UnifiedSearchHit[]): Set<number> 
   return bad;
 }
 
+/**
+ * Pick one replacement favorite index for a quad tile that failed / is stuck on snow.
+ * Prefers fast, reliable channels and never returns an on-screen or condemned one.
+ */
+export function pickHealthyReplacement(favorites: UnifiedSearchHit[], exclude: ReadonlySet<number>): number {
+  const total = favorites.length;
+  if (total <= 0) return 0;
+
+  let pool = favorites
+    .map((hit, i) => ({ i, w: weightForKey(channelKeyOf(hit)) }))
+    .filter((c) => c.w > 0 && !exclude.has(c.i));
+
+  // Everything healthy is already on screen (or condemned) → allow anything not on screen.
+  if (pool.length === 0) {
+    pool = favorites
+      .map((hit, i) => ({ i, w: Math.max(0.05, weightForKey(channelKeyOf(hit)) || 0.5) }))
+      .filter((c) => !exclude.has(c.i));
+  }
+  if (pool.length === 0) return exclude.size < total ? 0 : 0;
+
+  const totalW = pool.reduce((s, c) => s + c.w, 0);
+  let r = Math.random() * totalW;
+  for (const c of pool) {
+    r -= c.w;
+    if (r <= 0) return c.i;
+  }
+  return pool[pool.length - 1].i;
+}
+
 /** Weighted-random sample of `count` distinct favorite indices (fresh each call). */
 export function pickHealthyQuadSlots(favorites: UnifiedSearchHit[], count = 4): number[] {
   const total = favorites.length;
