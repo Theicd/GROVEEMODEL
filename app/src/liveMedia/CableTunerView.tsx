@@ -22,7 +22,6 @@ import {
   advanceQuadRotation,
   cableOsdRangeLabel,
   favoriteForPage,
-  initialQuadSlots,
   initialRotationCursor,
   isQuadPage,
   nextFavoriteIndex,
@@ -34,7 +33,13 @@ import {
   singleFavoriteIndex,
   targetFavoriteAfterStep,
 } from "./cableTunerUtils";
-import { loadCableTunerSession, saveCableTunerSession } from "./cableTunerSession";
+import { saveCableTunerSession } from "./cableTunerSession";
+import {
+  knownBadFavoriteSet,
+  pickHealthyQuadSlots,
+  recordChannelFail,
+  recordChannelReady,
+} from "./channelHealth";
 import { CableEpgPanel } from "./CableEpgPanel";
 import { useEpgGuide } from "./epg/useEpgGuide";
 import { warmMjhEpgCaches } from "./epg/epgService";
@@ -124,15 +129,17 @@ export function CableTunerView({
   const rtl = uiLang === "he";
   const superSport = profile === "supersport";
   const [pageIndex, setPageIndex] = useState(0);
-  const [quadSlots, setQuadSlots] = useState<number[]>(() => initialQuadSlots(favorites.length));
+  // Fresh, health-weighted lineup on every open → different (and faster) channels each visit.
+  const initialSlots = useRef(pickHealthyQuadSlots(favorites, 4));
+  const [quadSlots, setQuadSlots] = useState<number[]>(() => initialSlots.current);
   const [rotationCursor, setRotationCursor] = useState(() =>
-    initialRotationCursor(favorites.length, initialQuadSlots(favorites.length)),
+    initialRotationCursor(favorites.length, initialSlots.current),
   );
   const [selectedQuadSlot, setSelectedQuadSlot] = useState(0);
   const rotationSlotRef = useRef(0);
   const quadStateRef = useRef({
-    slots: initialQuadSlots(favorites.length),
-    cursor: initialRotationCursor(favorites.length, initialQuadSlots(favorites.length)),
+    slots: initialSlots.current,
+    cursor: initialRotationCursor(favorites.length, initialSlots.current),
   });
   const [globalSnow, setGlobalSnow] = useState(false);
   // SUPER SPORT skips the multi-step tour and shows a short branded boot splash instead.
@@ -151,7 +158,7 @@ export function CableTunerView({
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [preloadFavIdx, setPreloadFavIdx] = useState(0);
   const [preloadReady, setPreloadReady] = useState(false);
-  const [deadFavorites, setDeadFavorites] = useState<ReadonlySet<number>>(() => new Set());
+  const [deadFavorites, setDeadFavorites] = useState<ReadonlySet<number>>(() => knownBadFavoriteSet(favorites));
   const [epgOpen, setEpgOpen] = useState(false);
   const tuneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const osdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -476,14 +483,16 @@ export function CableTunerView({
   const advancePreloadCandidate = useCallback(() => {
     setPreloadReady(false);
     setPreloadFavIdx((idx) => {
+      recordChannelFail(favorites[idx]);
       markFavoriteDead(idx);
       return nextWorkingFavoriteIndex(idx, 1, total, new Set([...deadFavorites, idx]));
     });
-  }, [deadFavorites, markFavoriteDead, total]);
+  }, [deadFavorites, favorites, markFavoriteDead, total]);
 
   const skipSingleToNext = useCallback(() => {
     if (showQuad || total < 2) return;
     const cur = singleFavoriteIndex(pageIndex);
+    recordChannelFail(favorites[cur]);
     markFavoriteDead(cur);
     const nextFav = nextWorkingFavoriteIndex(cur, 1, total, new Set([...deadFavorites, cur]));
     const targetPage = pageIndexForFavorite(nextFav);
@@ -493,7 +502,7 @@ export function CableTunerView({
     tuneTimer.current = setTimeout(() => {
       setGlobalSnow(false);
     }, TUNE_MS);
-  }, [clearTuneTimer, deadFavorites, markFavoriteDead, pageIndex, showQuad, total]);
+  }, [clearTuneTimer, deadFavorites, favorites, markFavoriteDead, pageIndex, showQuad, total]);
 
   const goToPage = useCallback(
     (targetPage: number, opts?: { tuneMs?: number; assumeStreamReady?: boolean }) => {
@@ -692,19 +701,8 @@ export function CableTunerView({
     if (total <= 0) return;
     if (!sessionHydratedRef.current) {
       sessionHydratedRef.current = true;
-      const saved = loadCableTunerSession();
-      if (saved) {
-        const slots = saved.quadSlots.map((i) => i % total);
-        const cursor = saved.rotationCursor % total;
-        quadStateRef.current = { slots, cursor };
-        setQuadSlots(slots);
-        setRotationCursor(cursor);
-        setPageIndex(Math.min(saved.pageIndex, maxCablePageIndexTvRadio(total, radioTotal)));
-        setSelectedQuadSlot(saved.selectedQuadSlot);
-        rotationSlotRef.current = 0;
-        return;
-      }
-      const slots = initialQuadSlots(total);
+      // Always open on a fresh, health-weighted lineup (different + faster channels each visit).
+      const slots = pickHealthyQuadSlots(favorites, 4);
       const cursor = initialRotationCursor(total, slots);
       quadStateRef.current = { slots, cursor };
       setQuadSlots(slots);
@@ -716,7 +714,7 @@ export function CableTunerView({
     setPageIndex((p) => Math.min(p, maxCablePageIndexTvRadio(total, radioTotal)));
     setQuadSlots((slots) => slots.map((i) => i % total));
     setRotationCursor((c) => c % total);
-  }, [total, radioTotal]);
+  }, [total, radioTotal, favorites]);
 
   useEffect(() => {
     if (total <= 0) return;
@@ -731,7 +729,7 @@ export function CableTunerView({
   }, [pageIndex, quadSlots, rotationCursor, selectedQuadSlot, total]);
 
   useEffect(() => {
-    setDeadFavorites(new Set());
+    setDeadFavorites(knownBadFavoriteSet(favorites));
   }, [favorites]);
 
   useEffect(() => {
@@ -1059,10 +1057,17 @@ export function CableTunerView({
                 quadJumpLabel={chNum > 0 ? L.jumpToChannel(chNum) : ""}
                 onQuadJump={() => jumpToFavoriteFromQuad(quadSlots[i] ?? 0)}
                 onDoubleActivate={() => jumpToFavoriteFromQuad(quadSlots[i] ?? 0)}
-                onStreamReady={() => {
-                  if (hit) markQuadStreamReady(hit.id);
+                onStreamReady={(ms) => {
+                  if (hit) {
+                    markQuadStreamReady(hit.id);
+                    recordChannelReady(hit, ms);
+                  }
                 }}
-                onStreamFail={() => handleQuadSlotFail(i)}
+                onStreamFail={() => {
+                  if (hit) recordChannelFail(hit);
+                  markFavoriteDead(quadSlots[i] ?? 0);
+                  handleQuadSlotFail(i);
+                }}
                 onSelect={() => {
                   setSelectedQuadSlot(i);
                   setAudioUnlocked(true);
@@ -1091,6 +1096,7 @@ export function CableTunerView({
             mediaRef={singleVideoRef}
             loadTimeoutMs={CABLE_STREAM_LOAD_MS}
             assumeReady={assumeSingleReady}
+            onStreamReady={(ms) => recordChannelReady(singleHit, ms)}
             onStreamFail={skipSingleToNext}
           />
           <LiveCaptionsOverlay

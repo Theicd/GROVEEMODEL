@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { UnifiedSearchHit } from "../searchResults/types";
 import { HlsStreamPlayer } from "../searchResults/HlsStreamPlayer";
+import { CablePooledVideo } from "./CablePooledVideo";
 import { CABLE_STREAM_LOAD_MS } from "./cableTunerUtils";
 import { TvStaticOverlay } from "./TvStaticOverlay";
 
@@ -25,7 +26,8 @@ type Props = {
   onSelect?: () => void;
   onQuadJump?: () => void;
   onDoubleActivate?: () => void;
-  onStreamReady?: () => void;
+  /** Fired when the stream goes live; `elapsedMs` is the measured time-to-first-frame. */
+  onStreamReady?: (elapsedMs: number) => void;
   onStreamFail?: () => void;
   /** Skip tuning snow when the same stream was already playing (e.g. quad → full screen). */
   assumeReady?: boolean;
@@ -57,10 +59,12 @@ export function CableStreamSlot({
 }: Props) {
   const [signalReady, setSignalReady] = useState(() => assumeReady);
   const failedRef = useRef(false);
+  const startRef = useRef(0);
   const src = hit?.mediaPlayUrl || hit?.url || "";
 
   useEffect(() => {
     failedRef.current = false;
+    startRef.current = (typeof performance !== "undefined" ? performance.now() : Date.now());
     if (!hit || !src) {
       setSignalReady(false);
       return;
@@ -74,7 +78,9 @@ export function CableStreamSlot({
 
   const onStreamReadyInternal = useCallback(() => {
     setSignalReady(true);
-    onStreamReady?.();
+    const nowT = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const elapsed = startRef.current ? Math.max(0, nowT - startRef.current) : 0;
+    onStreamReady?.(elapsed);
   }, [onStreamReady]);
 
   const onStreamFailInternal = useCallback(() => {
@@ -145,13 +151,11 @@ export function CableStreamSlot({
       tabIndex={onSelect ? 0 : undefined}
     >
       <div className="lm-cable-tile-screen">
-        <HlsStreamPlayer
-          key={`${hit.id}-${src}`}
+        <CablePooledVideo
+          key={src}
           src={src}
           muted={muted}
           volume={volume}
-          controls={false}
-          autoPlay
           multiView={multiView}
           mediaRef={single ? mediaRef : undefined}
           className="lm-cable-tile-video"
