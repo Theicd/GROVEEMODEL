@@ -5,10 +5,10 @@ export type LocalTextChatTurn = { role: "user" | "assistant"; content: string };
 
 /** SmolLM works best in English — used when UI is Hebrew and we bridge via translate. */
 export const SMOLLM_MODEL_SYSTEM_EN =
-  "You are a helpful assistant. Answer briefly and directly in plain English. For math, give the numeric result.";
+  "You are a concise, factual assistant. Answer in 1-3 short sentences using only facts you are sure of. If unsure, say you don't know. Do not repeat yourself and stop when done. For math, give only the numeric result.";
 
 export const SMOLLM_CHAT_SYSTEM_EN_UI =
-  "You are SmolLM, a helpful assistant. Reply clearly and concisely in the same language the user writes.";
+  "You are a concise, factual assistant. Answer in 1-3 short sentences in the user's language. Use only facts you are sure of; if unsure, say you don't know. Do not repeat yourself and stop when done.";
 
 export function needsLocalTextTranslationBridge(uiLang: ChatUiLanguage): boolean {
   return uiLang === "he";

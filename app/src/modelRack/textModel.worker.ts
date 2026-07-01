@@ -358,18 +358,25 @@ self.onmessage = async (ev: MessageEvent) => {
       // near-greedy (very low temperature) decoding we use on desktop. Keep enough
       // sampling entropy there and lean harder on repetition controls.
       const onCpu = activeDevice === "wasm";
+      // Tiny 135M model rambles and rarely stops on its own. Keep replies short and
+      // focused: a lower temperature (safe now that repetition_penalty +
+      // no_repeat_ngram guard against loops) gives more accurate, less wandering
+      // answers, and we cap the length on the CPU/mobile path.
       const temperature = onCpu
-        ? Math.max(msg.temperature ?? 0.5, 0.5)
+        ? Math.min(msg.temperature ?? 0.4, 0.45)
         : simpleTurn
           ? Math.min(msg.temperature ?? 0.35, 0.25)
           : (msg.temperature ?? 0.35);
+      const maxNewTokens = onCpu
+        ? Math.min(msg.maxNewTokens ?? 160, 160)
+        : (msg.maxNewTokens ?? 192);
 
       try {
         const out = await pipe(messages, {
-          max_new_tokens: msg.maxNewTokens ?? 192,
+          max_new_tokens: maxNewTokens,
           temperature,
-          top_p: onCpu ? 0.9 : (msg.topP ?? 0.85),
-          top_k: 50,
+          top_p: onCpu ? 0.85 : (msg.topP ?? 0.85),
+          top_k: onCpu ? 40 : 50,
           // Anti-repetition: penalize already-seen tokens and forbid repeating any
           // 3-gram. This is what stops the "same word over and over" failure mode
           // on small quantized models.
