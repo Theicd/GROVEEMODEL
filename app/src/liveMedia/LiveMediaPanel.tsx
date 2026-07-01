@@ -63,12 +63,15 @@ type Props = {
   onClose: () => void;
   /** Desktop: full workspace between sidebar and edge; mobile: side drawer */
   layout?: "side" | "full";
+  /** "supersport" = distributable sports-only cable experience (branded, landscape-first). */
+  profile?: "default" | "supersport";
 };
 
 const PAGE = 48;
 
-export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
+export function LiveMediaPanel({ uiLang, onClose, layout = "side", profile = "default" }: Props) {
   const isFullLayout = layout === "full";
+  const superSport = profile === "supersport";
   const [view, setView] = useState<HubView>("watch");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [radio, setRadio] = useState<RadioStation[]>([]);
@@ -294,6 +297,13 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
     () => groupHitsByUserCategory(favoriteTvHits, channels, userPrefs),
     [favoriteTvHits, channels, userPrefs],
   );
+
+  // SUPER SPORT: sports-only lineup, ignoring view-language / enabled-category prefs.
+  const superSportFavorites = useMemo(
+    () => groupedFavoriteTv.get("sports") ?? [],
+    [groupedFavoriteTv],
+  );
+  const tunerFavoritesForView = superSport ? superSportFavorites : tunerFavorites;
 
   const activeTunerCategories = useMemo(
     () => (userPrefs ? effectiveTunerCategories(userPrefs) : []),
@@ -568,14 +578,15 @@ export function LiveMediaPanel({ uiLang, onClose, layout = "side" }: Props) {
       {view === "watch" ? (
         <div className="lm-panel-body lm-panel-body--watch">
           <CableTunerView
-            favorites={tunerFavorites}
+            favorites={tunerFavoritesForView}
             categoryOrder={categoryBrowseOrder}
-            regionalRadio={regionalRadio}
+            regionalRadio={superSport ? [] : regionalRadio}
             uiLang={uiLang}
             loading={!libraryReady || loading}
             onOpenBrowse={() => setView("browse")}
             onRemoveFavorite={handleToggleFavorite}
             onBack={isFullLayout ? undefined : onClose}
+            profile={profile}
           />
         </div>
       ) : (

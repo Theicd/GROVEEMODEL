@@ -1,8 +1,22 @@
 {
   "version": 1,
   "description": "Curated TV/radio favorites — source of truth in git. Auto-updated when starring in dev (npm run dev).",
-  "updatedAt": 1782700008328,
+  "updatedAt": 1782872313711,
   "channels": [
+    {
+      "id": "tum19e",
+      "name": "30A Golf Kingdom (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://30a-tv.com/feeds/vidaa/golf.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "30AGolfKingdom.us@SD"
+    },
     {
       "id": "3czxxt",
       "name": "30A TV Classic Movies (720p)",
@@ -30,6 +44,20 @@
         "Kids"
       ],
       "tvgId": "ABCKids.au@Sydney"
+    },
+    {
+      "id": "4l4715",
+      "name": "ACCDN (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://raycom-accdn-firetv.amagi.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "ACCDigitalNetwork.us@SD"
     },
     {
       "id": "nki0cj",
@@ -116,6 +144,20 @@
       "tvgId": ""
     },
     {
+      "id": "pw88p8",
+      "name": "BEK TV Sports West (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://cdn3.wowza.com/5/ZWQ1K2NYTmpFbGsr/BEK-WOWZA-1/smil:BEKPRIMEW.smil/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "BEKSports.us@West"
+    },
+    {
       "id": "5684ev",
       "name": "bon appétit (1080p)",
       "country": "",
@@ -156,20 +198,6 @@
         "Documentary"
       ],
       "tvgId": "BritBoxMysteries.us@SD"
-    },
-    {
-      "id": "7mioyx",
-      "name": "Channel 8 (1080p)",
-      "country": "",
-      "language": "",
-      "category": "undefined",
-      "stream": "https://gra1.crystalweb.net:1936/channel8/channel8/playlist.m3u8",
-      "source": "iptv-org-all",
-      "type": "tv",
-      "tags": [
-        "Undefined"
-      ],
-      "tvgId": "Channel8.gr@HD"
     },
     {
       "id": "vbjixp",
@@ -214,6 +242,20 @@
       "tvgId": "Cops.us@Poland"
     },
     {
+      "id": "d6cs6p",
+      "name": "Cricket Gold (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://streams2.sofast.tv/ptnr-yupptv/title-cricketgold/v1/master/611d79b11b77e2f571934fd80ca1413453772ac7/b2048bb8-1686-4432-aa50-647245383e0c/manifest.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "CricketGold.au@SD"
+    },
+    {
       "id": "13bocd",
       "name": "CW FOREVER (1080p)",
       "country": "",
@@ -240,6 +282,20 @@
         "Series"
       ],
       "tvgId": "DarkMatterTV.us@SD"
+    },
+    {
+      "id": "j8bobu",
+      "name": "DAZN Combat (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://dazn-combat-rakuten.amagi.tv/hls/amagi_hls_data_rakutenAA-dazn-combat-rakuten/CDN/master.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "DAZNCombat.uk@Poland"
     },
     {
       "id": "4bin4q",
@@ -370,6 +426,48 @@
       "tvgId": "FIFAPlus.uk@UnitedStates"
     },
     {
+      "id": "h0b2as",
+      "name": "FIFA+ Women (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://cffda8ff.wurl.com/master/f36d25e7e52f1ba8d7e56eb859c636563214f541/U2Ftc3VuZy1nYl9GSUZBUGx1c3dvbWVuX0hMUw/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "FIFAPlusWomen.uk@English"
+    },
+    {
+      "id": "yg3vpy",
+      "name": "FloHockey 24/7 (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://amg02278-amg02278c2-flosports-worldwide-9916.playouts.now.amagi.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "FloHockey.us@HD"
+    },
+    {
+      "id": "a1ynmq",
+      "name": "FloRacing 24/7 (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://amg02278-amg02278c1-flosports-worldwide-7592.playouts.now.amagi.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "FloRacing.us@HD"
+    },
+    {
       "id": "paf1vf",
       "name": "FNX [Geo-blocked]",
       "country": "",
@@ -410,6 +508,20 @@
         "Sports"
       ],
       "tvgId": "FTFSports.us@SD"
+    },
+    {
+      "id": "3upaep",
+      "name": "Game+ (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://a-cdn.klowdtv.com/live2/fntsy_720p/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "GamePlus.ca@SD"
     },
     {
       "id": "aubz5b",
@@ -567,6 +679,20 @@
       "tvgId": "Kan11.il@SD"
     },
     {
+      "id": "l9phjx",
+      "name": "KCMN-LD6 (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://cdn-uw2-prod.tsv2.amagi.tv/linear/amg02873-kravemedia-mtrspt1-distrotv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "KCMNLD426.us@SD"
+    },
+    {
       "id": "6efreo",
       "name": "like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0\" group-title=\"Movies\",24 Hour Free Movies (720p)",
       "country": "",
@@ -707,6 +833,20 @@
       "tvgId": "MixHollywood.eg@SD"
     },
     {
+      "id": "raf9z",
+      "name": "MMA-TV (576p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "http://31.148.48.15/M1_Global/index.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "MMATV.us@SD"
+    },
+    {
       "id": "2phkef",
       "name": "MovieSphere (1080p)",
       "country": "",
@@ -762,6 +902,20 @@
         "Kids"
       ],
       "tvgId": "MrBeanLiveAction.uk@English"
+    },
+    {
+      "id": "54d1lj",
+      "name": "Nautical Channel (720p)",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "https://a-cdn.klowdtv.com/live2/nautical_720p/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "NauticalChannel.it@SD"
     },
     {
       "id": "v6xq2x",
@@ -834,6 +988,20 @@
         "Series"
       ],
       "tvgId": "ParamountNetwork.us@East"
+    },
+    {
+      "id": "ivtxea",
+      "name": "PGA Tour (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://d11k1mnrgfposz.cloudfront.net/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "PGATour.us@SD"
     },
     {
       "id": "8eljjc",
@@ -977,6 +1145,34 @@
       "tvgId": ""
     },
     {
+      "id": "7yd6h5",
+      "name": "SPOTV 2 (1080p)",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "http://primestreams.tv:826/live/mookie22/49aV7nBsK4/119516.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "SPOTV2.id@SD"
+    },
+    {
+      "id": "yowra2",
+      "name": "Stadium (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://wurl120sports.global.transmit.live/hls/679a907dce42a042c23ace37/v1/stadium_gracenote/samsung_us/latest/main/hls/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "Stadium.us@SD"
+    },
+    {
       "id": "1xieox",
       "name": "Stingray Jukebox Oldies (1080p)",
       "country": "",
@@ -989,6 +1185,34 @@
         "Music"
       ],
       "tvgId": "StingrayJukeboxOldies.ca@SD"
+    },
+    {
+      "id": "2ael8x",
+      "name": "Strongman (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://rightsboosterltd-scl-1-eu.rakuten.wurl.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "Strongman.us@UK"
+    },
+    {
+      "id": "k9tr9v",
+      "name": "Strongman Champions League (720p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://rightsboosterltd-scl-1-be.samsung.wurl.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "StrongmanChampionsLeague.uk@SD"
     },
     {
       "id": "6a3180",
@@ -1005,6 +1229,20 @@
       "tvgId": ""
     },
     {
+      "id": "tzzm7j",
+      "name": "Swerve Combat (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://linear-253.frequency.stream/mt/roku/253/hls/master/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "SwerveSports.us@SD"
+    },
+    {
       "id": "6rc0hj",
       "name": "TeenNick [Not 24/7]",
       "country": "",
@@ -1017,6 +1255,20 @@
         "Kids"
       ],
       "tvgId": "TeenNick.il@SD"
+    },
+    {
+      "id": "v9c0wu",
+      "name": "Tennis Channel (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://cdn-ue1-prod.tsv2.amagi.tv/linear/amg01444-tennischannelth-tennischannelnl-samsungnl/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "TennisChannel.us@SD"
     },
     {
       "id": "kxp315",
@@ -1076,18 +1328,60 @@
       "tvgId": "TomAndJerry.do@HD"
     },
     {
-      "id": "75kt02",
-      "name": "TVS Cipher Network (360p)",
+      "id": "ddhfpu",
+      "name": "TVS Boxing (360p)",
       "country": "",
       "language": "eng",
-      "category": "classic",
-      "stream": "https://rpn.bozztv.com/gusa/gusa-tvsmystery/index.m3u8",
+      "category": "sports",
+      "stream": "https://rpn.bozztv.com/gusa/gusa-tvsboxing/index.m3u8",
       "source": "iptv-org-all",
       "type": "tv",
       "tags": [
-        "Classic"
+        "Sports"
       ],
-      "tvgId": "TVSCipherNetwork.us@SD"
+      "tvgId": "TVSBoxing.us@SD"
+    },
+    {
+      "id": "sjhqkf",
+      "name": "TVS Classic Sports (360p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://rpn.bozztv.com/gusa/gusa-tvs/index.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "TVSClassicSports.us@SD"
+    },
+    {
+      "id": "r6wcxk",
+      "name": "TVS Turbo (360p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://rpn.bozztv.com/gusa/gusa-tvsturbo/index.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "TVSTurbo.us@SD"
+    },
+    {
+      "id": "otwbyj",
+      "name": "Unbeaten Sports Channel (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://d1t5afz6qed3xk.cloudfront.net/Unbeaten.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "Unbeaten.us@SD"
     },
     {
       "id": "2vwcmz",
@@ -1130,6 +1424,34 @@
         "Undefined"
       ],
       "tvgId": ""
+    },
+    {
+      "id": "6tvie0",
+      "name": "World of Freesports (1080p)",
+      "country": "",
+      "language": "",
+      "category": "sports",
+      "stream": "https://mainstreammedia-worldoffreesportsintl-rakuten.amagi.tv/playlist.m3u8",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "WorldofFreesports.de@SD"
+    },
+    {
+      "id": "j9hypo",
+      "name": "World Poker Tour (1080p)",
+      "country": "",
+      "language": "eng",
+      "category": "sports",
+      "stream": "https://d39g1vxj2ef6in.cloudfront.net/v1/master/3fec3e5cac39a52b2132f9c66c83dae043dc17d4/prod-rakuten-stitched/playlist.m3u8?ads.xumo_channelId=88883102",
+      "source": "iptv-org-all",
+      "type": "tv",
+      "tags": [
+        "Sports"
+      ],
+      "tvgId": "WorldPokerTour.us@Poland"
     }
   ],
   "radio": []

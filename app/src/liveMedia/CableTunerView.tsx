@@ -62,6 +62,8 @@ import type { UserChannelCategory } from "./channelUserTaxonomy";
 import "./cableTuner.css";
 const OSD_HIDE_MS = 4500;
 const VOLUME_KEY = "grovee-cable-volume";
+/** Analog-style tuning duration (snow + antenna scan meter) when switching channels. */
+const TUNE_MS = 1500;
 
 function readStoredVolume(): number {
   try {
@@ -86,6 +88,11 @@ type Props = {
   onRemoveFavorite: (hit: UnifiedSearchHit) => void | Promise<void>;
   /** Mobile / side drawer: show pinned back control to leave TV mode */
   onBack?: () => void;
+  /**
+   * "supersport" = distributable sports-only cable experience: branded boot splash,
+   * landscape-first split screen, edge channel-scroll rails, and pulsing full-screen prompt.
+   */
+  profile?: "default" | "supersport";
 };
 
 function formatClock(date: Date, rtl: boolean, timezone?: string): string {
@@ -112,8 +119,10 @@ export function CableTunerView({
   onOpenBrowse,
   onRemoveFavorite,
   onBack,
+  profile = "default",
 }: Props) {
   const rtl = uiLang === "he";
+  const superSport = profile === "supersport";
   const [pageIndex, setPageIndex] = useState(0);
   const [quadSlots, setQuadSlots] = useState<number[]>(() => initialQuadSlots(favorites.length));
   const [rotationCursor, setRotationCursor] = useState(() =>
@@ -126,7 +135,9 @@ export function CableTunerView({
     cursor: initialRotationCursor(favorites.length, initialQuadSlots(favorites.length)),
   });
   const [globalSnow, setGlobalSnow] = useState(false);
-  const [welcomeOpen, setWelcomeOpen] = useState(() => !readTvWelcomeDismissed());
+  // SUPER SPORT skips the multi-step tour and shows a short branded boot splash instead.
+  const [welcomeOpen, setWelcomeOpen] = useState(() => (profile === "supersport" ? false : !readTvWelcomeDismissed()));
+  const [bootSplash, setBootSplash] = useState(() => profile === "supersport");
   const [osdVisible, setOsdVisible] = useState(true);
   const [confirmRemoveOpen, setConfirmRemoveOpen] = useState(false);
   const [channelMenuOpen, setChannelMenuOpen] = useState(false);
@@ -660,6 +671,23 @@ export function CableTunerView({
     void warmMjhEpgCaches();
   }, []);
 
+  // SUPER SPORT: dismiss the branded boot splash once channels are ready (min ~2.2s of "connecting").
+  useEffect(() => {
+    if (!superSport || !bootSplash) return;
+    if (loading || total < 1) return;
+    const t = setTimeout(() => setBootSplash(false), 2200);
+    return () => clearTimeout(t);
+  }, [superSport, bootSplash, loading, total]);
+
+  // SUPER SPORT is a landscape-first, lean-back experience — request landscape where supported.
+  useEffect(() => {
+    if (!superSport) return;
+    const orientation = (screen as unknown as { orientation?: { lock?: (o: string) => Promise<void> } }).orientation;
+    orientation?.lock?.("landscape").catch(() => {
+      /* unsupported / blocked outside fullscreen — CSS rotate hint covers portrait */
+    });
+  }, [superSport]);
+
   useEffect(() => {
     if (total <= 0) return;
     if (!sessionHydratedRef.current) {
@@ -953,11 +981,39 @@ export function CableTunerView({
   return (
     <div
       ref={rootRef}
-      className={`lm-cable lm-cable--fullscreen${isFullscreen ? " is-browser-fullscreen" : ""}${welcomeOpen ? " lm-cable--welcome-open" : ""}`}
+      className={`lm-cable lm-cable--fullscreen${isFullscreen ? " is-browser-fullscreen" : ""}${welcomeOpen ? " lm-cable--welcome-open" : ""}${superSport ? " lm-cable--supersport" : ""}${showQuad ? " lm-cable--quad" : " lm-cable--single-view"}`}
       dir={rtl ? "rtl" : "ltr"}
       onMouseMove={onPointerActivity}
       onTouchStart={onPointerActivity}
     >
+      {superSport && bootSplash ? (
+        <div className="lm-ss-splash" role="dialog" aria-modal="true" aria-label="SUPER SPORT">
+          <div className="lm-ss-splash__glow" aria-hidden="true" />
+          <div className="lm-ss-splash__brand">
+            <span className="lm-ss-splash__super">SUPER</span>
+            <span className="lm-ss-splash__sport">SPORT</span>
+          </div>
+          <p className="lm-ss-splash__tag">{rtl ? "חבילת הזהב · שידורי ספורט" : "GOLD PACKAGE · LIVE SPORTS"}</p>
+          <div className="lm-ss-splash__bar" aria-hidden="true">
+            <span className="lm-ss-splash__bar-fill" />
+          </div>
+          <p className="lm-ss-splash__status">
+            {loading || total < 1
+              ? rtl
+                ? "מתחבר לשידור…"
+                : "Connecting to broadcast…"
+              : rtl
+                ? `${total} ערוצי ספורט מוכנים`
+                : `${total} sports channels ready`}
+          </p>
+        </div>
+      ) : null}
+      {superSport ? (
+        <div className="lm-ss-rotate-hint" aria-hidden="true">
+          <span className="lm-ss-rotate-hint__icon">📱↻</span>
+          <span>{rtl ? "סובבו את המכשיר לרוחב לחוויית הצפייה המלאה" : "Rotate your device to landscape for the full experience"}</span>
+        </div>
+      ) : null}
       {welcomeOpen ? (
         <CableTunerWelcome
           uiLang={uiLang}
@@ -997,6 +1053,7 @@ export function CableTunerView({
                 osdVisible={osdVisible}
                 channelNum={chNum}
                 channelBadgeTopRight
+                rtl={rtl}
                 selected={audioFocus}
                 audioFocus={audioFocus && audioUnlocked && !userMuted && !headerRadioAudio}
                 muted={slotMuted(audioFocus && !headerRadioAudio)}
@@ -1016,6 +1073,8 @@ export function CableTunerView({
                   setAudioUnlocked(true);
                   setHeaderRadioAudio(false);
                   pokeOsd();
+                  // SUPER SPORT: a single tap opens the channel full-screen (with its EPG panel).
+                  if (superSport) jumpToFavoriteFromQuad(quadSlots[i] ?? 0);
                 }}
               />
             );
@@ -1030,6 +1089,7 @@ export function CableTunerView({
             osdVisible={osdVisible}
             channelNum={singleFavoriteIndex(pageIndex) + 1}
             channelBadgeTopRight
+            rtl={rtl}
             audioFocus={audioUnlocked && !userMuted}
             muted={slotMuted(true)}
             volume={volume}
@@ -1044,6 +1104,73 @@ export function CableTunerView({
             translated={captionsTranslated}
             visible={captionsActive}
           />
+        </div>
+      ) : null}
+
+      {superSport && showQuad && !bootSplash ? (
+        <div className="lm-ss-quad-ui" dir="ltr">
+          <button
+            type="button"
+            className="lm-ss-rail lm-ss-rail--left"
+            onClick={() => changePage(-1)}
+            disabled={globalSnow || total <= 1}
+            aria-label={rtl ? "ערוצים קודמים" : "Previous channels"}
+          >
+            <span aria-hidden="true">‹</span>
+          </button>
+          <button
+            type="button"
+            className="lm-ss-rail lm-ss-rail--right"
+            onClick={() => changePage(1)}
+            disabled={globalSnow || total <= 1}
+            aria-label={rtl ? "ערוצים הבאים" : "Next channels"}
+          >
+            <span aria-hidden="true">›</span>
+          </button>
+
+          <div className="lm-ss-quad-dock">
+            <div className={`lm-ss-vol${volumeOpen ? " is-open" : ""}`}>
+              <button
+                type="button"
+                className="lm-ss-dock-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setVolumeOpen((o) => !o);
+                  setAudioUnlocked(true);
+                  pokeOsd();
+                }}
+                aria-label={rtl ? "עוצמת קול" : "Volume"}
+                aria-expanded={volumeOpen}
+              >
+                <span aria-hidden="true">{userMuted || volume === 0 ? "🔇" : volume < 0.45 ? "🔉" : "🔊"}</span>
+              </button>
+              <input
+                type="range"
+                className="lm-ss-vol-slider"
+                min={0}
+                max={100}
+                value={Math.round((userMuted ? 0 : volume) * 100)}
+                onChange={(e) => {
+                  setAudioUnlocked(true);
+                  setUserMuted(false);
+                  onVolumeChange(Number(e.target.value) / 100);
+                  pokeOsd();
+                }}
+                aria-label={rtl ? "עוצמת קול" : "Volume"}
+              />
+            </div>
+            <button
+              type="button"
+              className="lm-ss-fs-pulse"
+              onClick={() => void toggleFullscreen()}
+              aria-label={isFullscreen ? (rtl ? "צא ממסך מלא" : "Exit full screen") : rtl ? "מסך מלא" : "Full screen"}
+            >
+              <span className="lm-ss-fs-pulse__icon" aria-hidden="true">
+                {isFullscreen ? "⤢" : "⛶"}
+              </span>
+              <span className="lm-ss-fs-pulse__label">{isFullscreen ? (rtl ? "צא" : "Exit") : rtl ? "מסך מלא" : "Full screen"}</span>
+            </button>
+          </div>
         </div>
       ) : null}
 

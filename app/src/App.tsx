@@ -266,7 +266,7 @@ import {
   pickCapabilitiesDefaultRackId,
   type ChatModelAvailability,
 } from "./capabilitiesOnlyMode";
-import { readTvDeepLink } from "./deepLinks";
+import { readSuperSportDeepLink, readTvDeepLink } from "./deepLinks";
 import {
   GEMMA_RACK_ID,
   getRackModelById,
@@ -1484,6 +1484,7 @@ function App() {
   const selectedRackModelRef = useRef(selectedRackModelId);
   selectedRackModelRef.current = selectedRackModelId;
   const launchedViaTvDeepLink = useRef(readTvDeepLink());
+  const launchedViaSuperSport = useRef(readSuperSportDeepLink());
   useEffect(() => {
     if (!launchedViaTvDeepLink.current) return;
     const rack = loadModelRack();
@@ -6214,7 +6215,12 @@ function App() {
               }
             >
               {showLiveMediaPanel ? (
-                <LiveMediaPanel uiLang="he" onClose={closeLiveMediaPanel} layout={desktopLayout ? "full" : "side"} />
+                <LiveMediaPanel
+                  uiLang="he"
+                  onClose={closeLiveMediaPanel}
+                  layout={desktopLayout ? "full" : "side"}
+                  profile={launchedViaSuperSport.current ? "supersport" : "default"}
+                />
               ) : showSearchResultsPanel && searchResultsPayload ? (
                 <SearchResultsPanel
                   payload={searchResultsPayload}
