@@ -1,8 +1,10 @@
 import { useIntroFooterCarousel } from "../hooks/useIntroFooterCarousel";
+import { startupChoiceLabelHe, type StartupModelChoice } from "../startupModelProfile";
 
 type IntroMarqueeFooterProps = {
   webgpu: boolean;
   phase: "start" | "loading";
+  startupTarget?: StartupModelChoice;
   isLoading: boolean;
   isGenerating: boolean;
   cacheClearing: boolean;
@@ -16,6 +18,7 @@ type IntroMarqueeFooterProps = {
 export function IntroMarqueeFooter({
   webgpu,
   phase,
+  startupTarget = "gemma",
   isLoading,
   isGenerating,
   cacheClearing,
@@ -26,6 +29,7 @@ export function IntroMarqueeFooter({
   onContinueWithoutChat,
 }: IntroMarqueeFooterProps) {
   const isStart = phase === "start";
+  const modelLabel = startupChoiceLabelHe(startupTarget);
   const {
     current,
     typedText,
@@ -89,10 +93,25 @@ export function IntroMarqueeFooter({
                 </span>
               </div>
             </div>
-          ) : null}
+          ) : (
+            <div className="lcars-footer__chip lcars-footer__chip--solo">
+              <div className="lcars-footer__tag-slot">
+                <span className="lcars-footer__chip-tag lcars-footer__chip-tag--ready lcars-footer__chip-tag--idle">
+                  טעינה
+                </span>
+              </div>
+              <div className="lcars-footer__text-slot">
+                <span className="lcars-footer__chip-text lcars-footer__chip-text--in">
+                  מוריד ומאתחל {modelLabel}…
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="lcars-footer__command">
+          {/* Progress meter lives in the center loading dock only — not duplicated here. */}
+
           {isStart ? (
             <div className="lcars-footer__links">
               {onContinueWithoutChat ? (

@@ -287,6 +287,7 @@ export function IntroScreen({
       <IntroMarqueeFooter
         webgpu={webgpu}
         phase={phase}
+        startupTarget={startupTarget}
         isLoading={isLoading}
         isGenerating={isGenerating}
         cacheClearing={cacheClearing}
