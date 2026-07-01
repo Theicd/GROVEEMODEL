@@ -4949,6 +4949,105 @@ button:disabled {
   width: min(920px, 96vw);
 }
 
+/* ---- Console log panel ---- */
+.clog-panel .activity-panel-foot {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.clog-toolbar {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.clog-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.clog-tab {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid #2a3348;
+  background: #141a28;
+  color: #a9b6d6;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.clog-tab:hover {
+  border-color: #3d4f77;
+  color: #d8e2ff;
+}
+
+.clog-tab--active {
+  background: #2b3f6b;
+  border-color: #3d7fff;
+  color: #fff;
+}
+
+.clog-list {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 14px;
+}
+
+.clog-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(42, 51, 72, 0.5);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.clog-time {
+  color: #6b7aa0;
+  flex-shrink: 0;
+}
+
+.clog-level {
+  flex-shrink: 0;
+  font-weight: 700;
+  min-width: 44px;
+}
+
+.clog-src {
+  flex-shrink: 0;
+  color: #7fd0ff;
+  font-size: 10.5px;
+  background: rgba(63, 127, 255, 0.14);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.clog-text {
+  flex: 1;
+}
+
+.clog-line--error {
+  background: rgba(255, 77, 79, 0.08);
+}
+.clog-line--error .clog-level {
+  color: #ff6b6e;
+}
+
+.clog-line--warn .clog-level {
+  color: #ffc861;
+}
+
+.clog-line--info .clog-level {
+  color: #7fd0ff;
+}
+
+.clog-line--log .clog-level {
+  color: #98a6c8;
+}
+
 .vision-inspector-panel.modal-box {
   max-width: min(1100px, 98vw);
   width: min(1100px, 98vw);

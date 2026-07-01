@@ -5,7 +5,10 @@ import "./intro-theme.css";
 import App from "./App.tsx";
 import { ErrorBoundary } from "./ErrorBoundary.tsx";
 import { installGlobalErrorHooks } from "./bootHelpers.ts";
+import { installConsoleCapture } from "./consoleLogStore.ts";
 
+// Capture console output first so the global error hooks below are recorded too.
+installConsoleCapture();
 installGlobalErrorHooks();
 
 if (import.meta.env.DEV) {

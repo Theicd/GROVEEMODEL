@@ -44,6 +44,38 @@ type HfProgress = {
 
 const post = (data: unknown) => self.postMessage(data);
 
+// Forward this worker's console to the main thread so the in-app console panel can
+// show SmolLM load/inference logs on devices without DevTools (phones).
+(() => {
+  const levels = ["log", "info", "warn", "error"] as const;
+  for (const level of levels) {
+    const original = (console[level] as ((...a: unknown[]) => void) | undefined)?.bind(console);
+    (console as unknown as Record<string, (...a: unknown[]) => void>)[level] = (...args: unknown[]) => {
+      try {
+        const text = args
+          .map((a) =>
+            typeof a === "string"
+              ? a
+              : a instanceof Error
+                ? (a.stack ?? a.message)
+                : (() => {
+                    try {
+                      return JSON.stringify(a);
+                    } catch {
+                      return String(a);
+                    }
+                  })(),
+          )
+          .join(" ");
+        self.postMessage({ type: "__wlog", level, text });
+      } catch {
+        /* ignore */
+      }
+      original?.(...args);
+    };
+  }
+})();
+
 const bootLog = (step: string, detail?: Record<string, unknown>) => {
   if (detail !== undefined) console.info("[GROVEE:boot]", step, detail);
   else console.info("[GROVEE:boot]", step);
@@ -66,6 +98,7 @@ self.onunhandledrejection = (ev: PromiseRejectionEvent) => {
 const generators = new Map<string, Awaited<ReturnType<typeof pipeline>>>();
 const loading = new Map<string, Promise<Awaited<ReturnType<typeof pipeline>>>>();
 let activeModelId: string | null = null;
+let activeDevice: "webgpu" | "wasm" | null = null;
 let chatBusy = false;
 let abortRequested = false;
 let activeInterrupt: InterruptableStoppingCriteria | null = null;
@@ -131,11 +164,14 @@ const hasRunnableWebGpuAdapter = async (): Promise<boolean> => {
   }
 };
 
-// Quantization fallback per device. WebGPU handles fp16 activations natively, so
-// q4f16 (smallest) is a fine secondary. WASM/CPU cannot rely on fp16 activations,
-// so it falls back to int8 (q8 → model_quantized.onnx) which is broadly supported.
+// Quantization fallback per device.
+// - WebGPU (desktop): q4 is fast on GPU; q4f16 is a fine secondary.
+// - WASM/CPU (mobile): prefer q8 (int8 dynamic → model_quantized.onnx). On a tiny
+//   135M model, 4-bit weights degrade quality badly on the CPU kernel and cause the
+//   model to loop / repeat a single word. int8 is both SMALLER here (~130MB vs ~174MB)
+//   and noticeably more coherent, so it is the primary choice on phones.
 function dtypeChainFor(device: "webgpu" | "wasm"): string[] {
-  return device === "webgpu" ? ["q4", "q4f16"] : ["q4", "q8"];
+  return device === "webgpu" ? ["q4", "q4f16"] : ["q8", "q4"];
 }
 
 async function loadOnDevice(modelId: string, device: "webgpu" | "wasm") {
@@ -152,6 +188,7 @@ async function loadOnDevice(modelId: string, device: "webgpu" | "wasm") {
       });
       generators.set(modelId, pipe);
       activeModelId = modelId;
+      activeDevice = device;
       bootLog("SmolLM loaded", { modelId, device, dtype });
       post({ type: "loaded", modelId, device });
       return pipe;
@@ -317,16 +354,28 @@ self.onmessage = async (ev: MessageEvent) => {
       const historyLen = msg.history?.length ?? 0;
       const promptLen = msg.prompt?.length ?? 0;
       const simpleTurn = historyLen === 0 && promptLen < 64;
-      const temperature = simpleTurn
-        ? Math.min(msg.temperature ?? 0.35, 0.25)
-        : (msg.temperature ?? 0.35);
+      // On mobile/CPU the tiny 135M model collapses into single-word loops with the
+      // near-greedy (very low temperature) decoding we use on desktop. Keep enough
+      // sampling entropy there and lean harder on repetition controls.
+      const onCpu = activeDevice === "wasm";
+      const temperature = onCpu
+        ? Math.max(msg.temperature ?? 0.5, 0.5)
+        : simpleTurn
+          ? Math.min(msg.temperature ?? 0.35, 0.25)
+          : (msg.temperature ?? 0.35);
 
       try {
         const out = await pipe(messages, {
           max_new_tokens: msg.maxNewTokens ?? 192,
           temperature,
-          top_p: msg.topP ?? 0.85,
-          do_sample: temperature > 0.05,
+          top_p: onCpu ? 0.9 : (msg.topP ?? 0.85),
+          top_k: 50,
+          // Anti-repetition: penalize already-seen tokens and forbid repeating any
+          // 3-gram. This is what stops the "same word over and over" failure mode
+          // on small quantized models.
+          repetition_penalty: onCpu ? 1.3 : 1.15,
+          no_repeat_ngram_size: 3,
+          do_sample: true,
           streamer,
           stopping_criteria: interrupt,
         });

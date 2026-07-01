@@ -7,6 +7,7 @@ export type SidebarGearAction =
   | "api-keys"
   | "plugins"
   | "activity"
+  | "console-log"
   | "presentation-qa"
   | "vision";
 
@@ -20,6 +21,7 @@ const MENU_ITEMS: {
   { id: "api-keys", icon: "🔑", label: "מפתחות API", title: "TMDB · AIS · Tavily · Scavio" },
   { id: "plugins", icon: "🧩", label: "מרכז התוספים", title: "חיפוש · API · RSS" },
   { id: "activity", icon: "📋", label: "פעילות המודל", title: "הנחיות ותשובות" },
+  { id: "console-log", icon: "🐞", label: "לוג הקונסולה", title: "שגיאות רקע · דיבוג" },
   { id: "presentation-qa", icon: "✦", label: "בדיקת מצגת", title: "80 שאלות מצגת" },
   { id: "vision", icon: "👁", label: "Vision Inspector", title: "זיהוי חי במצלמה" },
 ];

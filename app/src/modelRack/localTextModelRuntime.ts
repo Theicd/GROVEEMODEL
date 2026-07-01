@@ -1,5 +1,6 @@
 import { markLocalTextReady } from "./localTextModels";
 import type { LocalTextInferenceBackend } from "./localTextModelSettings";
+import { pushWorkerLog, type ConsoleLogLevel } from "../consoleLogStore";
 
 export type LocalTextDownloadProgress = {
   pct: number;
@@ -22,6 +23,13 @@ let worker: Worker | null = null;
 function getWorker(): Worker {
   if (!worker) {
     worker = new Worker(new URL("./textModel.worker.ts", import.meta.url), { type: "module" });
+    // Mirror the worker's forwarded console into the in-app console panel.
+    worker.addEventListener("message", (ev: MessageEvent) => {
+      const d = ev.data as { type?: string; level?: ConsoleLogLevel; text?: string } | null;
+      if (d && d.type === "__wlog" && typeof d.text === "string") {
+        pushWorkerLog(d.level ?? "log", `[SmolLM] ${d.text}`);
+      }
+    });
   }
   return worker;
 }

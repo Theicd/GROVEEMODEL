@@ -152,6 +152,7 @@ import { ComposerPlusMenu } from "./ComposerPlusMenu";
 import { ComposerVoiceMic } from "./ComposerVoiceMic";
 import { ChatUserMessage } from "./ChatUserMessage";
 import { ModelActivityPanel } from "./ModelActivityPanel";
+import { ConsoleLogPanel } from "./ConsoleLogPanel";
 import { PresentationQaPanel } from "./PresentationQaPanel";
 import { BUILTIN_PRESENTATION_QUERY_COUNT } from "./userPresentationQueries";
 import { VisionInspectorPanel } from "./VisionInspectorPanel";
@@ -1581,6 +1582,7 @@ function App() {
   const [halConsciousness, setHalConsciousness] = useState<import("./vision2/types").ConsciousnessLayer | null>(null);
   const [halEntity, setHalEntity] = useState<import("./vision2/entityProfile").EntityProfile | null>(null);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [consoleLogOpen, setConsoleLogOpen] = useState(false);
   const [presentationQaOpen, setPresentationQaOpen] = useState(
     () =>
       QA_BRIDGE_ENABLED &&
@@ -2836,6 +2838,9 @@ function App() {
           break;
         case "activity":
           setActivityLogOpen(true);
+          break;
+        case "console-log":
+          setConsoleLogOpen(true);
           break;
         case "presentation-qa":
           setPresentationQaOpen(true);
@@ -5832,6 +5837,8 @@ function App() {
         entries={activityLog}
         onClear={() => setActivityLog([])}
       />
+
+      <ConsoleLogPanel open={consoleLogOpen} onClose={() => setConsoleLogOpen(false)} />
 
       {QA_BRIDGE_ENABLED ? (
         <PresentationQaPanel
