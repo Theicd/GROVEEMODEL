@@ -5302,8 +5302,17 @@ function App() {
     const priorTurns = buildHistoryForWorker(priorChatMessages)
       .filter((t) => t.role === "user" || t.role === "assistant");
     const chatTopic = classifyChatTopic(trimmed);
-    const uiLang = getChatUiLanguage();
+    // Activate the Hebrew<->English bridge when EITHER the UI is set to Hebrew OR the
+    // user actually typed Hebrew. SmolLM only understands English, so any Hebrew input
+    // must be translated regardless of the stored UI-language setting — otherwise raw
+    // Hebrew reaches the model and it answers with gibberish.
+    const settingLang = getChatUiLanguage();
+    const inputIsHebrew = isRtlText(trimmed);
+    const uiLang: "he" | "en" = settingLang === "he" || inputIsHebrew ? "he" : "en";
     const bridgeHe = uiLang === "he";
+    console.info(
+      `[translate] bridge ${bridgeHe ? "ON" : "off"} (uiSetting=${settingLang}, inputHebrew=${inputIsHebrew})`,
+    );
 
     const deliverCanned = (
       reply: string,
