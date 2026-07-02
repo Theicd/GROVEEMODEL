@@ -1,6 +1,7 @@
 /** Web search result types — shared by providers, orchestrator, and UI. */
 
 import type { TimeWidgetData } from "../timeWidget/types";
+import type { WeatherWidgetData } from "../weatherWidget/types";
 
 export type SearchProviderId =
   | "open-meteo"
@@ -204,6 +205,7 @@ export type SearchSourceResult = {
   error?: string;
   latencyMs: number;
   timeWidget?: TimeWidgetData;
+  weatherWidget?: WeatherWidgetData;
   /** RSS cards attached by grovee-news provider. */
   newsCards?: import("../groveeNews/types").GroveeNewsCard[];
   /** Human-readable RSS scan status for search UI. */

@@ -63,6 +63,9 @@ describe("webSearch intents", () => {
   it("extracts location from weather question", () => {
     expect(extractLocationPhrase("מה מזג האוויר בניו יורק")).toBeTruthy();
     expect(extractLocationPhrase("weather in Paris")).toBeTruthy();
+    expect(extractLocationPhrase("מה הטמפרטורה בברזיל")).toMatch(/Brazil/i);
+    expect(extractLocationPhrase("מה הטמפרטורה ב ריו דה ז׳ניירו")).toMatch(/Rio de Janeiro/i);
+    expect(extractLocationPhrase("מה הטמפרטורה של העיר סאו פאולו בברזיל")).toMatch(/São Paulo/i);
   });
 
   it("classifies weather intent", () => {
@@ -107,6 +110,23 @@ describe("webSearch intents", () => {
     expect(needsWebSearch("חפש ערוץ סרטים")).toBe(false);
     expect(isMoviesQuery("חפש ערוץ סרטים")).toBe(false);
     expect(classifySearchIntents("חפש ערוץ סרטים")).toEqual(["livemedia"]);
+  });
+
+  it("skips web search for conversational opinion and creative turns", () => {
+    expect(needsWebSearch("מה דעתך על מדע בדיוני?")).toBe(false);
+    expect(needsWebSearch("נניח שאנשים יכולים לעוף — מה היה קורה?")).toBe(false);
+    expect(needsWebSearch("בוא נדבר על רעיון לסיפור")).toBe(false);
+    expect(needsWebSearch("what do you think about creative writing?")).toBe(false);
+    expect(needsWebSearch("imagine that humans could fly")).toBe(false);
+    expect(needsWebSearch("ספר לי סיפור על חלל")).toBe(false);
+    expect(needsWebSearch("איחרתי לעבודה היום הבוס כועס עלי")).toBe(false);
+  });
+
+  it("still searches when conversational text includes live intent", () => {
+    expect(needsWebSearch("מה דעתך על מזג האוויר היום בתל אביב?")).toBe(true);
+    expect(needsWebSearch("בוא נדבר על חדשות עכשיו")).toBe(true);
+    expect(needsWebSearch("מה מזג האוויר בתל אביב")).toBe(true);
+    expect(needsWebSearch("מה הכותרת הראשית בעולם כרגע?")).toBe(true);
   });
 
   it("auto search only for live or explicit lookup — not static facts", () => {

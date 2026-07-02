@@ -1,6 +1,6 @@
 import type { SearchIntent } from "./types";
 import { getIntentScanText, isInlineTextTaskRequest } from "../chatComposition";
-import { isSimpleMathQuery } from "../chatIntents";
+import { isSimpleMathQuery, isConversationalChatTurn } from "../chatIntents";
 import { LIVE_MEDIA_CATEGORIES } from "../liveMedia/catalogs";
 import { isLiveMediaCatalogQuery, isLiveTvCategoryChannelQuery, isRadioFrequencyQuery } from "../liveMedia/mediaIntent";
 import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
@@ -60,11 +60,14 @@ export const isGeneralWebTopicQuery = (text: string): boolean => {
 /** Overview / status questions without the exact «מה קורה» phrase. */
 export const isTopicalOverviewQuery = (text: string): boolean => {
   const q = text.trim();
-  if (!q || isBareWorldNewsQuery(q)) return false;
+  if (!q || isBareWorldNewsQuery(q) || isConversationalChatTurn(q)) return false;
   if (isGeneralWebTopicQuery(q)) return true;
   if (/מה\s+(?:ה)?מצב\s+(?:ב)?תחום/i.test(q)) return true;
   if (/מה\s+(?:ה)?מצב\s+(?:ב)?(?:מערכת|שוק|תעשי)/i.test(q)) return true;
   if (/מה\s+(?:ה)?מצב\s+(?:ב)?עולם\s+\S+/i.test(q)) return true;
+  const wantsLiveOverview =
+    hasTimelyInfoSignal(q) || /(?:חדשות|headlines?|כותרות|breaking)/i.test(q);
+  if (!wantsLiveOverview) return false;
   if (/מה\s+חדש\s+(?:ב|בעולם|עם|לגבי)/i.test(q)) return true;
   if (/עדכונ(?:ים|י)\s+(?:אחרונ|על|ב)/i.test(q)) return true;
   if (/what'?s\s+new\s+(?:in|with|on)/i.test(q)) return true;
@@ -86,7 +89,9 @@ export const hasTimelyInfoSignal = (text: string): boolean =>
  */
 export const isTimelyOverviewQuery = (text: string): boolean => {
   const q = text.trim();
-  if (!q || isCasualConversation(q) || isStaticFactualQuery(q)) return false;
+  if (!q || isCasualConversation(q) || isStaticFactualQuery(q) || isConversationalChatTurn(q)) {
+    return false;
+  }
   if (isTopicalOverviewQuery(q) || isBareWorldNewsQuery(q)) return true;
   const intents = classifySearchIntents(q);
   const structured = intents.filter(
@@ -143,6 +148,38 @@ export const hasLiveTemporalSignal = (text: string): boolean =>
     text,
   );
 
+/** Structured live lookup or explicit search — not calendar «היום» in personal chat. */
+export const hasExplicitLiveDataIntent = (text: string): boolean => {
+  const q = text.trim();
+  if (!q) return false;
+  return (
+    userRequestsSearch(q) ||
+    hasUrlInQuery(q) ||
+    isWeatherQuery(q) ||
+    isWorldTimeQuery(q) ||
+    isMarineQuery(q) ||
+    isAirQualityQuery(q) ||
+    isEarthquakeQuery(q) ||
+    isAviationQuery(q) ||
+    isShipsQuery(q) ||
+    isMarineInfraQuery(q) ||
+    isDisasterQuery(q) ||
+    isNewsQuery(q) ||
+    isCommodityPriceQuery(q) ||
+    isMarketPriceQuery(q) ||
+    isCurrencyQuery(q) ||
+    isGovernmentQuery(q) ||
+    isProductsQuery(q) ||
+    isFlightStatusQuery(q) ||
+    isOpenWebTopicQuery(q) ||
+    isGeneralWebTopicQuery(q) ||
+    isTopicalOverviewQuery(q) ||
+    isBareWorldNewsQuery(q) ||
+    isCrossSourceQuery(q) ||
+    (hasLiveTemporalSignal(q) && !isConversationalChatTurn(q))
+  );
+};
+
 /** Static geography / country facts the model already knows — no auto search. */
 export const isStaticFactualQuery = (text: string): boolean => {
   const q = text.trim();
@@ -157,7 +194,7 @@ export const isStaticFactualQuery = (text: string): boolean => {
 /** Factual / live-data questions that benefit from external search. */
 export const isFactualKnowledgeQuery = (text: string): boolean => {
   const q = text.trim();
-  if (!q || isCasualConversation(q)) return false;
+  if (!q || isCasualConversation(q) || isConversationalChatTurn(q)) return false;
 
   if (
     /(?:מה\s+שלומ|מה\s+נשמע|how\s+are\s+you|what'?s\s+up)/i.test(q) ||
@@ -397,6 +434,9 @@ export const isStarlinkRegionalQuery = (text: string): boolean =>
 export const needsWebSearch = (text: string): boolean => {
   const q = text.trim();
   if (!q || isInlineTextTaskRequest(q) || isCasualConversation(q) || isSimpleMathQuery(q)) return false;
+
+  if (isConversationalChatTurn(q) && !hasExplicitLiveDataIntent(q)) return false;
+
   /** Local IPTV/radio catalog — not web news, GitHub, or OMDb. */
   if (isLiveMediaCatalogQuery(q)) return false;
   if (hasUrlInQuery(q)) return true;

@@ -11,6 +11,26 @@ describe("geoResolve Israel", () => {
   });
 });
 
+describe("geoResolve Brazil", () => {
+  it("geocodePlace resolves ברזיל to Brazil country not Indiana US", async () => {
+    const place = await geocodePlace("ברזיל");
+    expect(place?.country_code).toBe("BR");
+    expect(place?.name).toBe("Brazil");
+  });
+
+  it("geocodePlace resolves Hebrew Rio to Rio de Janeiro", async () => {
+    const place = await geocodePlace("ריו דה ז׳ניירו");
+    expect(place?.country_code).toBe("BR");
+    expect(place?.name).toBe("Rio de Janeiro");
+  });
+
+  it("geocodePlace resolves Hebrew São Paulo", async () => {
+    const place = await geocodePlace("סאו פאולו");
+    expect(place?.country_code).toBe("BR");
+    expect(place?.name).toBe("São Paulo");
+  });
+});
+
 describe("wantsNewsHeadlineBulletsInChat", () => {
   it("B01 world headlines route to chat bullets", () => {
     const b01 = USER_PRESENTATION_QUERIES.find((q) => q.id === "B01")!.prompt;

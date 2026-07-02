@@ -4,6 +4,7 @@
  */
 
 import { isTriviaOrSocialGame } from "./gameSearch/gameIntents";
+import { isConversationalChatTurn } from "./chatIntents";
 import { extractTriviaQuestionCount } from "./trivia/triviaPrompt";
 import { isSimpleGreeting, isRtlText, type ChatTopic, type ChatTurn } from "./chatIntents";
 import {
@@ -47,12 +48,16 @@ import {
 } from "./searchResults";
 import type { UnifiedSearchHit } from "./searchResults/types";
 import {
-  buildShortTimeReply,
   buildTimeWidgetFromStartupContext,
   buildTimeWidgetFromWorldTimeSource,
   isSinglePlaceTimeWidgetQuery,
 } from "./timeWidget/resolveTimeWidget";
 import type { TimeWidgetData } from "./timeWidget/types";
+import type { WeatherWidgetData } from "./weatherWidget/types";
+import {
+  attachWeatherWidgetFromSources,
+  isWeatherWidgetQuery,
+} from "./weatherWidget/inChatWeather";
 import type { StartupContext } from "./startupContext";
 import {
   buildLocalTimeAnswer,
@@ -236,6 +241,7 @@ export type ChatTurnPreludeDeps = {
   qaHasPending: () => boolean;
   pendingWebSearchRef: { current: PendingWebSearchMeta | null };
   pendingTimeWidgetRef: { current: TimeWidgetData | null };
+  pendingWeatherWidgetRef: { current: WeatherWidgetData | null };
   pendingGameCategoryPickerRef: { current: boolean };
   pendingGameBrowseCategoryRef: { current: GameCategoryId | null };
   pendingInlineGamesRef: { current: OnlineGame[] | null };
@@ -260,6 +266,7 @@ export type ChatTurnPreludeContinue = {
   triviaMode: boolean;
   triviaQuestionCount: number;
   imageDescribeMode: boolean;
+  conversationalTurn: boolean;
 };
 
 export type ChatTurnPreludeOutcome =
@@ -276,6 +283,7 @@ export async function runTextChatTurnPrelude(
   const uiLang: UiLang =
     input.uiLang ?? (isRtlText(trimmed || effectivePrompt) ? "he" : "en");
   const greeting = isSimpleGreeting(effectivePrompt);
+  const conversationalTurn = isConversationalChatTurn(trimmed || effectivePrompt);
   const imageDescribeMode = isImageDescribeRequest(trimmed);
 
   const earlyRoute = resolveEarlyTurnRouting({
@@ -327,6 +335,11 @@ export async function runTextChatTurnPrelude(
     shouldRunWebSearch = false;
   }
 
+  if (conversationalTurn) {
+    wantsGameSearch = false;
+    shouldRunWebSearch = false;
+  }
+
   const liveCatalogQuery = isLiveMediaCatalogQuery(effectivePrompt);
   if (liveCatalogQuery) {
     wantsGameSearch = false;
@@ -341,6 +354,7 @@ export async function runTextChatTurnPrelude(
   let marineLiveCannedReply: string | null = null;
   deps.pendingWebSearchRef.current = null;
   deps.pendingTimeWidgetRef.current = null;
+  deps.pendingWeatherWidgetRef.current = null;
 
   const localTimeOnly =
     !wantsGameSearch &&
@@ -438,6 +452,7 @@ export async function runTextChatTurnPrelude(
         const widget = wt ? buildTimeWidgetFromWorldTimeSource(wt) : null;
         if (widget) deps.pendingTimeWidgetRef.current = widget;
       }
+      attachWeatherWidgetFromSources(deps.pendingWeatherWidgetRef, searchResult.sources);
       const searchLiveOk = searchResult.sources.some((s) => s.ok && s.text.trim());
       marineLiveCannedReply =
         searchResult.cannedReply ??
@@ -820,21 +835,44 @@ export async function runTextChatTurnPrelude(
     deps.pendingTimeWidgetRef.current &&
     isSinglePlaceTimeWidgetQuery(effectivePrompt)
   ) {
-    const reply = buildShortTimeReply(deps.pendingTimeWidgetRef.current);
-    deps.deliverCanned(reply, "", "local-time");
+    const widget = deps.pendingTimeWidgetRef.current;
+    deps.deliverCanned("", "", "local-time");
     deps.pushActivity({
       direction: "system",
       kind: "web_search",
       title: "Time widget",
-      detail: reply,
+      detail: `${widget.placeLabel} · ${widget.timezone}`,
     });
     return { action: "canned" };
   }
+
+  if (
+    !qaForceLlm &&
+    deps.pendingWeatherWidgetRef.current &&
+    isWeatherWidgetQuery(effectivePrompt)
+  ) {
+    const widget = deps.pendingWeatherWidgetRef.current;
+    deps.deliverCanned("", webContext, "canned-live", "מזג אוויר");
+    deps.pushActivity({
+      direction: "system",
+      kind: "web_search",
+      title: "Weather widget",
+      detail: `${widget.cityName} · ${widget.temperatureC}°C`,
+    });
+    return { action: "canned" };
+  }
+
+  const timeWidgetOnlyTurn =
+    !!deps.pendingTimeWidgetRef.current && isSinglePlaceTimeWidgetQuery(effectivePrompt);
+  const weatherWidgetOnlyTurn =
+    !!deps.pendingWeatherWidgetRef.current && isWeatherWidgetQuery(effectivePrompt);
 
   const structuredLiveTurn =
     !qaForceLlm &&
     !isNewsQuery(effectivePrompt) &&
     !wantsGameSearch &&
+    !timeWidgetOnlyTurn &&
+    !weatherWidgetOnlyTurn &&
     !!marineLiveCannedReply &&
     shouldDeliverStructuredLiveReply(
       effectivePrompt,
@@ -930,6 +968,7 @@ export async function runTextChatTurnPrelude(
       triviaMode: isTriviaOrSocialGame(trimmed) || chatTopic === "trivia",
       triviaQuestionCount: extractTriviaQuestionCount(trimmed),
       imageDescribeMode,
+      conversationalTurn,
     },
   };
 }

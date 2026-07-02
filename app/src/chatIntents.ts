@@ -430,12 +430,65 @@ export const isConversationFirstRequest = (text: string): boolean => {
   if (!t) return false;
   return (
     BORED_PLAY_RE.test(t) ||
-    /ספר לי|סיפור|בוא נדבר|מה דעתך|what do you think|tell me about/i.test(t) ||
+    /ספר לי|סיפור|בוא נדבר|מה דעתך|what do you think/i.test(t) ||
     /קורה לי|קרה לי|happened to me|שיתף|רוצה לשתף/i.test(t) ||
     /הפסק|חשמל|עייף|עצוב|שמח|stressed|tired/i.test(t) ||
     /רעיון|מדע בדיוני|קונספיר|fiction|story idea|creative writing/i.test(t) ||
     /תן לי|תגיד לי.*(רעיון|idea)|give me an idea/i.test(t)
   );
+};
+
+const LIVE_TOPIC_OVERRIDE_RE =
+  /(?:עכשיו|כרגע|היום|חדשות|headline|כותרות|breaking|מחיר|טמפרטור|מזג\s*האוויר|weather|temperature|מטוס|רעיד|earthquake|שער|exchange|live|real.?time)/i;
+
+/** User text mentions live-data topics — do not treat as pure conversation. */
+export const hasLiveTopicInUserText = (text: string): boolean =>
+  LIVE_TOPIC_OVERRIDE_RE.test(text.trim());
+
+const HYPOTHETICAL_OR_CREATIVE_RE =
+  /(?:נניח\s+ש|מה\s+היה\s+קורה\s+אם|דמיין\s+(?:ש|לעצמך)?|תאר\s+לי\s+(?:עולם|סיפור|תרחיש|מציאות)|חשב(?:ה|ת)\s+ניסיון|thought\s+experiment|what\s+if\b|imagine\s+(?:that|if)|hypothetical)/i;
+
+const OPINION_DIALOGUE_RE =
+  /(?:מה\s+דעתך|מה\s+דעתכם|how\s+do\s+you\s+feel|what\s+do\s+you\s+think|פילוסופ|נושא\s+לשיחה|בוא\s+נדבר|let'?s\s+(?:talk|chat)|just\s+(?:talk|chatting))/i;
+
+const PERSONAL_EMOTIONAL_RE =
+  /(?:איחר(?:תי|נו)|מאחר(?:ת|ים)?|late\s+for\s+work|הבוס|בוס|מנהל(?:ת)?|boss|כועס(?:ת|ים)?|עצוב(?:ה|ים)?|לחוץ|stressed|עייף|tired|מפחד|worried|לעבודה|at\s+work|יום\s+קשה|bad\s+day|קרה\s+לי|קורה\s+לי|happened\s+to\s+me|שיתפתי|venting)/i;
+
+/** User vents or shares feelings — not a live-data lookup. */
+export const isPersonalOrEmotionalSharing = (text: string): boolean => {
+  const t = text.trim();
+  if (!t || !PERSONAL_EMOTIONAL_RE.test(t)) return false;
+  return !/(?:עכשיו|כרגע|חדשות|headline|כותרות|breaking|מחיר|טמפרטור|מזג\s*האוויר|weather|temperature|מטוס|רעיד|earthquake|שער|exchange|live|real.?time)/i.test(
+    t,
+  );
+};
+
+const CREATIVE_STORY_RE =
+  /(?:^(?:ספר\s+לי\s+)?(?:סיפור|בדיחה)(?:\s+|$|[?!.])|מדע\s+בדיוני|creative\s+writing|story\s+idea|fiction\b)/i;
+
+/** Hypothetical, opinion, or creative writing — not a live-data lookup. */
+export const isHypotheticalOrCreativeQuery = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    HYPOTHETICAL_OR_CREATIVE_RE.test(t) ||
+    OPINION_DIALOGUE_RE.test(t) ||
+    CREATIVE_STORY_RE.test(t)
+  );
+};
+
+/**
+ * Prefer LLM dialogue over auto web search (unless needsWebSearch sees explicit live intent).
+ */
+export const isConversationalChatTurn = (text: string): boolean => {
+  const t = text.trim();
+  if (!t) return true;
+  if (isPersonalOrEmotionalSharing(t)) return true;
+  if (isHypotheticalOrCreativeQuery(t)) return true;
+  if (OPINION_DIALOGUE_RE.test(t)) return true;
+  if (!isConversationFirstRequest(t)) return false;
+  if (/tell\s+me\s+about|ספר\s+לי\s+על/i.test(t) && hasLiveTopicInUserText(t)) return false;
+  return true;
 };
 
 /** Explicit ask about sight, people, posture, room — needs sensors + snapshot. */

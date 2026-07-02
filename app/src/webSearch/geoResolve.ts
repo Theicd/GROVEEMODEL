@@ -1,5 +1,5 @@
 import { fetchJson } from "./fetchJson";
-import { normalizeCountrySearchName } from "./queryExtract";
+import { normalizeCountrySearchName, normalizePlaceSearchName } from "./queryExtract";
 
 export type GeoPlace = {
   name: string;
@@ -49,15 +49,73 @@ const KNOWN_PLACES: Record<string, GeoPlace> = {
   germany: { name: "Germany", latitude: 51.1657, longitude: 10.4515, country_code: "DE" },
   berlin: { name: "Berlin", latitude: 52.52, longitude: 13.405, country_code: "DE" },
   "ברlin": { name: "Berlin", latitude: 52.52, longitude: 13.405, country_code: "DE" },
+  brazil: { name: "Brazil", latitude: -10.3333, longitude: -53.2, country_code: "BR" },
+  ברזיל: { name: "Brazil", latitude: -10.3333, longitude: -53.2, country_code: "BR" },
+  "rio de janeiro": {
+    name: "Rio de Janeiro",
+    latitude: -22.9068,
+    longitude: -43.1729,
+    country_code: "BR",
+    admin1: "Rio de Janeiro",
+  },
+  "são paulo": {
+    name: "São Paulo",
+    latitude: -23.5505,
+    longitude: -46.6333,
+    country_code: "BR",
+    admin1: "São Paulo",
+  },
+  "sao paulo": {
+    name: "São Paulo",
+    latitude: -23.5505,
+    longitude: -46.6333,
+    country_code: "BR",
+    admin1: "São Paulo",
+  },
+  brasília: { name: "Brasília", latitude: -15.7797, longitude: -47.9297, country_code: "BR", admin1: "Federal District" },
+  brasilia: { name: "Brasília", latitude: -15.7797, longitude: -47.9297, country_code: "BR", admin1: "Federal District" },
 };
 
-const normalizePlaceKey = (name: string): string => name.trim().toLowerCase().replace(/\s+/g, " ");
+const normalizePlaceKey = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/['`׳']/g, "'")
+    .replace(/\s+/g, " ");
+
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  israel: "IL",
+  brazil: "BR",
+  germany: "DE",
+  france: "FR",
+  spain: "ES",
+  italy: "IT",
+  japan: "JP",
+  china: "CN",
+  india: "IN",
+  canada: "CA",
+  mexico: "MX",
+  russia: "RU",
+  australia: "AU",
+  "new zealand": "NZ",
+  egypt: "EG",
+  turkey: "TR",
+  poland: "PL",
+  sweden: "SE",
+  norway: "NO",
+  finland: "FI",
+  belgium: "BE",
+  netherlands: "NL",
+  greece: "GR",
+  "united states": "US",
+  "united kingdom": "GB",
+};
 
 const lookupKnownPlace = (name: string): GeoPlace | null => {
   const key = normalizePlaceKey(name);
   if (KNOWN_PLACES[key]) return KNOWN_PLACES[key];
   for (const [k, place] of Object.entries(KNOWN_PLACES)) {
-    if (key.includes(k) || k.includes(key)) return place;
+    if (key === normalizePlaceKey(k)) return place;
   }
   return null;
 };
@@ -67,12 +125,36 @@ const isIsraelPlaceQuery = (name: string): boolean => {
   return key === "israel" || key === "ישראל" || normalizePlaceKey(normalizeCountrySearchName(name)) === "israel";
 };
 
+const countryCodeForQuery = (queryName: string): string | null => {
+  const normalized = normalizePlaceSearchName(queryName);
+  const key = normalizePlaceKey(normalizeCountrySearchName(normalized));
+  return COUNTRY_NAME_TO_CODE[key] ?? null;
+};
+
 const pickBestGeoResult = (results: GeoPlace[] | undefined, queryName: string): GeoPlace | null => {
   if (!results?.length) return null;
+
+  const countryCode = countryCodeForQuery(queryName);
+  if (countryCode) {
+    const inCountry = results.filter((r) => r.country_code === countryCode);
+    if (inCountry.length) {
+      const targetName = normalizePlaceKey(normalizeCountrySearchName(normalizePlaceSearchName(queryName)));
+      const byName = inCountry.find((r) => normalizePlaceKey(r.name) === targetName);
+      return byName ?? inCountry[0];
+    }
+    const known = lookupKnownPlace(queryName);
+    if (known?.country_code === countryCode) return known;
+  }
+
   if (isIsraelPlaceQuery(queryName)) {
     const il = results.find((r) => r.country_code === "IL");
     if (il) return il;
   }
+
+  const normalizedQuery = normalizePlaceKey(normalizePlaceSearchName(queryName));
+  const byExactName = results.find((r) => normalizePlaceKey(r.name) === normalizedQuery);
+  if (byExactName) return byExactName;
+
   return results[0];
 };
 
@@ -91,7 +173,7 @@ export const geocodePlace = async (name: string): Promise<GeoPlace | null> => {
   const q = name.trim();
   if (q.length < 2) return null;
 
-  const normalized = normalizeCountrySearchName(q);
+  const normalized = normalizePlaceSearchName(q);
   const known = lookupKnownPlace(normalized) ?? lookupKnownPlace(q);
   if (known) return known;
 

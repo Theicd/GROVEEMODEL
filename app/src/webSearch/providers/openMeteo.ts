@@ -1,40 +1,23 @@
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
-import { extractLocationPhrase, normalizeCountrySearchName } from "../queryExtract";
+import { extractLocationPhrase, normalizePlaceSearchName } from "../queryExtract";
 import { geocodePlace, formatPlaceLabel, type GeoPlace } from "../geoResolve";
 import { getStartupContextSync } from "../../startupContext";
+import { buildWeatherWidgetFromForecast } from "../../weatherWidget/buildWeatherWidget";
+import { isWeatherForecastQuery } from "../../weatherWidget/inChatWeather";
+import { WMO_HE } from "../../weatherWidget/wmoLabels";
 
 const stripWeatherNoise = (raw: string, keepWeekly = false): string =>
   raw
     .replace(
       new RegExp(
-        `(?:weather|forecast|temperature|מזג\\s*האוויר|תחזית|tomorrow|מחר|today|היום|now|עכשיו|כרגע${keepWeekly ? "" : "|שבוע|weekly|שבועי"})`,
+        `(?:weather|forecast|temperature|temperatur|מזג\\s*האוויר|תחזית|טמפרטור(?:ה)?|tomorrow|מחר|today|היום|now|עכשיו|כרגע${keepWeekly ? "" : "|שבוע|weekly|שבועי"})`,
         "gi",
       ),
       " ",
     )
     .replace(/\s{2,}/g, " ")
     .trim();
-
-const WMO_HE: Record<number, string> = {
-  0: "שמיים בהירים",
-  1: "בהיר ברובו",
-  2: "מעונן חלקית",
-  3: "מעונן",
-  45: "ערפל",
-  48: "ערפל קפוא",
-  51: "טפטוף קל",
-  53: "טפטוף",
-  55: "טפטוף כבד",
-  61: "גשם קל",
-  63: "גשם",
-  65: "גשם כבד",
-  71: "שלג קל",
-  73: "שלג",
-  75: "שלג כבד",
-  80: "ממטרים",
-  95: "סופת רעמים",
-};
 
 type ForecastResult = {
   current?: {
@@ -68,6 +51,7 @@ export const fetchWeatherSearch = async (
   try {
     const wantsTomorrow = /(?:tomorrow|מחר)/i.test(query);
     const wantsWeekly = /(?:שבוע|weekly|7\s*days?|שבועי)/i.test(query);
+    const includeForecastInWidget = isWeatherForecastQuery(query);
     let location = extractLocationPhrase(query);
     if (!location || location.length < 2) {
       location = stripWeatherNoise(query, wantsWeekly);
@@ -93,7 +77,7 @@ export const fetchWeatherSearch = async (
       };
     }
 
-    location = normalizeCountrySearchName(location);
+    location = normalizePlaceSearchName(location);
 
     const place = sharedPlace ?? (await geocodePlace(location));
     if (!place) {
@@ -108,7 +92,7 @@ export const fetchWeatherSearch = async (
     }
 
     const { latitude, longitude } = place;
-    const forecastDays = wantsWeekly ? 7 : wantsTomorrow ? 2 : 3;
+    const forecastDays = wantsWeekly ? 7 : wantsTomorrow ? 2 : includeForecastInWidget ? 3 : 1;
     const forecastUrl =
       `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
       `&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure` +
@@ -176,12 +160,23 @@ export const fetchWeatherSearch = async (
     }
 
     const url = `https://open-meteo.com/en/docs#latitude=${latitude}&longitude=${longitude}`;
+    const weatherWidget = buildWeatherWidgetFromForecast({
+      place,
+      placeLabel,
+      current: cur,
+      daily,
+      wantsTomorrow,
+      wantsWeekly,
+      includeForecast: includeForecastInWidget,
+      sourceLabel: label,
+    });
     return {
       provider,
       label,
       ok: true,
       text: lines.join("\n"),
       url,
+      weatherWidget: weatherWidget ?? undefined,
       latencyMs: Math.round(performance.now() - started),
     };
   } catch (err) {

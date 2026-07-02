@@ -82,9 +82,15 @@ export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string
   const cappedWeb = capWebContext(webContext, Math.min(settings.webBriefChars, 420));
   if (cappedWeb.trim() && searchHadLiveData) {
     appendBlocks.push(`Use only these live facts:\n${cappedWeb}`);
-  } else if (prelude.shouldRunWebSearch && !searchHadLiveData) {
+  } else if (prelude.shouldRunWebSearch && !searchHadLiveData && !prelude.conversationalTurn) {
     appendBlocks.push(
       "Live search returned no usable data. Say briefly that live fetch failed. Do not invent facts.",
+    );
+  } else if (prelude.conversationalTurn && !searchHadLiveData) {
+    appendBlocks.push(
+      uiLang === "he"
+        ? "ענה בשיחה חופשית וקצרה — זו שאלת דעה/יצירתיות, לא בקשת מידע חי."
+        : "Reply conversationally and briefly — opinion or creative chat, not a live-data lookup.",
     );
   }
 

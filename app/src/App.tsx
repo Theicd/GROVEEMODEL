@@ -19,6 +19,7 @@ import {
   isPersonDemographicsQuestion,
   isPersonMoodQuestion,
   isConversationFirstRequest,
+  isConversationalChatTurn,
   formatCameraTopicLabel,
   needsVisionSensorContext,
   needsAttachedDocumentAnalysis,
@@ -89,6 +90,7 @@ import {
   HOLDING_CHAT_APPEND,
   MOOD_CHAT_APPEND,
   CAMERA_CONVERSATION_APPEND,
+  PURE_CONVERSATION_CHAT_APPEND,
   CAMERA_PURE_CHAT_APPEND,
   DOCUMENT_IMAGE_CHAT_APPEND,
   CAMERA_HAL_SYSTEM,
@@ -324,8 +326,14 @@ import {
 } from "./startupContext";
 import { LocalContextBar } from "./LocalContextBar";
 import { TimeClockWidget } from "./TimeClockWidget";
+import { WeatherWidgetCard } from "./components/WeatherWidgetCard";
+import type { WeatherWidgetData } from "./weatherWidget/types";
 import {
-  buildShortTimeReply,
+  attachWeatherWidgetFromSources,
+  isWeatherWidgetQuery,
+} from "./weatherWidget/inChatWeather";
+import { buildTimeWidgetActivityDetail } from "./timeWidget/inChatTimeWidget";
+import {
   buildTimeWidgetFromStartupContext,
   buildTimeWidgetFromWorldTimeSource,
   isSinglePlaceTimeWidgetQuery,
@@ -419,6 +427,8 @@ type ChatMessage = {
   searchSummary?: string;
   /** Animated clock card for "what time" queries. */
   timeWidget?: TimeWidgetData;
+  /** Animated weather card for forecast queries. */
+  weatherWidget?: WeatherWidgetData;
   /** Inline arcade game cards with ▶ play in chat. */
   gameResults?: OnlineGame[];
   /** Inline live TV / radio channels with ▶ play in chat. */
@@ -1835,6 +1845,7 @@ function App() {
     crossSource?: boolean;
   } | null>(null);
   const pendingTimeWidgetRef = useRef<TimeWidgetData | null>(null);
+  const pendingWeatherWidgetRef = useRef<WeatherWidgetData | null>(null);
   const pendingGameCategoryPickerRef = useRef(false);
   const pendingGameBrowseCategoryRef = useRef<GameCategoryId | null>(null);
   const pendingInlineGamesRef = useRef<OnlineGame[] | null>(null);
@@ -2025,6 +2036,7 @@ function App() {
     chatTopicRef.current = null;
     pendingWebSearchRef.current = null;
     pendingTimeWidgetRef.current = null;
+    pendingWeatherWidgetRef.current = null;
     pendingGameCategoryPickerRef.current = false;
     pendingGameBrowseCategoryRef.current = null;
     pendingInlineGamesRef.current = null;
@@ -2055,6 +2067,7 @@ function App() {
     chatTopicRef.current = null;
     pendingWebSearchRef.current = null;
     pendingTimeWidgetRef.current = null;
+    pendingWeatherWidgetRef.current = null;
     pendingGameCategoryPickerRef.current = false;
     pendingGameBrowseCategoryRef.current = null;
     pendingInlineGamesRef.current = null;
@@ -3329,6 +3342,7 @@ function App() {
       const modelDraft = pendingModelDraftRef.current.trim() || undefined;
       const searchMeta = pendingWebSearchRef.current ?? undefined;
       const timeWidget = pendingTimeWidgetRef.current ?? undefined;
+      const weatherWidget = pendingWeatherWidgetRef.current ?? undefined;
       const showGameCategories = pendingGameCategoryPickerRef.current;
       const gameBrowseCategory = pendingGameBrowseCategoryRef.current ?? undefined;
       const inlineGames = pendingInlineGamesRef.current ?? undefined;
@@ -3353,11 +3367,16 @@ function App() {
         if (fallback?.trim()) finalContent = fallback;
       }
 
+      if (weatherWidget || timeWidget) {
+        finalContent = "";
+      }
+
       if (
         !finalContent.trim() &&
         !artifact &&
         !showGameCategories &&
         !timeWidget &&
+        !weatherWidget &&
         !inlineGames?.length &&
         !liveMediaInline?.hits.length &&
         !generatedImage &&
@@ -3378,6 +3397,7 @@ function App() {
         !artifact &&
         !showGameCategories &&
         !timeWidget &&
+        !weatherWidget &&
         !inlineGames?.length &&
         !liveMediaInline?.hits.length &&
         !generatedImage
@@ -3391,6 +3411,7 @@ function App() {
         streamingModelDraftRef.current = "";
         pendingWebSearchRef.current = null;
         pendingTimeWidgetRef.current = null;
+        pendingWeatherWidgetRef.current = null;
         pendingGameCategoryPickerRef.current = false;
         pendingGameBrowseCategoryRef.current = null;
         pendingInlineGamesRef.current = null;
@@ -3467,9 +3488,10 @@ function App() {
                 thought,
                 visionContext,
                 modelDraft,
-                searchSources: searchMeta?.sources,
-                searchSummary: searchMeta?.summary,
+                searchSources: weatherWidget || timeWidget ? undefined : searchMeta?.sources,
+                searchSummary: weatherWidget || timeWidget ? undefined : searchMeta?.summary,
                 timeWidget,
+                weatherWidget,
                 showGameCategories,
                 gameBrowseCategory,
                 gameResults: inlineGames,
@@ -3531,9 +3553,10 @@ function App() {
               thought,
               visionContext,
               modelDraft,
-              searchSources: searchMeta?.sources,
-              searchSummary: searchMeta?.summary,
+              searchSources: weatherWidget || timeWidget ? undefined : searchMeta?.sources,
+              searchSummary: weatherWidget || timeWidget ? undefined : searchMeta?.summary,
               timeWidget,
+              weatherWidget,
               showGameCategories,
               gameBrowseCategory,
               gameResults: inlineGames,
@@ -3556,6 +3579,7 @@ function App() {
       pendingUserModelDraftRef.current = "";
       pendingWebSearchRef.current = null;
       pendingTimeWidgetRef.current = null;
+      pendingWeatherWidgetRef.current = null;
       pendingGameCategoryPickerRef.current = false;
       pendingGameBrowseCategoryRef.current = null;
       pendingInlineGamesRef.current = null;
@@ -4246,7 +4270,6 @@ function App() {
     bootLog("Intro load clicked", { target, settings: snapshotInferenceSettings() });
     void resolveStartupModelChoice(pref).then((rec) => {
       setStartupRecommendation(rec);
-      setBootTarget(rec.choice);
       bootLog("Startup model resolved", {
         choice: rec.choice,
         reasonHe: rec.reasonHe,
@@ -4254,6 +4277,7 @@ function App() {
         isMobile: rec.signals.isMobile,
         deviceMemoryGb: rec.signals.deviceMemoryGb,
         webgpu: rec.signals.webgpu,
+        loadTarget: target,
       });
     });
     void (async () => {
@@ -4540,6 +4564,8 @@ function App() {
     const personDemographicsQuestion = isPersonDemographicsQuestion(trimmed);
     const personMoodQuestion = isPersonMoodQuestion(trimmed);
     const conversationFirst = isConversationFirstRequest(trimmed);
+    const conversationalTurn =
+      !cameraActive && !hasAttachments && isConversationalChatTurn(trimmed || effectivePrompt);
     const visionSensorQuery =
       cameraActive && needsVisionSensorContext(trimmed) && !documentTurn;
     const pureChatTurn = cameraActive && isVisionUnrelatedTurn(trimmed) && !documentTurn;
@@ -4550,6 +4576,7 @@ function App() {
     let marineLiveCannedReply: string | null = null;
     pendingWebSearchRef.current = null;
     pendingTimeWidgetRef.current = null;
+    pendingWeatherWidgetRef.current = null;
 
     const uiLangRoute: "he" | "en" =
       getChatUiLanguage() === "he" || isRtlText(trimmed) ? "he" : "en";
@@ -4622,6 +4649,10 @@ function App() {
       shouldRunWebSearch = false;
       const describeSubject = extractImageDescribeSubject(trimmed);
       if (describeSubject) pendingImagePromptRef.current = describeSubject;
+    }
+    if (conversationalTurn) {
+      wantsGameSearch = false;
+      shouldRunWebSearch = false;
     }
     const localTimeOnly =
       !hasAttachments &&
@@ -4731,6 +4762,11 @@ function App() {
           const widget = wt ? buildTimeWidgetFromWorldTimeSource(wt) : null;
           if (widget) pendingTimeWidgetRef.current = widget;
         }
+        attachWeatherWidgetFromSources(pendingWeatherWidgetRef, searchResult.sources);
+        const timeWidgetOnlyTurn =
+          !!pendingTimeWidgetRef.current && isSinglePlaceTimeWidgetQuery(effectivePrompt);
+        const weatherWidgetOnlyTurn =
+          !!pendingWeatherWidgetRef.current && isWeatherWidgetQuery(effectivePrompt);
         const searchLiveOk = searchResult.sources.some((s) => s.ok && s.text.trim());
         marineLiveCannedReply = searchResult.cannedReply ?? buildCapabilityLiveReply(
           effectivePrompt,
@@ -4763,12 +4799,15 @@ function App() {
         const qaForceLlm = qaTurnForceLlmRef.current || qaChatBridge.isForceLlmPending();
         const shouldDeliverLive =
           !qaForceLlm &&
+          !conversationalTurn &&
           !!marineLiveCannedReply &&
           !cameraActive &&
           !hasAttachments &&
           !continueCode &&
           !documentTurn &&
           !wantsGameSearch &&
+          !timeWidgetOnlyTurn &&
+          !weatherWidgetOnlyTurn &&
           (!newsQueryTurn || newsHeadlineBulletsTurn) &&
           (searchLiveOk || !searchResult.sources.some((s) => s.ok && s.provider !== "searxng")) &&
           shouldDeliverStructuredLiveReply(
@@ -4806,13 +4845,17 @@ function App() {
             searchResult.intents.length >= 2 ||
             !!searchPlan?.blendNewsWithWeb,
         };
-        setStreamingSearchSources({
-          sources: searchResult.sources,
-          summary: searchResult.summaryHe,
-          query: effectivePrompt,
-          brief: searchResult.brief,
-          active: false,
-        });
+        if (!timeWidgetOnlyTurn && !weatherWidgetOnlyTurn) {
+          setStreamingSearchSources({
+            sources: searchResult.sources,
+            summary: searchResult.summaryHe,
+            query: effectivePrompt,
+            brief: searchResult.brief,
+            active: false,
+          });
+        } else {
+          setStreamingSearchSources(null);
+        }
         if (
           shouldDeliverLive &&
           marineLiveCannedReply &&
@@ -5055,6 +5098,31 @@ function App() {
       return;
     }
 
+    const pureWeatherWidgetTurn =
+      !qaForceLlm &&
+      !wantsGameSearch &&
+      !cameraActive &&
+      !hasAttachments &&
+      !continueCode &&
+      !documentTurn &&
+      !!pendingWeatherWidgetRef.current &&
+      isWeatherWidgetQuery(effectivePrompt);
+
+    if (pureWeatherWidgetTurn && pendingWeatherWidgetRef.current) {
+      qaChatBridge.setReplySource("canned-live");
+      assistantBufferRef.current = "";
+      setAssistantBuffer("");
+      setStatus("Ready");
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: "Weather widget",
+        detail: `${pendingWeatherWidgetRef.current.cityName} · ${pendingWeatherWidgetRef.current.temperatureC}°C`,
+      });
+      finalizeAssistantReply(false);
+      return;
+    }
+
     const pureTimeWidgetTurn =
       !qaForceLlm &&
       !wantsGameSearch &&
@@ -5074,20 +5142,25 @@ function App() {
     });
     // #endregion
     if (pureTimeWidgetTurn && pendingTimeWidgetRef.current) {
-      const reply = buildShortTimeReply(pendingTimeWidgetRef.current);
+      const widget = pendingTimeWidgetRef.current;
       qaChatBridge.setReplySource("local-time");
-      assistantBufferRef.current = reply;
-      setAssistantBuffer(reply);
+      assistantBufferRef.current = "";
+      setAssistantBuffer("");
       setStatus("Ready");
       pushActivity({
         direction: "system",
         kind: "web_search",
         title: "Time widget",
-        detail: reply,
+        detail: buildTimeWidgetActivityDetail(widget),
       });
       finalizeAssistantReply(false);
       return;
     }
+
+    const timeWidgetOnlyTurn =
+      !!pendingTimeWidgetRef.current && isSinglePlaceTimeWidgetQuery(effectivePrompt);
+    const weatherWidgetOnlyTurn =
+      !!pendingWeatherWidgetRef.current && isWeatherWidgetQuery(effectivePrompt);
 
     const structuredLiveTurn =
       !qaForceLlm &&
@@ -5097,6 +5170,8 @@ function App() {
       !hasAttachments &&
       !continueCode &&
       !documentTurn &&
+      !timeWidgetOnlyTurn &&
+      !weatherWidgetOnlyTurn &&
       !!marineLiveCannedReply &&
       shouldDeliverStructuredLiveReply(
         effectivePrompt,
@@ -5364,8 +5439,11 @@ function App() {
         answerShape: pendingWebSearchRef.current?.answerShape,
         crossSource: pendingWebSearchRef.current?.crossSource,
       })}`;
-    } else if (shouldRunWebSearch) {
+    } else if (shouldRunWebSearch && !conversationalTurn) {
       systemPrompt = `${systemPrompt}\n\n${WEB_SEARCH_NO_RESULTS_APPEND}`;
+    }
+    if (conversationalTurn && !cameraActive) {
+      systemPrompt = `${systemPrompt}\n\n${PURE_CONVERSATION_CHAT_APPEND}`;
     }
     if (gameNoResults) {
       systemPrompt = `${systemPrompt}\n\n${GAME_SEARCH_NO_RESULTS_APPEND}`;
@@ -5624,6 +5702,7 @@ function App() {
           qaHasPending: () => qaChatBridge.hasPending(),
           pendingWebSearchRef,
           pendingTimeWidgetRef,
+          pendingWeatherWidgetRef,
           pendingGameCategoryPickerRef,
           pendingGameBrowseCategoryRef,
           pendingInlineGamesRef,
@@ -5782,6 +5861,7 @@ function App() {
           qaHasPending: () => qaChatBridge.hasPending(),
           pendingWebSearchRef,
           pendingTimeWidgetRef,
+          pendingWeatherWidgetRef,
           pendingGameCategoryPickerRef,
           pendingGameBrowseCategoryRef,
           pendingInlineGamesRef,
@@ -6971,7 +7051,7 @@ function App() {
                                     onOpen={() => openArtifact(msg.artifact!)}
                                   />
                                 ) : null}
-                                {msg.searchSources?.length ? (
+                                {msg.searchSources?.length && !msg.weatherWidget && !msg.timeWidget ? (
                                   <SearchProgressPanel
                                     active={false}
                                     sources={msg.searchSources}
@@ -6979,6 +7059,9 @@ function App() {
                                   />
                                 ) : null}
                                 {msg.timeWidget ? <TimeClockWidget data={msg.timeWidget} /> : null}
+                                {msg.weatherWidget ? (
+                                  <WeatherWidgetCard data={msg.weatherWidget} uiLang={uiLang} />
+                                ) : null}
                                 {msg.showGameCategories ? (
                                   <GameCategoryPicker
                                     activeCategory={msg.gameBrowseCategory}
@@ -7010,13 +7093,15 @@ function App() {
                                     uiLang={uiLang}
                                   />
                                 ) : null}
-                                <MessageBody
-                                  content={msg.content}
-                                  onOpenArtifact={openArtifact}
-                                  savedThought={msg.thought}
-                                  savedVisionContext={msg.visionContext}
-                                  savedModelDraft={msg.modelDraft}
-                                />
+                                {msg.content.trim() || (!msg.weatherWidget && !msg.timeWidget) ? (
+                                  <MessageBody
+                                    content={msg.content}
+                                    onOpenArtifact={openArtifact}
+                                    savedThought={msg.thought}
+                                    savedVisionContext={msg.visionContext}
+                                    savedModelDraft={msg.modelDraft}
+                                  />
+                                ) : null}
                               </>
                             )}
                           </div>

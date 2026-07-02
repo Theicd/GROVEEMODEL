@@ -20,6 +20,7 @@ import {
   isWorldOverviewQuery,
 } from "./intents";
 import { isInlineTextTaskRequest } from "../chatComposition";
+import { isConversationalChatTurn } from "../chatIntents";
 import { formatDataAgeForSource } from "./dataAge";
 import { formatProductPriceSummary, isCheapersalConfigured } from "./providers/cheapersalPrices";
 import { fallbackFromLiveWorldSnapshot } from "../liveWorld/snapshotFallback";
@@ -232,6 +233,14 @@ const formatGenericSource = (source: SearchSourceResult): string => {
     ]
       .filter(Boolean)
       .join("\n");
+  }
+
+  if (source.provider === "open-meteo" && source.weatherWidget) {
+    return "";
+  }
+
+  if (source.provider === "world-time" && source.timeWidget) {
+    return "";
   }
 
   if (source.provider === "open-meteo") {
@@ -947,6 +956,7 @@ export function shouldDeliverStructuredLiveReply(
   sources: SearchSourceResult[],
   cannedReply?: string | null,
 ): boolean {
+  if (isConversationalChatTurn(query)) return false;
   if (isInlineTextTaskRequest(query)) return false;
   if (needsOpenWebEnrichment(query)) {
     if (wantsCinemaPlotSummaries(query)) {

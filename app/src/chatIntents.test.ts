@@ -23,6 +23,9 @@ import {
   isTopicShift,
   topicShiftHint,
   isConversationFirstRequest,
+  isConversationalChatTurn,
+  isHypotheticalOrCreativeQuery,
+  isPersonalOrEmotionalSharing,
   formatCameraTopicLabel,
   needsVisionSensorContext,
   isVisionUnrelatedTurn,
@@ -167,6 +170,17 @@ Thinking Process:
     expect(needsVisionSensorContext("שלום איך קוראים לך")).toBe(false);
     expect(needsVisionSensorContext("תגיד לי אתה תן לי רעיון")).toBe(false);
     expect(isVisionUnrelatedTurn("מה אני מחזיק ביד")).toBe(false);
+  });
+
+  it("conversation-first and hypothetical turns skip live lookup routing", () => {
+    expect(isHypotheticalOrCreativeQuery("נניח שאנשים יכולים לעוף")).toBe(true);
+    expect(isConversationalChatTurn("מה דעתך על מדע בדיוני?")).toBe(true);
+    expect(isConversationalChatTurn("בוא נדבר על רעיון לסיפור")).toBe(true);
+    expect(isConversationalChatTurn("what do you think about AI ethics?")).toBe(true);
+    expect(isPersonalOrEmotionalSharing("איחרתי לעבודה היום הבוס כועס עלי")).toBe(true);
+    expect(isConversationalChatTurn("איחרתי לעבודה היום הבוס כועס עלי")).toBe(true);
+    expect(isConversationalChatTurn("מה מזג האוויר בתל אביב")).toBe(false);
+    expect(isConversationalChatTurn("חפש מידע על ברמודה")).toBe(false);
   });
 
   it("routes attached images as document analysis", () => {

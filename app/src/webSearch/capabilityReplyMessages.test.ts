@@ -98,7 +98,7 @@ describe("buildCapabilityLiveReply", () => {
   it("shouldDeliverStructuredLiveReply is false for news", () => {
     expect(
       shouldDeliverStructuredLiveReply(
-        "מה הכותרות בעולם",
+        "מה קורה בפוליטיקה הישראלית עכשיו",
         ["news"],
         [
           {
@@ -110,6 +110,25 @@ describe("buildCapabilityLiveReply", () => {
           },
         ],
         "canned",
+      ),
+    ).toBe(false);
+  });
+
+  it("shouldDeliverStructuredLiveReply is false for conversational venting", () => {
+    expect(
+      shouldDeliverStructuredLiveReply(
+        "איחרתי לעבודה היום הבוס כועס עלי",
+        ["hackernews", "github"],
+        [
+          {
+            provider: "hackernews",
+            label: "Hacker News",
+            ok: true,
+            text: "Vite+ Beta",
+            latencyMs: 1,
+          },
+        ],
+        "סיכום מהמקורות",
       ),
     ).toBe(false);
   });

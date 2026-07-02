@@ -12,9 +12,6 @@ export const sanitizeSearchQuery = (query: string): string => {
   return q || query.trim();
 };
 
-const KNOWN_PLACES =
-  /(?:ניו\s*יורק|תל\s*א(?:ביב|ב)?|ירושלים|חיפה|לונדון|פריז|paris|london|tokyo|טוקיו|berlin|ברlin|moscow|מוסקבה|rome|רומא|madrid|מדריד|sydney|סידני|miami|מיאמי|los\s*angeles|לוס\s*אנgeles|california|קליפורניה|new\s*zealand|ניו\s*זילנד|אוסטרליה|australia|germany|גרמניה|france|צרפת|japan|יפן|israel|ישראל|russia|רוסיה)/gi;
-
 const COUNTRY_ALIASES: Record<string, string> = {
   ישראל: "Israel",
   ארצות: "United States",
@@ -46,11 +43,67 @@ const COUNTRY_ALIASES: Record<string, string> = {
   הולנד: "Netherlands",
 };
 
+/** Hebrew / transliterated city names → Open-Meteo search name. */
+const CITY_ALIASES: Record<string, string> = {
+  "ריו דה ז'ניירו": "Rio de Janeiro",
+  "ריו דה ז׳ניירו": "Rio de Janeiro",
+  "ריו דה זה ניירו": "Rio de Janeiro",
+  ריו: "Rio de Janeiro",
+  "סאו פאולו": "São Paulo",
+  "סאו פולו": "São Paulo",
+  "ברזיליה": "Brasília",
+  brasilia: "Brasília",
+  "סלבדור": "Salvador",
+  "בהיה": "Salvador",
+  "פורטו אלגרה": "Porto Alegre",
+  "קוריטיבה": "Curitiba",
+  "רסיפה": "Recife",
+  "בלו הוריזונטה": "Belo Horizonte",
+  "מנאוס": "Manaus",
+};
+
+const KNOWN_PLACES =
+  /(?:ניו\s*יורק|תל\s*א(?:ביב|ב)?|ירושלים|חיפה|לונדון|פריז|paris|london|tokyo|טוקיו|berlin|ברlin|moscow|מוסקבה|rome|רומא|madrid|מדריד|sydney|סידני|miami|מיאמי|los\s*angeles|לוס\s*אנgeles|california|קליפורניה|new\s*zealand|ניו\s*זילנד|אוסטרליה|australia|germany|גרמניה|france|צרפת|japan|יפן|israel|ישראל|russia|רוסיה|ברזיל|brazil|ריו|סאו\s*פאולו|s[aã]o\s*paulo|rio\s*de\s*janeiro)/gi;
+
+const normalizePlaceKey = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/['`׳']/g, "'")
+    .replace(/\s+/g, " ");
+
 export const normalizeCountrySearchName = (raw: string): string => {
   const t = raw.trim().replace(/[?!.]+$/, "");
   const lower = t.toLowerCase();
   for (const [he, en] of Object.entries(COUNTRY_ALIASES)) {
     if (t === he || lower === he.toLowerCase() || lower === en.toLowerCase()) return en;
+  }
+  return t;
+};
+
+/** Country + city aliases for weather / marine / time geocoding. */
+export const normalizePlaceSearchName = (raw: string): string => {
+  let t = raw.trim().replace(/[?!.]+$/, "");
+  t = t.replace(/^העיר\s+/i, "").replace(/^עיר\s+/i, "").trim();
+
+  const inCountry = t.match(/^(.+?)\s+ב(?:־|-)?\s*([\u0590-\u05FFA-Za-z][\u0590-\u05FFA-Za-z\s\-'".]{1,30})$/i);
+  if (inCountry) {
+    const placePart = inCountry[1].trim();
+    const countryPart = normalizeCountrySearchName(inCountry[2].trim());
+    const cityNorm = normalizePlaceSearchName(placePart);
+    if (cityNorm !== placePart || CITY_ALIASES[placePart] || CITY_ALIASES[normalizePlaceKey(placePart)]) {
+      return cityNorm;
+    }
+    if (countryPart !== inCountry[2].trim()) return countryPart;
+    return normalizePlaceSearchName(placePart);
+  }
+
+  const asCountry = normalizeCountrySearchName(t);
+  if (asCountry !== t) return asCountry;
+
+  const key = normalizePlaceKey(t);
+  for (const [alias, en] of Object.entries(CITY_ALIASES)) {
+    if (normalizePlaceKey(alias) === key) return en;
   }
   return t;
 };
@@ -70,6 +123,7 @@ export const extractLocationPhrase = (query: string): string | null => {
     /(?:צפוי|forecast|expect)\s+(?:גשם|rain|שלג|snow)\s+(?:ב|ב־|in|at|for)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:wave\s*height|גובה\s*גלים|גלים)\s+(?:in|at|near|ב|ב־|ליד)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:מהירות\s+(?:ה)?רוח|wind\s+speed)\s+(?:ב|ב־|in|at|of|ל)?\s*(.+?)(?:[?!.]?$)/i,
+    /(?:מה\s+)?(?:ה)?(?:טמפרטור(?:ה|ה)|temperature)\s+(?:של\s+)?(?:ה)?עיר\s+(.+?)(?:\s+ב(?:־|-)?\s*[\u0590-\u05FFA-Za-z][\u0590-\u05FFA-Za-z\s\-'".]{1,30})?(?:[?!.]?$)/i,
     /(?:מה\s+)?(?:ה)?(?:טמפרטור(?:ה|ה)|temperature)\s+(?:עכשיו|כרגע|now)?\s*(?:ב|ב־|in|at|of|של)?\s*(.+?)(?:[?!.]?$)/i,
     /(?:תחזית|forecast)\s+(?:מזג\s*האוויר|weather)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
     /(?:מהי|מה\s+ה)?(?:תחזית|forecast)\s+(?:מזג\s*האוויר|weather)\s+(?:ב|ב־|in|at|for)\s+(.+?)(?:[?!.]?$)/i,
@@ -95,11 +149,11 @@ export const extractLocationPhrase = (query: string): string | null => {
       }
     }
     if (loc && loc.length >= 2 && !/^(היום|עכשיו|today|now)$/i.test(loc)) {
-      return loc;
+      return normalizePlaceSearchName(loc);
     }
   }
   const cityMatch = q.match(KNOWN_PLACES);
-  if (cityMatch) return cityMatch[0];
+  if (cityMatch) return normalizePlaceSearchName(cityMatch[0]);
   return null;
 };
 

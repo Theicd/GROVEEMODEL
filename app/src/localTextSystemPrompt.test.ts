@@ -14,6 +14,7 @@ const basePrelude: ChatTurnPreludeContinue = {
   localTimeOnly: false,
   greeting: false,
   imageDescribeMode: false,
+  conversationalTurn: false,
 };
 
 describe("localTextSystemPrompt", () => {
@@ -57,6 +58,18 @@ describe("localTextSystemPrompt", () => {
     });
     expect(prompt).toContain("Tetris");
     expect(prompt).toContain("inline in chat");
+  });
+
+  it("skips failed-search warning on conversational turns", () => {
+    const prompt = buildLocalTextSystemPrompt({
+      uiLang: "he",
+      prelude: { ...basePrelude, shouldRunWebSearch: false, conversationalTurn: true },
+      pendingWebSearch: null,
+      startupContext: null,
+      webContext: "",
+    });
+    expect(prompt).toContain("שיחה חופשית");
+    expect(prompt).not.toContain("Do not invent facts");
   });
 
   it("uses higher token budget on search turns from settings", () => {
