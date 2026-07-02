@@ -452,7 +452,7 @@ const OPINION_DIALOGUE_RE =
   /(?:מה\s+דעתך|מה\s+דעתכם|how\s+do\s+you\s+feel|what\s+do\s+you\s+think|פילוסופ|נושא\s+לשיחה|בוא\s+נדבר|let'?s\s+(?:talk|chat)|just\s+(?:talk|chatting))/i;
 
 const PERSONAL_EMOTIONAL_RE =
-  /(?:איחר(?:תי|נו)|מאחר(?:ת|ים)?|late\s+for\s+work|הבוס|בוס|מנהל(?:ת)?|boss|כועס(?:ת|ים)?|עצוב(?:ה|ים)?|לחוץ|stressed|עייף|tired|מפחד|worried|לעבודה|at\s+work|יום\s+קשה|bad\s+day|קרה\s+לי|קורה\s+לי|happened\s+to\s+me|שיתפתי|venting)/i;
+  /(?:איחר(?:תי|נו)|מאחר(?:ת|ים)?|late\s+for\s+work|הבוס|בוס|מנהל(?:ת)?|boss|כועס(?:ת|ים)?|עצוב(?:ה|ים)?|לחוץ|stressed|עייף|tired|מפחד|worried|לעבודה|at\s+work|יום\s+קשה|bad\s+day|קרה\s+לי|קורה\s+לי|happened\s+to\s+me|שיתפתי|venting|נתקע|תקלה|הרכב|המכונית|car\s+broke|broke\s+down)/i;
 
 /** User vents or shares feelings — not a live-data lookup. */
 export const isPersonalOrEmotionalSharing = (text: string): boolean => {

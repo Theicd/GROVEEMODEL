@@ -1,5 +1,6 @@
 import { buildTriviaFormatInstruction } from "./trivia/triviaPrompt";
 import { formatSessionMemoryForPrompt } from "./chatSessionMemory";
+import { formatSessionSummaryForPrompt } from "./chatSessionSummary";
 import { capWebContext } from "./chatResourceBudget";
 import type { ChatTurnPreludeContinue, PendingWebSearchMeta } from "./chatTurnPrelude";
 import {
@@ -12,6 +13,14 @@ import type { ChatUiLanguage } from "./ui/useUiLanguage";
 import type { StartupContext } from "./startupContext";
 import { personalityBlockForSmolLM } from "./personalityProfile";
 import { imageDescribeSystemAppend } from "./imageGen/imageDescribeHint";
+
+/** Compact conversation mode for local text models (English — model reads this directly). */
+export const LOCAL_TEXT_CONVERSATION_APPEND =
+  "CONVERSATION MODE: Read ALL prior messages before answering. Empathize for personal venting (work, boss, stress, car trouble). Connect follow-ups to earlier turns. Reply in the user's language; do not invent live data.";
+
+/** Hunyuan / long-context — reinforce thread continuity. */
+export const LOCAL_TEXT_HISTORY_AWARE_APPEND =
+  "Use the full chat history. Short follow-ups (e.g. «that's why», «why am I late») refer to earlier user messages — answer using that thread.";
 
 /** Small SmolLM models collapse on long Gemma-style system blocks — keep this tiny. */
 export const LOCAL_TEXT_MAX_SYSTEM_CHARS = 900;
@@ -34,34 +43,41 @@ export type LocalTextContextInput = {
   settings?: LocalTextModelSettings;
   /** User "remember …" facts extracted from the session. */
   sessionMemoryFacts?: string[];
+  /** Rolling summary of older turns (browser-only, no server). */
+  sessionSummary?: string;
   triviaMode?: boolean;
   triviaQuestionCount?: number;
   documentContext?: string;
   userName?: string;
+  systemMaxChars?: number;
 };
 
 /** Trim append blocks first; never truncate GROVEE identity core. */
-export function trimLocalTextSystemPrompt(base: string, appendBlocks: string[]): string {
+export function trimLocalTextSystemPrompt(
+  base: string,
+  appendBlocks: string[],
+  maxChars = LOCAL_TEXT_MAX_SYSTEM_CHARS,
+): string {
   const core = base.trim();
   const parts = appendBlocks.map((b) => b.trim()).filter(Boolean);
   let combined = core;
   for (const block of parts) {
     const next = `${combined}\n\n${block}`;
-    if (next.length <= LOCAL_TEXT_MAX_SYSTEM_CHARS) {
+    if (next.length <= maxChars) {
       combined = next;
       continue;
     }
-    const room = LOCAL_TEXT_MAX_SYSTEM_CHARS - combined.length - 2;
+    const room = maxChars - combined.length - 2;
     if (room > 40) {
       combined = `${combined}\n\n${block.slice(0, room - 1)}…`;
     }
     break;
   }
-  if (combined.length <= LOCAL_TEXT_MAX_SYSTEM_CHARS) return combined;
+  if (combined.length <= maxChars) return combined;
   const identityLen = Math.min(core.length, SMOLLM_GROVEE_IDENTITY.length + 80);
   const head = core.slice(0, identityLen).trim();
-  const tailRoom = LOCAL_TEXT_MAX_SYSTEM_CHARS - head.length - 1;
-  return tailRoom > 0 ? `${head.slice(0, tailRoom)}…` : head.slice(0, LOCAL_TEXT_MAX_SYSTEM_CHARS - 1) + "…";
+  const tailRoom = maxChars - head.length - 1;
+  return tailRoom > 0 ? `${head.slice(0, tailRoom)}…` : head.slice(0, maxChars - 1) + "…";
 }
 
 export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string {
@@ -87,11 +103,8 @@ export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string
       "Live search returned no usable data. Say briefly that live fetch failed. Do not invent facts.",
     );
   } else if (prelude.conversationalTurn && !searchHadLiveData) {
-    appendBlocks.push(
-      uiLang === "he"
-        ? "ענה בשיחה חופשית וקצרה — זו שאלת דעה/יצירתיות, לא בקשת מידע חי."
-        : "Reply conversationally and briefly — opinion or creative chat, not a live-data lookup.",
-    );
+    appendBlocks.push(LOCAL_TEXT_CONVERSATION_APPEND);
+    appendBlocks.push(LOCAL_TEXT_HISTORY_AWARE_APPEND);
   }
 
   if (prelude.gameNoResults) {
@@ -113,6 +126,9 @@ export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string
   const memoryBlock = formatSessionMemoryForPrompt(input.sessionMemoryFacts ?? []);
   if (memoryBlock) appendBlocks.push(memoryBlock);
 
+  const summaryBlock = formatSessionSummaryForPrompt(input.sessionSummary ?? "");
+  if (summaryBlock) appendBlocks.push(summaryBlock);
+
   if (input.userName?.trim()) {
     appendBlocks.push(`User name: ${input.userName.trim()}. Use naturally when appropriate.`);
   }
@@ -133,7 +149,11 @@ export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string
     );
   }
 
-  return trimLocalTextSystemPrompt(baseSystem, appendBlocks);
+  return trimLocalTextSystemPrompt(
+    baseSystem,
+    appendBlocks,
+    input.systemMaxChars ?? LOCAL_TEXT_MAX_SYSTEM_CHARS,
+  );
 }
 
 export function localTextMaxNewTokens(

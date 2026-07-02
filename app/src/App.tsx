@@ -244,14 +244,23 @@ import {
   localTextToUiLanguage,
   prepareLocalTextTurnForModel,
   buildLocalTextHistoryForModel,
-  LOCAL_TEXT_CONTEXT_BUDGET_CHARS,
 } from "./modelRack/localTextTranslate";
+import {
+  localTextProfileForHfModelId,
+  localTextProfileForRackId,
+  localTextSettingsForProfile,
+  resolveHistoryCharBudget,
+} from "./modelRack/localTextModelProfiles";
 import { resolveEarlyTurnRouting } from "./chatRoutePrelude";
 import {
   answerSessionMemoryRecall,
   collectSessionMemoryFacts,
   memoryPinnedSourceIndices,
 } from "./chatSessionMemory";
+import {
+  shouldRefreshSessionSummary,
+  updateRollingSessionSummary,
+} from "./chatSessionSummary";
 import {
   downloadLocalTextModel,
   generateLocalTextChat,
@@ -564,6 +573,9 @@ type ChatSession = {
   title: string;
   updatedAt: number;
   messages: ChatMessage[];
+  /** Compressed older turns — injected into local-text system prompt. */
+  sessionSummary?: string;
+  summaryTurnsSinceUpdate?: number;
 };
 
 type ChatSessionsState = { activeId: string; sessions: ChatSession[] };
@@ -709,10 +721,18 @@ const loadChatSessionsState = (): ChatSessionsState => {
         title: typeof s.title === "string" ? s.title : "שיחה",
         updatedAt: typeof s.updatedAt === "number" ? s.updatedAt : Date.now(),
         messages: Array.isArray(s.messages) ? s.messages : [],
+        sessionSummary: typeof s.sessionSummary === "string" ? s.sessionSummary : undefined,
+        summaryTurnsSinceUpdate:
+          typeof s.summaryTurnsSinceUpdate === "number" ? s.summaryTurnsSinceUpdate : undefined,
       }))
       .filter((s) => s.messages.length > 0)
       .sort((a, b) => b.updatedAt - a.updatedAt);
-    return { activeId: freshId, sessions: [freshSession, ...history] };
+    const restoredActiveId =
+      typeof parsed.activeId === "string" &&
+      (parsed.activeId === freshId || history.some((s) => s.id === parsed.activeId))
+        ? parsed.activeId
+        : freshId;
+    return { activeId: restoredActiveId, sessions: [freshSession, ...history] };
   } catch {
     return { activeId: freshId, sessions: [freshSession] };
   }
@@ -1268,7 +1288,7 @@ function SettingsModal({
               <input
                 type="number"
                 min={2}
-                max={24}
+                max={48}
                 value={draft.localText.historyTurns}
                 onChange={(e) =>
                   setDraft((d) => ({
@@ -2058,7 +2078,9 @@ function App() {
     setChatSessionsState((st) => ({
       ...st,
       sessions: st.sessions.map((s) =>
-        s.id === st.activeId ? { ...s, messages: [], updatedAt: Date.now() } : s,
+        s.id === st.activeId
+          ? { ...s, messages: [], sessionSummary: undefined, summaryTurnsSinceUpdate: 0, updatedAt: Date.now() }
+          : s,
       ),
     }));
   }, []);
@@ -2227,16 +2249,19 @@ function App() {
     const usesLocalTextCtx = isLocalTextChatModel(activeRack) && !cameraMode;
 
     if (usesLocalTextCtx) {
-      const systemChars = measuredLocalSystemCharsRef.current || 900;
+      const profile =
+        localTextProfileForRackId(activeRack.id) ??
+        localTextProfileForHfModelId(activeRack.hfModelId ?? "");
+      const systemChars = measuredLocalSystemCharsRef.current || profile.systemMaxChars;
       const historyChars = measuredLocalHistoryCharsRef.current;
       const draftChars = prompt.trim().length;
       const used = systemChars + historyChars + draftChars;
-      const total = LOCAL_TEXT_CONTEXT_BUDGET_CHARS;
+      const total = profile.contextBudgetChars;
       return {
         percent: Math.max(0, Math.min(100, Math.round((1 - used / total) * 100))),
         usedChars: used,
         totalBudget: total,
-        profileLabel: "SmolLM2",
+        profileLabel: profile.label,
         breakdown: {
           history: historyChars,
           web: 0,
@@ -3522,50 +3547,72 @@ function App() {
         persistCameraMemory();
       } else {
         const userDraft = pendingUserModelDraftRef.current.trim() || undefined;
-        setMessages((prev) => {
-          let base = prev;
-          if (userDraft) {
-            const next = [...prev];
-            for (let i = next.length - 1; i >= 0; i--) {
-              if (next[i].role === "user") {
-                next[i] = { ...next[i], userModelDraft: userDraft };
-                break;
+        setChatSessionsState((st) => ({
+          ...st,
+          sessions: st.sessions.map((s) => {
+            if (s.id !== st.activeId) return s;
+            let base = s.messages;
+            if (userDraft) {
+              const withDraft = [...base];
+              for (let i = withDraft.length - 1; i >= 0; i--) {
+                if (withDraft[i].role === "user") {
+                  withDraft[i] = { ...withDraft[i], userModelDraft: userDraft };
+                  break;
+                }
+              }
+              base = withDraft;
+            }
+            const lastUser = [...base].reverse().find((m) => m.role === "user");
+            if (lastUser && isImageDescribeRequest(lastUser.content)) {
+              const subject = extractImageDescribeSubject(lastUser.content);
+              if (subject) {
+                pendingImagePromptRef.current = subject;
+              } else if (finalContent.trim()) {
+                pendingImagePromptRef.current = finalContent.trim();
               }
             }
-            base = next;
-          }
-          const lastUser = [...base].reverse().find((m) => m.role === "user");
-          if (lastUser && isImageDescribeRequest(lastUser.content)) {
-            const subject = extractImageDescribeSubject(lastUser.content);
-            if (subject) {
-              pendingImagePromptRef.current = subject;
-            } else if (finalContent.trim()) {
-              pendingImagePromptRef.current = finalContent.trim();
+            const nextMessages: ChatMessage[] = [
+              ...base,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: finalContent,
+                artifact: artifact ?? undefined,
+                thought,
+                visionContext,
+                modelDraft,
+                searchSources: weatherWidget || timeWidget ? undefined : searchMeta?.sources,
+                searchSummary: weatherWidget || timeWidget ? undefined : searchMeta?.summary,
+                timeWidget,
+                weatherWidget,
+                showGameCategories,
+                gameBrowseCategory,
+                gameResults: inlineGames,
+                liveMediaInline,
+                generatedImage,
+                modelLabel: "HAL",
+              },
+            ];
+            const chatCount = nextMessages.filter(
+              (m) => m.role === "user" || m.role === "assistant",
+            ).length;
+            const turnsSince = (s.summaryTurnsSinceUpdate ?? 0) + 1;
+            let sessionSummary = s.sessionSummary;
+            let summaryTurnsSinceUpdate = turnsSince;
+            if (shouldRefreshSessionSummary(chatCount, turnsSince)) {
+              sessionSummary = updateRollingSessionSummary(s.sessionSummary ?? "", nextMessages);
+              summaryTurnsSinceUpdate = 0;
             }
-          }
-          return [
-            ...base,
-            {
-              id: crypto.randomUUID(),
-              role: "assistant",
-              content: finalContent,
-              artifact: artifact ?? undefined,
-              thought,
-              visionContext,
-              modelDraft,
-              searchSources: weatherWidget || timeWidget ? undefined : searchMeta?.sources,
-              searchSummary: weatherWidget || timeWidget ? undefined : searchMeta?.summary,
-              timeWidget,
-              weatherWidget,
-              showGameCategories,
-              gameBrowseCategory,
-              gameResults: inlineGames,
-              liveMediaInline,
-              generatedImage,
-              modelLabel: "HAL",
-            },
-          ];
-        });
+            return {
+              ...s,
+              messages: nextMessages,
+              sessionSummary,
+              summaryTurnsSinceUpdate,
+              updatedAt: Date.now(),
+              title: sessionTitleFromMessages(nextMessages),
+            };
+          }),
+        }));
       }
 
       if (artifact && !generationChatOnlyDocumentRef.current) {
@@ -5883,10 +5930,15 @@ function App() {
       const statusSuffix = `${preludeCtx.searchHint}${preludeCtx.gameSearchHint}`;
       setStatus(`שיחה עם ${model.label}…${statusSuffix}`);
 
-      const lt = appSettingsRef.current.localText;
+      const ltBase = appSettingsRef.current.localText;
+      const textProfile =
+        localTextProfileForRackId(model.id) ??
+        localTextProfileForHfModelId(model.hfModelId ?? "");
+      const lt = localTextSettingsForProfile(textProfile, ltBase);
       const chatHistoryRows = priorChatMessages
         .map((m, sourceIndex) => ({ m, sourceIndex }))
         .filter(({ m }) => m.role === "user" || m.role === "assistant");
+      const sessionIndices = chatHistoryRows.map((row) => row.sourceIndex);
       const historyPayload = chatHistoryRows.map(({ m }) => ({
         role: m.role,
         content: m.content,
@@ -5894,11 +5946,16 @@ function App() {
         userModelDraft: m.userModelDraft,
       }));
       const pinnedSourceIndices = memoryPinnedSourceIndices(historyPayload);
+      const historyCharBudget = resolveHistoryCharBudget(textProfile);
       const { entries: historyEntries, sourceIndices: historySourceIndices } =
         buildLocalTextHistoryForModel(historyPayload, {
           maxMessageSlots: lt.historyTurns,
+          maxChars: historyCharBudget,
           pinnedSourceIndices,
         });
+
+      const sessionSummary =
+        chatSessionsState.sessions.find((s) => s.id === chatSessionsState.activeId)?.sessionSummary ?? "";
 
       const baseSystem = buildLocalTextSystemPrompt({
         uiLang,
@@ -5908,8 +5965,10 @@ function App() {
         webContext: preludeCtx.webContext,
         settings: lt,
         sessionMemoryFacts,
+        sessionSummary,
         documentContext: opts?.documentContext,
         userName: cameraStoreRef.current.profile.name,
+        systemMaxChars: textProfile.systemMaxChars,
       });
 
       if (bridgeHe) setStatus("מתרגם מעברית לאנגלית…");
@@ -5931,12 +5990,14 @@ function App() {
             if (s.id !== st.activeId) return s;
             const msgs = [...s.messages];
             for (const upd of prepared.historyDraftUpdates) {
-              const idx = historySourceIndices[upd.index];
-              if (idx == null || idx < 0 || idx >= msgs.length) continue;
-              msgs[idx] = {
-                ...msgs[idx],
-                userModelDraft: upd.userModelDraft ?? msgs[idx].userModelDraft,
-                modelDraft: upd.modelDraft ?? msgs[idx].modelDraft,
+              const payloadIdx = historySourceIndices[upd.index];
+              if (payloadIdx == null) continue;
+              const sessionIdx = sessionIndices[payloadIdx];
+              if (sessionIdx == null || sessionIdx < 0 || sessionIdx >= msgs.length) continue;
+              msgs[sessionIdx] = {
+                ...msgs[sessionIdx],
+                userModelDraft: upd.userModelDraft ?? msgs[sessionIdx].userModelDraft,
+                modelDraft: upd.modelDraft ?? msgs[sessionIdx].modelDraft,
               };
             }
             return { ...s, messages: msgs, updatedAt: Date.now() };
@@ -5948,6 +6009,9 @@ function App() {
       measuredLocalHistoryCharsRef.current = prepared.history.reduce(
         (sum, t) => sum + t.content.length + 64,
         0,
+      );
+      console.info(
+        `[local-text] history ${prepared.history.length} msgs · ${measuredLocalHistoryCharsRef.current} chars · budget ${historyCharBudget}`,
       );
       setContextRefreshKey((k) => k + 1);
       setStatus(`שיחה עם ${model.label}…${statusSuffix}`);

@@ -14,7 +14,7 @@ describe("localTextModelSettings", () => {
   });
 
   it("clamps history turns", () => {
-    expect(mergeLocalTextSettings({ historyTurns: 99 }).historyTurns).toBe(24);
+    expect(mergeLocalTextSettings({ historyTurns: 99 }).historyTurns).toBe(48);
     expect(mergeLocalTextSettings({ historyTurns: 0 }).historyTurns).toBe(2);
   });
 

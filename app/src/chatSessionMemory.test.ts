@@ -26,6 +26,17 @@ describe("chatSessionMemory", () => {
     expect(facts).toEqual(["העיר האהובה עליי היא פריז"]);
   });
 
+  it("collects personal venting as session facts", () => {
+    const facts = collectSessionMemoryFacts([
+      { role: "user", content: "איחרתי לעבודה היום הבוס כועס עלי" },
+      { role: "assistant", content: "מצטער לשמוע." },
+      { role: "user", content: "נתקע לי הרכב" },
+    ]);
+    expect(facts.length).toBe(2);
+    expect(facts[0]).toContain("איחרתי");
+    expect(facts[1]).toContain("נתקע");
+  });
+
   it("extracts city from Hebrew fact", () => {
     expect(extractCityFromMemoryFact("העיר האהובה עליי היא פריז")).toBe("פריז");
   });
@@ -47,5 +58,14 @@ describe("chatSessionMemory", () => {
       { role: "assistant", content: "בסדר" },
     ];
     expect(memoryPinnedSourceIndices(entries)).toEqual([2, 3]);
+  });
+
+  it("pins personal venting turns", () => {
+    const entries = [
+      { role: "user", content: "איחרתי לעבודה הבוס כועס" },
+      { role: "assistant", content: "מצטער." },
+      { role: "user", content: "מה השעה?" },
+    ];
+    expect(memoryPinnedSourceIndices(entries)).toEqual([0, 1]);
   });
 });

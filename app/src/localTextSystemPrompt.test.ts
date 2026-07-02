@@ -68,7 +68,8 @@ describe("localTextSystemPrompt", () => {
       startupContext: null,
       webContext: "",
     });
-    expect(prompt).toContain("שיחה חופשית");
+    expect(prompt).toContain("CONVERSATION MODE");
+    expect(prompt).toContain("prior messages");
     expect(prompt).not.toContain("Do not invent facts");
   });
 

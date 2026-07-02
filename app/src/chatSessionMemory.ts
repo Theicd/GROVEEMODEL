@@ -3,6 +3,7 @@
  * SmolLM often loses mid-chat facts; we extract, pin, inject, and recall deterministically.
  */
 
+import { isPersonalOrEmotionalSharing } from "./chatIntents";
 import type { UiLang } from "./chatRoutePrelude";
 
 const MEMORY_SAVE_RE =
@@ -20,6 +21,15 @@ export function extractMemoryFactFromSave(text: string): string | null {
   return m?.[1]?.trim().replace(/\s+/g, " ") || null;
 }
 
+/** Personal venting / life context (not explicit "remember:") — pin for long chats. */
+export function extractPersonalContextFact(text: string): string | null {
+  const t = text.trim().replace(/\s+/g, " ");
+  if (!t || t.length > 280) return null;
+  if (isUserMemorySaveRequest(t)) return null;
+  if (!isPersonalOrEmotionalSharing(t)) return null;
+  return t;
+}
+
 export function isUserMemoryRecallQuery(text: string): boolean {
   const t = text.trim();
   if (!t || t.length > 160) return false;
@@ -32,8 +42,10 @@ export function collectSessionMemoryFacts(
   const facts: string[] = [];
   for (const m of messages) {
     if (m.role !== "user") continue;
-    const fact = extractMemoryFactFromSave(m.content);
-    if (fact && !facts.includes(fact)) facts.push(fact);
+    const explicit = extractMemoryFactFromSave(m.content);
+    if (explicit && !facts.includes(explicit)) facts.push(explicit);
+    const personal = extractPersonalContextFact(m.content);
+    if (personal && !facts.includes(personal)) facts.push(personal);
   }
   return facts;
 }
@@ -43,7 +55,11 @@ export function memoryPinnedSourceIndices(
 ): number[] {
   const pinned = new Set<number>();
   for (let i = 0; i < entries.length; i++) {
-    if (entries[i].role !== "user" || !isUserMemorySaveRequest(entries[i].content)) continue;
+    if (entries[i].role !== "user") continue;
+    const shouldPin =
+      isUserMemorySaveRequest(entries[i].content) ||
+      !!extractPersonalContextFact(entries[i].content);
+    if (!shouldPin) continue;
     pinned.add(i);
     if (entries[i + 1]?.role === "assistant") pinned.add(i + 1);
   }
@@ -70,7 +86,7 @@ export function extractCityFromMemoryFact(fact: string): string | null {
 export function formatSessionMemoryForPrompt(facts: string[]): string {
   if (!facts.length) return "";
   const lines = facts.map((f) => `- ${f}`).join("\n");
-  return `User facts from this chat (trust these over older chitchat):\n${lines}\nWhen asked about user preferences, use ONLY these facts.`;
+  return `User facts from this chat (trust these over older chitchat):\n${lines}\nRead prior messages too — these facts summarize what matters. Answer follow-ups using this context.`;
 }
 
 export function answerSessionMemoryRecall(

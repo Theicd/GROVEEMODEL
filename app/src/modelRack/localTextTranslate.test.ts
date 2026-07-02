@@ -8,6 +8,7 @@ vi.mock("../groveeNews/engine/translate/googleTranslate", () => ({
 
 import {
   buildLocalTextHistoryForModel,
+  groupHistoryRowsIntoBlocks,
   localTextToModelLanguage,
   localTextToUiLanguage,
   needsLocalTextTranslationBridge,
@@ -51,8 +52,7 @@ describe("localTextTranslate", () => {
   it("prepareLocalTextTurnForModel batches history translation", async () => {
     translateTextsMock
       .mockResolvedValueOnce({ texts: ["Hi"], provider: "cache" })
-      .mockResolvedValueOnce({ texts: ["Hello"], provider: "cache" })
-      .mockResolvedValueOnce({ texts: ["Hey"], provider: "cache" });
+      .mockResolvedValueOnce({ texts: ["Hello", "Hey"], provider: "cache" });
 
     const prepared = await prepareLocalTextTurnForModel(
       "מה שלומך?",
@@ -67,6 +67,7 @@ describe("localTextTranslate", () => {
     expect(prepared.history[0].content).toBe("Hello");
     expect(prepared.history[1].content).toBe("Hey");
     expect(prepared.systemPrompt).toContain("GROVEE");
+    expect(translateTextsMock).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to original text when translate fails", async () => {
@@ -109,5 +110,33 @@ describe("localTextTranslate", () => {
       pinnedSourceIndices: [0, 1],
     });
     expect(picked.some((e) => /paris/i.test(e.content))).toBe(true);
+  });
+
+  it("groupHistoryRowsIntoBlocks keeps user+assistant pairs", () => {
+    const rows = [
+      { entry: { role: "user" as const, content: "a" }, sourceIndex: 0, cost: 10, pinned: false },
+      { entry: { role: "assistant" as const, content: "b" }, sourceIndex: 1, cost: 10, pinned: false },
+      { entry: { role: "user" as const, content: "c" }, sourceIndex: 2, cost: 10, pinned: false },
+    ];
+    const blocks = groupHistoryRowsIntoBlocks(rows);
+    expect(blocks.length).toBe(2);
+    expect(blocks[0].length).toBe(2);
+    expect(blocks[1].length).toBe(1);
+  });
+
+  it("pins personal venting turns mid-chat", () => {
+    const entries = Array.from({ length: 8 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as const,
+      content: `msg-${i}`,
+    }));
+    entries[2] = { role: "user", content: "איחרתי לעבודה הבוס כועס" };
+    entries[3] = { role: "assistant", content: "מצטער." };
+    const pinned = [2, 3];
+    const { entries: picked, sourceIndices } = buildLocalTextHistoryForModel(entries, {
+      maxMessageSlots: 4,
+      pinnedSourceIndices: pinned,
+    });
+    expect(sourceIndices).toContain(2);
+    expect(picked.some((e) => /איחרתי/.test(e.content))).toBe(true);
   });
 });

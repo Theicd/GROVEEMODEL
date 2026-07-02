@@ -48,7 +48,7 @@ export function mergeLocalTextSettings(
       merged.inferenceBackend === "auto"
         ? merged.inferenceBackend
         : "auto",
-    historyTurns: clampInt(historyTurnsRaw, 2, 24, DEFAULT_LOCAL_TEXT_SETTINGS.historyTurns),
+    historyTurns: clampInt(historyTurnsRaw, 2, 48, DEFAULT_LOCAL_TEXT_SETTINGS.historyTurns),
     webBriefChars: clampInt(merged.webBriefChars, 200, 2000, DEFAULT_LOCAL_TEXT_SETTINGS.webBriefChars),
     maxNewTokens: clampInt(merged.maxNewTokens, 32, 1024, DEFAULT_LOCAL_TEXT_SETTINGS.maxNewTokens),
     maxNewTokensSearch: clampInt(

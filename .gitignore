@@ -32,6 +32,12 @@ _*.txt
 _*.json
 _readlines.js
 
+# Local Hunyuan ONNX export experiments (multi-GB)
+tools/hunyuan-onnx-out/
+tools/hunyuan-onnx-out2/
+tools/hunyuan-onnx-optimum/
+tools/hunyuan-onnx-publish/
+
 # Legacy image-gen (removed from GROVEE app; keep out of repo)
 app/src/cloudImage.ts
 app/src/cloudImage.test.ts
