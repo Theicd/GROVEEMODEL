@@ -10,6 +10,8 @@ import {
 import { SMOLLM_GROVEE_IDENTITY } from "./modelRack/localTextTranslate";
 import type { ChatUiLanguage } from "./ui/useUiLanguage";
 import type { StartupContext } from "./startupContext";
+import { personalityBlockForSmolLM } from "./personalityProfile";
+import { imageDescribeSystemAppend } from "./imageGen/imageDescribeHint";
 
 /** Small SmolLM models collapse on long Gemma-style system blocks — keep this tiny. */
 export const LOCAL_TEXT_MAX_SYSTEM_CHARS = 900;
@@ -34,6 +36,8 @@ export type LocalTextContextInput = {
   sessionMemoryFacts?: string[];
   triviaMode?: boolean;
   triviaQuestionCount?: number;
+  documentContext?: string;
+  userName?: string;
 };
 
 /** Trim append blocks first; never truncate GROVEE identity core. */
@@ -102,6 +106,20 @@ export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string
 
   const memoryBlock = formatSessionMemoryForPrompt(input.sessionMemoryFacts ?? []);
   if (memoryBlock) appendBlocks.push(memoryBlock);
+
+  if (input.userName?.trim()) {
+    appendBlocks.push(`User name: ${input.userName.trim()}. Use naturally when appropriate.`);
+  }
+
+  if (input.documentContext?.trim()) {
+    appendBlocks.push(input.documentContext.trim().slice(0, 520));
+  }
+
+  if (prelude.imageDescribeMode) {
+    appendBlocks.push(imageDescribeSystemAppend(uiLang));
+  }
+
+  appendBlocks.push(personalityBlockForSmolLM(uiLang));
 
   if (input.triviaMode) {
     appendBlocks.push(

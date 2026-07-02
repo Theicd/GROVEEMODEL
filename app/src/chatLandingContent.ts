@@ -80,6 +80,8 @@ export const LANDING_CAPABILITY_CHIPS: LandingSuggestion[] = [
   { icon: "🧩", label: "הצע פתרון לבעיה", prompt: "הצע לי פתרון קוד לבעיה שאתאר", category: "code" },
 
   // תמונות וקבצים
+  { icon: "🎨", label: "תאר וצור תמונה", prompt: "תאר לי נוסח חייזר ירוק על מאדים", category: "image" },
+  { icon: "🖼️", label: "צור תמונה מהתיאור", prompt: "צור מזה תמונה", category: "image" },
   { icon: "🖼️", label: "נתח תמונה שצירפתי", prompt: "נתח את התמונה שצירפתי ותאר מה רואים בה", category: "image" },
   { icon: "📄", label: "סכם קובץ שצירפתי", prompt: "סכם לי את הקובץ שצירפתי לשיחה", category: "image" },
   { icon: "🔍", label: "מצא פרטים בתמונה", prompt: "מצא פרטים חשובים בתמונה שצירפתי", category: "image" },

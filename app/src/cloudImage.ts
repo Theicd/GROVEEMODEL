@@ -61,7 +61,7 @@ export function buildPollinationsUrl(options: BuildPollinationsUrlOptions): stri
   const prompt = (options.prompt ?? "").trim();
   if (!prompt) throw new Error("buildPollinationsUrl: prompt is required");
 
-  const model = (options.model ?? "").trim() || DEFAULT_MODEL;
+  const model = normalizePollinationsModel((options.model ?? "").trim() || undefined);
   const width = Number.isFinite(options.width) && (options.width as number) > 0 ? Math.floor(options.width as number) : DEFAULT_WIDTH;
   const height = Number.isFinite(options.height) && (options.height as number) > 0 ? Math.floor(options.height as number) : DEFAULT_HEIGHT;
   const noLogo = options.noLogo === false ? false : true;

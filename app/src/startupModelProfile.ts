@@ -1,5 +1,13 @@
-/** SmolLM2 135M Instruct ONNX q4 — approximate browser download size. */
-export const SMOLLM_ESTIMATED_BYTES = 175_000_000;
+import {
+  SMOLLM_135M_RACK_ID,
+  SMOLLM_RACK_ID,
+} from "./modelRack/localTextModels";
+
+/** SmolLM2 360M Instruct ONNX q4 — approximate browser download size. */
+export const SMOLLM_ESTIMATED_BYTES = 220_000_000;
+
+/** SmolLM2 135M — lighter fallback. */
+export const SMOLLM_135M_ESTIMATED_BYTES = 175_000_000;
 
 export type StartupModelChoice = "gemma" | "local-text";
 
@@ -174,6 +182,28 @@ export async function resolveStartupModelChoice(
   return recommendStartupModel(signals);
 }
 
-export function startupChoiceLabelHe(choice: StartupModelChoice): string {
-  return choice === "local-text" ? "SmolLM2 360M" : "Gemma 4 E2B";
+/** Pick 135M on low memory; 360M otherwise for local-text boot. */
+export function recommendLocalTextRackId(signals: StartupDeviceSignals): string {
+  const lowMem = signals.deviceMemoryGb != null && signals.deviceMemoryGb <= 4;
+  if (lowMem) return SMOLLM_135M_RACK_ID;
+  if (signals.isMobile && signals.deviceMemoryGb != null && signals.deviceMemoryGb <= 6) {
+    return SMOLLM_135M_RACK_ID;
+  }
+  return SMOLLM_RACK_ID;
+}
+
+export function localTextRackLabelHe(rackId: string): string {
+  if (rackId === SMOLLM_135M_RACK_ID) return "SmolLM2 135M";
+  if (rackId === SMOLLM_RACK_ID) return "SmolLM2 360M";
+  return "SmolLM2";
+}
+
+export function startupChoiceLabelHe(
+  choice: StartupModelChoice,
+  localTextRackId?: string,
+): string {
+  if (choice === "local-text") {
+    return localTextRackId ? localTextRackLabelHe(localTextRackId) : "SmolLM2 360M";
+  }
+  return "Gemma 4 E2B";
 }

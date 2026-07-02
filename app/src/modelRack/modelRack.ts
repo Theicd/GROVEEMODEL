@@ -63,11 +63,20 @@ import { pollinationsDisplayName } from "./modelRackDisplay";
 import {
   applyLocalTextDownloadStates,
   getDownloadableTextBuiltins,
+  isChatPickerRackEntry,
   isPickerRackEntry,
   isSelectableInPicker,
 } from "./localTextModels";
 
-export { SMOLLM_RACK_ID, SMOLLM_HF_MODEL_ID, SMOLLM_CHAT_SYSTEM } from "./localTextModels";
+export {
+  SMOLLM_RACK_ID,
+  SMOLLM_HF_MODEL_ID,
+  SMOLLM_135M_RACK_ID,
+  SMOLLM_135M_HF_MODEL_ID,
+  SMOLLM_CHAT_SYSTEM,
+  hfModelIdForLocalTextRack,
+  isLocalTextRackId,
+} from "./localTextModels";
 
 const CORE_POLLINATIONS = ["flux", "turbo", "sdxl"] as const;
 
@@ -146,7 +155,7 @@ export function pickerRackModels(rack: RackModelEntry[]): RackModelEntry[] {
   return rack.filter(isPickerRackEntry);
 }
 
-export { isSelectableInPicker } from "./localTextModels";
+export { isChatPickerRackEntry, isSelectableInPicker } from "./localTextModels";
 
 export function summarizeRackCounts(rack: RackModelEntry[]): RackCountSummary {
   const pickable = pickableRackModels(rack);
@@ -265,14 +274,29 @@ export function upsertFreeRackModel(entry: RackModelEntry): RackModelEntry[] {
   return [...current, entry];
 }
 
-export function getSelectedModelId(): string {
-  const rack = loadModelRack();
+export function isChatRackEntry(entry: RackModelEntry): boolean {
+  return (
+    entry.modality === "text" &&
+    (entry.adapter === "gemma-local" || entry.adapter === "hf-local-text")
+  );
+}
+
+/** Header picker: chat models only (image gen is in-chat via settings). */
+export function resolveChatModelRackId(rack?: RackModelEntry[]): string {
+  const r = rack ?? loadModelRack();
   const stored = readStorage<string>(SELECTED_MODEL_STORAGE_KEY);
   if (stored) {
-    const entry = rack.find((r) => r.id === stored);
-    if (entry && isSelectableInPicker(entry)) return stored;
+    const entry = r.find((x) => x.id === stored);
+    if (entry && isChatRackEntry(entry) && isSelectableInPicker(entry)) return stored;
   }
-  return GEMMA_RACK_ID;
+  const gemma = r.find((x) => x.id === GEMMA_RACK_ID);
+  if (gemma) return GEMMA_RACK_ID;
+  const smolReady = r.find((x) => x.adapter === "hf-local-text" && x.status === "ready");
+  return smolReady?.id ?? GEMMA_RACK_ID;
+}
+
+export function getSelectedModelId(): string {
+  return resolveChatModelRackId();
 }
 
 export function setSelectedModelId(id: string): void {

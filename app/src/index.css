@@ -7858,6 +7858,33 @@ button:disabled {
   background: rgba(34, 197, 94, 0.06);
 }
 
+.generated-image-block {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(236, 72, 153, 0.28);
+  border-radius: 10px;
+  background: rgba(236, 72, 153, 0.06);
+}
+
+.generated-image-block__img {
+  display: block;
+  width: 100%;
+  max-width: 512px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.generated-image-block__caption {
+  font-size: 0.8rem;
+  color: #f9a8d4;
+  margin: 0 0 6px;
+}
+
+.generated-image-block__link {
+  font-size: 0.78rem;
+  color: #f472b6;
+}
+
 .inline-live-media-head {
   display: flex;
   justify-content: space-between;

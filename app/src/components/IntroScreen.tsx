@@ -131,7 +131,8 @@ export function IntroScreen({
   const modelLabel = startupChoiceLabelHe(startupTarget);
   const estimatedBytes =
     startupTarget === "local-text" ? SMOLLM_ESTIMATED_BYTES : GEMMA_ESTIMATED_BYTES;
-  const landingSubtitle = startupTarget === "local-text" ? "SMOLLM2 360M" : "GEMMA 4 E2B";
+  const landingSubtitle =
+    startupTarget === "local-text" ? startupChoiceLabelHe("local-text") : "GEMMA 4 E2B";
 
   const dismissHint = useCallback((id: string) => {
     setDismissedHints((prev) => {

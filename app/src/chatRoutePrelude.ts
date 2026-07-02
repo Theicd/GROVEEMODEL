@@ -17,7 +17,7 @@ import {
   isShipsQuery,
   needsWebSearch,
 } from "./webSearch/intents";
-import { isLocalContextTimeQuery } from "./startupContext";
+import { isLocalContextTimeQuery, type StartupContext } from "./startupContext";
 import type { QaReplySource } from "./qaChatBridge";
 
 export type UiLang = "he" | "en";
@@ -66,7 +66,8 @@ export function buildGrooveCapabilitiesReply(uiLang: UiLang): string {
       "• מפת REALITY LIVE (Cesium) — הצגת מדינות וערים",
       "• משחקי ארקייד מהארכיון — כשמבקשים במפורש «משחק» או «play»",
       "• רדיו וטלוויזיה חיים, התרעות בזמן אמת",
-      "• יצירת תמונות — בחר מודל תמונה בבורר למעלה",
+      "• יצירת תמונות בשיחה — «תאר לי …» ואז «צור מזה תמונה»",
+      "• צירוף מסמכים ותמונות — חילוץ טקסט (OCR)",
       "",
       "נסה: «רעידות אדמה אחרונות», «כמה מטוסים מעל ישראל», «משחקי ארקייד משנות ה80».",
     ].join("\n");
@@ -79,7 +80,8 @@ export function buildGrooveCapabilitiesReply(uiLang: UiLang): string {
     "• REALITY LIVE map (Cesium) — countries and cities",
     "• Retro arcade games — when you explicitly ask to play or search games",
     "• Live radio/TV and real-time alerts",
-    "• Image generation — pick an image model in the rack",
+    "• Images in chat — «describe …» then «create an image from that»",
+    "• Attach documents/photos — text extraction (OCR)",
     "",
     "Try: “recent earthquakes”, “flights over Israel”, “80s arcade games”.",
   ].join("\n");

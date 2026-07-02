@@ -5,7 +5,7 @@
 
 import { isTriviaOrSocialGame } from "./gameSearch/gameIntents";
 import { extractTriviaQuestionCount } from "./trivia/triviaPrompt";
-import { isSimpleGreeting, isRtlText, type ChatTopic } from "./chatIntents";
+import { isSimpleGreeting, isRtlText, type ChatTopic, type ChatTurn } from "./chatIntents";
 import {
   buildLiveMediaInlineReply,
   filterUnifiedLiveMediaHits,
@@ -88,6 +88,13 @@ import {
 import { fetchLiveMediaSearch, isRadioMediaQuery } from "./webSearch/providers/liveMediaSearch";
 import type { SearchPlan } from "./webSearch/searchPlanner";
 import type { SearchBrief } from "./webSearch";
+import {
+  extractImageDescribeSubject,
+  isImageDescribeRequest,
+  isImageGenerateRequest,
+} from "./imageGen/imageIntent";
+import { tryInChatImageGeneration } from "./imageGen/inChatImageGen";
+import type { GeneratedImagePayload } from "./imageGen/imageIntent";
 
 export type PendingWebSearchMeta = {
   sources: SearchSourceResult[];
@@ -233,6 +240,9 @@ export type ChatTurnPreludeDeps = {
   pendingGameBrowseCategoryRef: { current: GameCategoryId | null };
   pendingInlineGamesRef: { current: OnlineGame[] | null };
   pendingInlineLiveMediaRef: { current: InlineLiveMediaPayload | null };
+  pendingImagePromptRef: { current: string | null };
+  pendingGeneratedImageRef: { current: GeneratedImagePayload | null };
+  preferredPollinationsModel: string;
   deliverCanned: (reply: string, webContext: string, replySource: string, activityTitle?: string) => void;
   onResetSession?: () => void;
 };
@@ -249,6 +259,7 @@ export type ChatTurnPreludeContinue = {
   greeting: boolean;
   triviaMode: boolean;
   triviaQuestionCount: number;
+  imageDescribeMode: boolean;
 };
 
 export type ChatTurnPreludeOutcome =
@@ -265,6 +276,7 @@ export async function runTextChatTurnPrelude(
   const uiLang: UiLang =
     input.uiLang ?? (isRtlText(trimmed || effectivePrompt) ? "he" : "en");
   const greeting = isSimpleGreeting(effectivePrompt);
+  const imageDescribeMode = isImageDescribeRequest(trimmed);
 
   const earlyRoute = resolveEarlyTurnRouting({
     text: trimmed,
@@ -285,9 +297,30 @@ export async function runTextChatTurnPrelude(
     return { action: "canned" };
   }
 
+  if (isImageGenerateRequest(trimmed)) {
+    const handled = await tryInChatImageGeneration({
+      trimmed,
+      priorTurns,
+      uiLang,
+      preferredPollinationsModel: deps.preferredPollinationsModel,
+      pendingImagePromptRef: deps.pendingImagePromptRef,
+      pendingGeneratedImageRef: deps.pendingGeneratedImageRef,
+      setStatus: deps.setStatus,
+      deliverCanned: deps.deliverCanned,
+    });
+    if (handled) return { action: "canned" };
+  }
+
   chatTopic = earlyRoute.chatTopic;
   let wantsGameSearch = earlyRoute.wantsGameSearch;
   let shouldRunWebSearch = earlyRoute.shouldRunWebSearch;
+
+  if (imageDescribeMode) {
+    wantsGameSearch = false;
+    shouldRunWebSearch = false;
+    const describeSubject = extractImageDescribeSubject(trimmed);
+    if (describeSubject) deps.pendingImagePromptRef.current = describeSubject;
+  }
 
   if (greeting) {
     wantsGameSearch = false;
@@ -896,6 +929,7 @@ export async function runTextChatTurnPrelude(
       greeting,
       triviaMode: isTriviaOrSocialGame(trimmed) || chatTopic === "trivia",
       triviaQuestionCount: extractTriviaQuestionCount(trimmed),
+      imageDescribeMode,
     },
   };
 }

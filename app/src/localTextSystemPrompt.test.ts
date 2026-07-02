@@ -13,6 +13,7 @@ const basePrelude: ChatTurnPreludeContinue = {
   shouldRunWebSearch: false,
   localTimeOnly: false,
   greeting: false,
+  imageDescribeMode: false,
 };
 
 describe("localTextSystemPrompt", () => {
@@ -33,7 +34,7 @@ describe("localTextSystemPrompt", () => {
     expect(prompt.length).toBeLessThanOrEqual(LOCAL_TEXT_MAX_SYSTEM_CHARS);
   });
 
-  it("includes GROVEE identity in he UI prompt", () => {
+  it("includes Groovie identity in he UI prompt", () => {
     const prompt = buildLocalTextSystemPrompt({
       uiLang: "he",
       prelude: { ...basePrelude, greeting: true },
@@ -41,7 +42,7 @@ describe("localTextSystemPrompt", () => {
       startupContext: null,
       webContext: "",
     });
-    expect(prompt).toContain("GROVEE");
+    expect(prompt).toContain("Groovie");
     expect(prompt).toContain("greeting");
     expect(prompt.length).toBeLessThanOrEqual(LOCAL_TEXT_MAX_SYSTEM_CHARS);
   });
@@ -55,7 +56,7 @@ describe("localTextSystemPrompt", () => {
       webContext: "",
     });
     expect(prompt).toContain("Tetris");
-    expect(prompt).toContain("side panel");
+    expect(prompt).toContain("inline in chat");
   });
 
   it("uses higher token budget on search turns from settings", () => {

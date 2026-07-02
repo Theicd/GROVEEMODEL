@@ -1,10 +1,7 @@
 /**
- * Official ONNX builds for browser (Instruct). Two sizes are offered:
- * - 360M is the default: noticeably more coherent conversation. With the WASM
- *   single-thread config, q8 preference and load watchdog now in place it loads on
- *   capable phones.
- * - 135M is kept as a lightweight fallback for weak/low-memory devices, selectable
- *   from the model picker.
+ * Official ONNX Instruct builds for browser.
+ * - 360M: default on capable devices (better coherence).
+ * - 135M: fallback for low memory (≤4GB) or weak mobile devices.
  */
 export const SMOLLM_HF_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
 export const SMOLLM_RACK_ID = `hf--${SMOLLM_HF_MODEL_ID.replace(/\//g, "--")}`;
@@ -40,6 +37,19 @@ const DOWNLOADABLE_TEXT_BUILTINS: RackModelEntry[] = [
     addedAt: 1,
   },
 ];
+
+const RACK_TO_HF = new Map(
+  DOWNLOADABLE_TEXT_BUILTINS.map((e) => [e.id, e.hfModelId ?? ""] as const),
+);
+
+export function hfModelIdForLocalTextRack(rackId: string): string | null {
+  const id = RACK_TO_HF.get(rackId);
+  return id || null;
+}
+
+export function isLocalTextRackId(rackId: string): boolean {
+  return RACK_TO_HF.has(rackId);
+}
 
 function readStorage<T>(key: string): T | null {
   if (typeof localStorage === "undefined") return null;
@@ -105,10 +115,15 @@ export function isSelectableInPicker(entry: RackModelEntry): boolean {
   return entry.status === "ready";
 }
 
-/** Entries shown in the header model picker (includes not-yet-downloaded local text). */
+/** Entries in the full model rack (chat + cloud image backends). */
 export function isPickerRackEntry(entry: RackModelEntry): boolean {
   if (entry.adapter === "gemma-local" || entry.adapter === "hf-local-text") return true;
   return entry.status === "ready";
+}
+
+/** Header chat picker — text chat models only. */
+export function isChatPickerRackEntry(entry: RackModelEntry): boolean {
+  return entry.modality === "text" && (entry.adapter === "gemma-local" || entry.adapter === "hf-local-text");
 }
 
 export const SMOLLM_CHAT_SYSTEM =

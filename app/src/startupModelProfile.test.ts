@@ -3,6 +3,7 @@ import {
   detectMobileDevice,
   quickStartupModelChoice,
   recommendStartupModel,
+  recommendLocalTextRackId,
   resolveLocalTextBootBackend,
   resolveStartupModelChoice,
   type StartupDeviceSignals,
@@ -84,5 +85,21 @@ describe("startupModelProfile", () => {
     vi.stubGlobal("window", { innerWidth: 412, matchMedia: () => ({ matches: true }) });
     expect(quickStartupModelChoice("auto")).toBe("local-text");
     expect(quickStartupModelChoice("gemma")).toBe("gemma");
+  });
+
+  it("recommendLocalTextRackId picks 135M on low memory", () => {
+    expect(
+      recommendLocalTextRackId(
+        weakSignals({ deviceMemoryGb: 3, isMobile: true }),
+      ),
+    ).toBe("hf--HuggingFaceTB--SmolLM2-135M-Instruct");
+  });
+
+  it("recommendLocalTextRackId picks 360M on capable device", () => {
+    expect(
+      recommendLocalTextRackId(
+        weakSignals({ deviceMemoryGb: 8, isMobile: false }),
+      ),
+    ).toBe("hf--HuggingFaceTB--SmolLM2-360M-Instruct");
   });
 });

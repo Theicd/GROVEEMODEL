@@ -131,7 +131,7 @@ Overall Vibe: professional, hardcore.`;
 });
 
 describe("gameReplyMessages", () => {
-  it("found reply mentions right panel", () => {
+  it("found reply mentions inline game cards", () => {
     const r = buildGameSearchFoundReply(12, {
       panelTitle: "משחקים און־ליין",
       category: "featured",
@@ -139,7 +139,7 @@ describe("gameReplyMessages", () => {
       query: "",
     });
     expect(r).toContain("12");
-    expect(r).toContain("ימין");
+    expect(r).toContain("כרטיס");
     expect(r).toContain("שחק");
   });
 

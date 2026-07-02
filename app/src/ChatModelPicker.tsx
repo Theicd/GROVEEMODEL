@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   GEMMA_RACK_ID,
   getRackModelById,
+  isChatPickerRackEntry,
   isSelectableInPicker,
   modalityIcon,
   pickerRackModels,
@@ -57,7 +58,7 @@ export function ChatModelPicker({
   downloadState,
   disabled,
 }: Props) {
-  const pickerItems = pickerRackModels(rack);
+  const pickerItems = pickerRackModels(rack).filter(isChatPickerRackEntry);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number; minWidth: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);

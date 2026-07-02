@@ -27,7 +27,7 @@ describe("localTextModelSettings", () => {
       ...DEFAULT_LOCAL_TEXT_SETTINGS,
       systemPrompt: "You are helpful.",
     });
-    expect(base).toContain("GROVEE");
-    expect(base).toContain("Do NOT activate games");
+    expect(base).toContain("Groovie");
+    expect(base).toContain("GROVEEMODEL");
   });
 });
