@@ -55,9 +55,29 @@ const isRecommendedBrowse = (text: string): boolean =>
 const NOT_ARCHIVE_GAME_RE =
   /משחק\s*(?:חשיבה|שחמט|כדורגל|מונופול|קלפים)|thinking\s+game|logic\s+game|riddle|חיד(?:ה|ות)|שחמט|chess\b|board\s+game(?!\s+search)/i;
 
+/** Trivia / word / party games → LLM Q&A, not Internet Archive arcade panel. */
+const TRIVIA_SOCIAL_GAME_RE =
+  /(?:טריוויה|חידון|שאלות\s+(?:ו|&)\s*תשובות|trivia|quiz|board\s+game|משחק\s+חבר(?:ה|ת)?|משחק\s+מילים|word\s+game)/i;
+
+const TRIVIA_INTERACTIVE_RE =
+  /(?:שאל(?:י|ו|ה)?|ask\s+(?:me\s+)?).*(?:(?:4|ארבע)\s+תשובות|multiple\s+choice|4\s+options)/i;
+
+export function isTriviaOrSocialGame(text: string): boolean {
+  const t = text.trim();
+  if (!t || isInlineTextTaskRequest(t)) return false;
+  if (TRIVIA_SOCIAL_GAME_RE.test(t)) return true;
+  if (TRIVIA_INTERACTIVE_RE.test(t)) return true;
+  if (/(?:4|ארבע)\s+תשובות.*(?:בחר|choose|pick|אני\s+בוחר)/i.test(t)) return true;
+  if (NOT_ARCHIVE_GAME_RE.test(t) && !/(?:חפש|מצא|ארכיון|archive|און\s*ליין|online\s+game)/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 export const isGameSearchRequest = (text: string): boolean => {
   const t = text.trim();
   if (!t || isInlineTextTaskRequest(t)) return false;
+  if (isTriviaOrSocialGame(t)) return false;
   if (
     NOT_ARCHIVE_GAME_RE.test(t) &&
     !/(?:חפש|מצא|ארכיון|archive|internet\s+archive|און\s*ליין|online\s+game|משחקים?\s*מ+?ו?לצ)/i.test(t)
@@ -129,7 +149,9 @@ export const extractGameQuery = (text: string): string => parseGameUserRequest(t
 
 export const shouldOpenGamePanel = (text: string, chatTopic: string): boolean => {
   if (isInlineTextTaskRequest(text)) return false;
+  if (isTriviaOrSocialGame(text)) return false;
   if (isGameSearchRequest(text)) return true;
+  if (isTriviaOrSocialGame(text)) return false;
   if (chatTopic !== "bored_play") return false;
   const intent = extractUserIntentPrefix(text);
   return (

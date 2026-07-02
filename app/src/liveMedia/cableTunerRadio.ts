@@ -33,11 +33,11 @@ function isPlayable(station: RadioStation): boolean {
 }
 
 /** Regional lineup: favorites first, then user's country, then global top quality. */
-export function buildRegionalRadioLineup(
+export function pickRegionalRadioStations(
   stations: RadioStation[],
   countryCode: string,
   limit = 24,
-): UnifiedSearchHit[] {
+): RadioStation[] {
   const playable = stations.filter(isPlayable);
   const favorites = playable
     .filter((s) => s.favorite)
@@ -72,7 +72,15 @@ export function buildRegionalRadioLineup(
     }
   }
 
-  return picked.map((r) => radioToSearchHit(r));
+  return picked;
+}
+
+export function buildRegionalRadioLineup(
+  stations: RadioStation[],
+  countryCode: string,
+  limit = 24,
+): UnifiedSearchHit[] {
+  return pickRegionalRadioStations(stations, countryCode, limit).map((r) => radioToSearchHit(r));
 }
 
 export function isRadioCablePage(pageIndex: number, tvTotal: number): boolean {

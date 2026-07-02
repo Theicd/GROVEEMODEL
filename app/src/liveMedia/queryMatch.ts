@@ -1,4 +1,5 @@
 import { LIVE_MEDIA_CATEGORIES } from "./catalogs";
+import { isRadioFrequencyQuery } from "./mediaIntent";
 
 const CHANNEL_HINTS =
   /(?:ערוץ|channel|now\s*\d+|כאן\s*\d+|ער\s*14|now14|ch\s*\d+|\b14\b|\b11\b|\b12\b|\b13\b)/i;
@@ -19,6 +20,7 @@ export function isChannelNameQuery(query: string): boolean {
 }
 
 export function extractChannelDigits(query: string): string | null {
+  if (isRadioFrequencyQuery(query)) return null;
   const m = query.match(/(?:now|כאן|ערוץ|channel)?\s*(\d{1,3})/i);
   return m?.[1] ?? null;
 }

@@ -18,6 +18,7 @@ import {
   isLikelyArtistQuery,
   shouldSearchYouTube,
   isLiveMediaQuery,
+  isMoviesQuery,
   shouldSearchLiveMedia,
   buildYouTubeSearchQuery,
 } from "./intents";
@@ -40,11 +41,13 @@ describe("webSearch intents", () => {
     expect(isLiveMediaQuery("רדיו גלגל צהוב")).toBe(true);
     expect(isLiveMediaQuery("tv live news")).toBe(true);
     expect(isLiveMediaQuery("ערוץ 14")).toBe(true);
+    expect(isLiveMediaQuery("103 FM")).toBe(true);
     expect(isLiveMediaQuery("קומדיה")).toBe(true);
     expect(isLiveMediaQuery("חדשות")).toBe(false);
     expect(classifySearchIntents("רוק")).toContain("livemedia");
     expect(classifySearchIntents("מוזיקה רוק")).toContain("youtube");
     expect(shouldSearchLiveMedia("comedy", true)).toBe(true);
+    expect(shouldSearchLiveMedia("movies", true)).toBe(true);
     expect(shouldSearchLiveMedia("comedy", false)).toBe(true);
     expect(shouldSearchLiveMedia("weather", false)).toBe(false);
     expect(shouldSearchLiveMedia("weather", true)).toBe(false);
@@ -101,6 +104,9 @@ describe("webSearch intents", () => {
     expect(isCasualConversation("hello")).toBe(true);
     expect(needsWebSearch("היי מה שלומך")).toBe(false);
     expect(needsWebSearch("שלום")).toBe(false);
+    expect(needsWebSearch("חפש ערוץ סרטים")).toBe(false);
+    expect(isMoviesQuery("חפש ערוץ סרטים")).toBe(false);
+    expect(classifySearchIntents("חפש ערוץ סרטים")).toEqual(["livemedia"]);
   });
 
   it("auto search only for live or explicit lookup — not static facts", () => {

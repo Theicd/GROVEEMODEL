@@ -3426,6 +3426,45 @@ body {
   overflow: auto;
 }
 
+.model-draft-block {
+  margin-bottom: 10px;
+  border: 1px solid #3d4a5c;
+  border-radius: 10px;
+  background: rgba(96, 165, 250, 0.06);
+  overflow: hidden;
+}
+
+.model-draft-block--live summary {
+  animation: vision-think-pulse 1.2s ease-in-out infinite;
+}
+
+.model-draft-block summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  color: #93c5fd;
+  user-select: none;
+  list-style: none;
+}
+
+.model-draft-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.model-draft-block-body {
+  margin: 0;
+  padding: 8px 12px 12px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid #2a3544;
+  max-height: 280px;
+  overflow: auto;
+  text-align: left;
+}
+
 .in-send {
   color: #9a9a9a;
   background: rgba(255, 255, 255, 0.16);
@@ -7809,6 +7848,38 @@ button:disabled {
   border: 1px solid rgba(99, 102, 241, 0.28);
   border-radius: 10px;
   background: rgba(99, 102, 241, 0.07);
+}
+
+.inline-live-media-strip {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.inline-live-media-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: #86efac;
+}
+
+.inline-live-sports-btn {
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
+  color: #bbf7d0;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.inline-live-sports-btn:hover {
+  background: rgba(34, 197, 94, 0.22);
 }
 
 .game-results-head {

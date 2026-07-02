@@ -42,6 +42,8 @@ describe("chatIntents", () => {
   it("simple greetings", () => {
     expect(isSimpleGreeting("היי")).toBe(true);
     expect(isSimpleGreeting("hello")).toBe(true);
+    expect(isSimpleGreeting("שלום גרובי")).toBe(true);
+    expect(isSimpleGreeting("hi groovie")).toBe(true);
     expect(isSimpleGreeting("צור תמונה")).toBe(false);
   });
 

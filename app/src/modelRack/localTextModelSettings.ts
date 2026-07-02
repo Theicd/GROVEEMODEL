@@ -1,7 +1,4 @@
-import {
-  SMOLLM_CHAT_SYSTEM_EN_UI,
-  SMOLLM_MODEL_SYSTEM_EN,
-} from "./localTextTranslate";
+import { SMOLLM_CHAT_SYSTEM_EN_UI, smollmCoreSystemPrompt } from "./localTextTranslate";
 
 export type LocalTextInferenceBackend = "auto" | "webgpu" | "wasm";
 
@@ -12,7 +9,7 @@ export type LocalTextModelSettings = {
   maxNewTokensSearch: number;
   maxNewTokensGreeting: number;
   topP: number;
-  /** How many prior chat turns to send to the model. */
+  /** Max chat messages sent to the model (first 2 pinned + recent tail). */
   historyTurns: number;
   /** Max characters of web-search context injected into the system prompt. */
   webBriefChars: number;
@@ -27,7 +24,7 @@ export const DEFAULT_LOCAL_TEXT_SETTINGS: LocalTextModelSettings = {
   maxNewTokensSearch: 280,
   maxNewTokensGreeting: 40,
   topP: 0.85,
-  historyTurns: 6,
+  historyTurns: 12,
   webBriefChars: 420,
   systemPrompt: SMOLLM_CHAT_SYSTEM_EN_UI,
 };
@@ -40,6 +37,8 @@ export function mergeLocalTextSettings(
     typeof merged.systemPrompt === "string" && merged.systemPrompt.trim()
       ? merged.systemPrompt.trim()
       : DEFAULT_LOCAL_TEXT_SETTINGS.systemPrompt;
+  const historyTurnsRaw =
+    merged.historyTurns === 6 ? DEFAULT_LOCAL_TEXT_SETTINGS.historyTurns : merged.historyTurns;
   return {
     ...merged,
     systemPrompt,
@@ -49,7 +48,7 @@ export function mergeLocalTextSettings(
       merged.inferenceBackend === "auto"
         ? merged.inferenceBackend
         : "auto",
-    historyTurns: clampInt(merged.historyTurns, 2, 24, DEFAULT_LOCAL_TEXT_SETTINGS.historyTurns),
+    historyTurns: clampInt(historyTurnsRaw, 2, 24, DEFAULT_LOCAL_TEXT_SETTINGS.historyTurns),
     webBriefChars: clampInt(merged.webBriefChars, 200, 2000, DEFAULT_LOCAL_TEXT_SETTINGS.webBriefChars),
     maxNewTokens: clampInt(merged.maxNewTokens, 32, 1024, DEFAULT_LOCAL_TEXT_SETTINGS.maxNewTokens),
     maxNewTokensSearch: clampInt(
@@ -73,10 +72,7 @@ export function localTextBaseSystemForUi(
   settings: LocalTextModelSettings,
 ): string {
   const custom = settings.systemPrompt.trim() || DEFAULT_LOCAL_TEXT_SETTINGS.systemPrompt;
-  if (uiLang === "he") {
-    return SMOLLM_MODEL_SYSTEM_EN;
-  }
-  return custom;
+  return smollmCoreSystemPrompt(uiLang === "en" ? custom : undefined);
 }
 
 function clampInt(value: number, min: number, max: number, fallback: number): number {

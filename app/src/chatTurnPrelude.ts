@@ -3,15 +3,24 @@
  * Used by local text models (SmolLM) without camera/attachments.
  */
 
-import type { ChatTopic, ChatTurn } from "./chatIntents";
-import { isSimpleGreeting } from "./chatIntents";
+import { isTriviaOrSocialGame } from "./gameSearch/gameIntents";
+import { extractTriviaQuestionCount } from "./trivia/triviaPrompt";
+import { isSimpleGreeting, isRtlText, type ChatTopic } from "./chatIntents";
+import {
+  buildLiveMediaInlineReply,
+  filterUnifiedLiveMediaHits,
+  isSportsLiveMediaRequest,
+  liveMediaSerpHitsToUnified,
+  resolveLiveMediaModeFromQuery,
+  type InlineLiveMediaPayload,
+} from "./chatInlineContent";
+import { resolveEarlyTurnRouting, type UiLang } from "./chatRoutePrelude";
 import type { ModelActivityEntry } from "./modelActivityLog";
 import {
   buildGameSearchFoundReply,
   buildGameSearchNotFoundReply,
   parseGameUserRequest,
   searchOnlineGamesWithFallback,
-  shouldOpenGamePanel,
   type GameCategoryId,
   type OnlineGame,
 } from "./gameSearch";
@@ -34,9 +43,9 @@ import {
 } from "./groveeNews/bridge";
 import {
   buildUnifiedSearchPayload,
-  shouldOpenSearchResultsPanel,
   type SearchResultsPayload,
 } from "./searchResults";
+import type { UnifiedSearchHit } from "./searchResults/types";
 import {
   buildShortTimeReply,
   buildTimeWidgetFromStartupContext,
@@ -51,7 +60,6 @@ import {
 } from "./startupContext";
 import {
   runWebSearch,
-  needsWebSearch,
   needsOpenWebEnrichment,
   wantsCinemaPlotSummaries,
   buildCapabilityLiveReply,
@@ -71,6 +79,13 @@ import {
 } from "./webSearch";
 import { isStarlinkRegionalQuery } from "./webSearch/intents";
 import { isCrossSourceQuery } from "./webSearch/crossSourceIntents";
+import { shouldSearchLiveMedia } from "./webSearch/intents";
+import {
+  isLiveMediaCatalogQuery,
+  isLiveTvCategoryChannelQuery,
+  liveMediaCatalogSearchQuery,
+} from "./liveMedia/mediaIntent";
+import { fetchLiveMediaSearch, isRadioMediaQuery } from "./webSearch/providers/liveMediaSearch";
 import type { SearchPlan } from "./webSearch/searchPlanner";
 import type { SearchBrief } from "./webSearch";
 
@@ -90,6 +105,99 @@ export type StreamingSearchState = {
   active: boolean;
 } | null;
 
+function beginChatSearchProgress(
+  deps: ChatTurnPreludeDeps,
+  query: string,
+  summary: string,
+) {
+  deps.setStreamingSearchSources({
+    sources: [],
+    summary,
+    query,
+    active: true,
+  });
+}
+
+function stashLiveMediaSearchMeta(
+  deps: ChatTurnPreludeDeps,
+  query: string,
+  sources: SearchSourceResult[],
+  summary: string,
+) {
+  deps.pendingWebSearchRef.current = {
+    sources,
+    summary,
+    query,
+  };
+}
+
+function deliverLiveMediaInlineCanned(
+  deps: ChatTurnPreludeDeps,
+  effectivePrompt: string,
+  uiLang: UiLang,
+  hits: UnifiedSearchHit[],
+  mode: "livetv" | "radio",
+  opts: { sportsPackage?: boolean; movies?: boolean },
+  liveResultText: string,
+) {
+  const catalogLabel =
+    mode === "radio" ? "מאגר רדיו" : opts.movies ? "ערוצי סרטים" : "TV LIVE";
+  const sources: SearchSourceResult[] = [
+    {
+      provider: "live-tv",
+      label: catalogLabel,
+      ok: hits.length > 0,
+      text: liveResultText,
+      latencyMs: 0,
+      error: hits.length ? undefined : "no channels",
+    },
+  ];
+  const summary = hits.length ? `${hits.length} תוצאות` : "לא נמצאו ערוצים";
+  stashLiveMediaSearchMeta(deps, effectivePrompt, sources, summary);
+
+  if (hits.length) {
+    deps.pendingInlineLiveMediaRef.current = {
+      hits,
+      mode,
+      sportsPackage: opts.sportsPackage,
+    };
+    deps.deliverCanned(
+      buildLiveMediaInlineReply(hits.length, uiLang, {
+        sportsPackage: opts.sportsPackage,
+        radio: mode === "radio",
+        movies: opts.movies,
+      }),
+      liveResultText,
+      "canned-live",
+      mode === "radio" ? "Radio · inline" : "Live TV · inline",
+    );
+    return;
+  }
+
+  deps.deliverCanned(
+    uiLang === "he"
+      ? "לא מצאתי ערוצים בקטלוג המקומי. פתח TV LIVE מהתפריט ולחץ «סנכרון מקורות»."
+      : "No channels found in the local catalog. Open TV LIVE from the menu and tap Sync sources.",
+    "",
+    "canned-live",
+    "Live TV · inline",
+  );
+}
+
+function finishChatSearchProgress(
+  deps: ChatTurnPreludeDeps,
+  query: string,
+  sources: SearchSourceResult[],
+  summary: string,
+) {
+  deps.setStreamingSearchSources({
+    sources,
+    summary,
+    query,
+    active: false,
+  });
+}
+
 export type ChatTurnPreludeInput = {
   trimmed: string;
   effectivePrompt: string;
@@ -97,6 +205,7 @@ export type ChatTurnPreludeInput = {
   chatTopic: ChatTopic;
   startupContext: StartupContext | null;
   desktopLayout: boolean;
+  uiLang?: UiLang;
 };
 
 export type ChatTurnPreludeDeps = {
@@ -122,7 +231,10 @@ export type ChatTurnPreludeDeps = {
   pendingTimeWidgetRef: { current: TimeWidgetData | null };
   pendingGameCategoryPickerRef: { current: boolean };
   pendingGameBrowseCategoryRef: { current: GameCategoryId | null };
+  pendingInlineGamesRef: { current: OnlineGame[] | null };
+  pendingInlineLiveMediaRef: { current: InlineLiveMediaPayload | null };
   deliverCanned: (reply: string, webContext: string, replySource: string, activityTitle?: string) => void;
+  onResetSession?: () => void;
 };
 
 export type ChatTurnPreludeContinue = {
@@ -135,6 +247,8 @@ export type ChatTurnPreludeContinue = {
   shouldRunWebSearch: boolean;
   localTimeOnly: boolean;
   greeting: boolean;
+  triviaMode: boolean;
+  triviaQuestionCount: number;
 };
 
 export type ChatTurnPreludeOutcome =
@@ -146,8 +260,48 @@ export async function runTextChatTurnPrelude(
   input: ChatTurnPreludeInput,
   deps: ChatTurnPreludeDeps,
 ): Promise<ChatTurnPreludeOutcome> {
-  const { trimmed, effectivePrompt, priorTurns, chatTopic, startupContext, desktopLayout } = input;
+  const { trimmed, effectivePrompt, priorTurns, startupContext, desktopLayout } = input;
+  let chatTopic = input.chatTopic;
+  const uiLang: UiLang =
+    input.uiLang ?? (isRtlText(trimmed || effectivePrompt) ? "he" : "en");
   const greeting = isSimpleGreeting(effectivePrompt);
+
+  const earlyRoute = resolveEarlyTurnRouting({
+    text: trimmed,
+    effectivePrompt,
+    chatTopic,
+    uiLang,
+    startupContext,
+    blockGames: false,
+  });
+  if (earlyRoute.action === "canned") {
+    if (earlyRoute.resetSession) deps.onResetSession?.();
+    deps.deliverCanned(
+      earlyRoute.reply,
+      "",
+      earlyRoute.replySource,
+      earlyRoute.replySource === "reset" ? "איפוס שיחה" : "GROVEE · routing",
+    );
+    return { action: "canned" };
+  }
+
+  chatTopic = earlyRoute.chatTopic;
+  let wantsGameSearch = earlyRoute.wantsGameSearch;
+  let shouldRunWebSearch = earlyRoute.shouldRunWebSearch;
+
+  if (greeting) {
+    wantsGameSearch = false;
+    shouldRunWebSearch = false;
+  }
+
+  const liveCatalogQuery = isLiveMediaCatalogQuery(effectivePrompt);
+  if (liveCatalogQuery) {
+    wantsGameSearch = false;
+    shouldRunWebSearch = false;
+  }
+
+  deps.pendingInlineGamesRef.current = null;
+  deps.pendingInlineLiveMediaRef.current = null;
 
   let webContext = "";
   let searchHint = "";
@@ -155,13 +309,10 @@ export async function runTextChatTurnPrelude(
   deps.pendingWebSearchRef.current = null;
   deps.pendingTimeWidgetRef.current = null;
 
-  const wantsGameSearch = shouldOpenGamePanel(trimmed || effectivePrompt, chatTopic);
   const localTimeOnly =
     !wantsGameSearch &&
     !!startupContext &&
     isLocalContextTimeQuery(trimmed || effectivePrompt);
-  const shouldRunWebSearch =
-    !wantsGameSearch && !localTimeOnly && needsWebSearch(trimmed || effectivePrompt);
 
   let searchIntentsForGlobe: SearchIntent[] = [];
   let lastSearchSources: SearchSourceResult[] = [];
@@ -246,22 +397,6 @@ export async function runTextChatTurnPrelude(
       lastSearchSources = searchResult.sources;
       webContext = searchResult.contextText;
       const unifiedSearchPayload = buildUnifiedSearchPayload(effectivePrompt, searchResult.sources);
-      const placeOrRouteOnly =
-        (searchResult.intents.includes("places") || searchResult.intents.includes("distance")) &&
-        shouldOpenGlobeForStructuredGeo(effectivePrompt, searchResult.intents, searchResult.sources) &&
-        !unifiedSearchPayload.hits.some((h) =>
-          ["rss", "web", "youtube", "video", "image", "movie"].includes(h.kind),
-        );
-      if (shouldOpenSearchResultsPanel(unifiedSearchPayload) && !placeOrRouteOnly) {
-        deps.setSearchResultsPayload(unifiedSearchPayload);
-        // Mobile: keep the answer inline in chat; don't cover it with the side panel.
-        if (desktopLayout) {
-          deps.setSearchResultsOpen(true);
-          deps.setArtifactOpen(false);
-          deps.setGlobePanelOpen(false);
-          deps.setGamesPanelOpen(false);
-        }
-      }
       const newsPayloadAfterSearch = unifiedSearchPayload.hits.length
         ? { cardCount: unifiedSearchPayload.facets.rss, mode: "search" as const }
         : null;
@@ -324,6 +459,25 @@ export async function runTextChatTurnPrelude(
           searchResult.intents.length >= 2 ||
           !!searchPlan?.blendNewsWithWeb,
       };
+      const liveTvSource = searchResult.sources.find(
+        (s) => s.provider === "live-tv" && s.ok && s.liveMediaHits?.length,
+      );
+      if (liveTvSource?.liveMediaHits?.length) {
+        const allHits = liveMediaSerpHitsToUnified(liveTvSource.liveMediaHits);
+        const mode = resolveLiveMediaModeFromQuery(effectivePrompt, allHits);
+        const hits = filterUnifiedLiveMediaHits(allHits, mode);
+        if (hits.length) {
+          deps.pendingInlineLiveMediaRef.current = {
+            hits,
+            mode,
+            sportsPackage: isSportsLiveMediaRequest(effectivePrompt),
+          };
+        }
+      }
+      if (liveCatalogQuery && deps.pendingInlineLiveMediaRef.current?.hits.length) {
+        marineLiveCannedReply = null;
+        deps.pendingWebSearchRef.current = null;
+      }
       deps.setStreamingSearchSources({
         sources: searchResult.sources,
         summary: searchResult.summaryHe,
@@ -368,7 +522,7 @@ export async function runTextChatTurnPrelude(
         searchHint = " · אין תוצאות חיפוש";
       } else {
         searchHint = unifiedSearchPayload.hits.length
-          ? ` · ${unifiedSearchPayload.hits.length} תוצאות בפאנל · ${searchResult.summaryHe}`
+          ? ` · ${unifiedSearchPayload.hits.length} מקורות · ${searchResult.summaryHe}`
           : ` · ${searchResult.summaryHe}`;
       }
       deps.pushActivity({
@@ -445,36 +599,41 @@ export async function runTextChatTurnPrelude(
   let gameGroundingBlock = "";
   let gameNoResults = false;
   let gameSearchCannedReply: string | null = null;
+  let inlineGames: OnlineGame[] = [];
 
   if (wantsGameSearch) {
     deps.setStreamingSearchSources(null);
+    beginChatSearchProgress(deps, effectivePrompt, "מחפש משחקים…");
     deps.setStatus("מחפש משחקים…");
     try {
       const gameReq = parseGameUserRequest(trimmed || effectivePrompt);
       const panelCategory = gameReq.category ?? "featured";
       const gameResult = await searchOnlineGamesWithFallback(gameReq, 12);
       deps.setGamesPanelCategory(panelCategory);
-      deps.setGamesPanelLayout("side");
-      // Mobile: games panel opens off-screen; show results inline in chat instead.
-      if (desktopLayout) {
-        deps.setGamesPanelOpen(true);
-        deps.setArtifactOpen(false);
-      }
+      deps.setGamesPanelGames(gameResult.games);
+      deps.setGamesPanelTitle(gameReq.panelTitle);
       deps.setGamesEmbedGame(null);
 
       if (gameResult.matchFound && gameResult.games.length) {
-        deps.setGamesPanelGames(gameResult.games);
-        deps.setGamesPanelTitle(gameReq.panelTitle);
+        inlineGames = gameResult.games;
+        deps.pendingInlineGamesRef.current = gameResult.games;
         gameSearchHint = ` · ${gameResult.games.length} משחקים`;
         gameGroundingBlock = gameResult.games.map((g, i) => `${i + 1}. ${g.title}`).join("\n");
         gameSearchCannedReply = buildGameSearchFoundReply(gameResult.games.length, gameReq);
-        if (!desktopLayout) {
-          const list = gameResult.games
-            .slice(0, 8)
-            .map((g) => `• [${g.title}](${g.playUrl})`)
-            .join("\n");
-          gameSearchCannedReply = `${gameSearchCannedReply}\n\n${list}`;
-        }
+        finishChatSearchProgress(
+          deps,
+          effectivePrompt,
+          [
+            {
+              provider: "live-tv",
+              label: "ארכיון משחקים",
+              ok: true,
+              text: `${gameResult.games.length} משחקים`,
+              latencyMs: gameResult.latencyMs,
+            },
+          ],
+          `${gameResult.games.length} משחקים נמצאו`,
+        );
         deps.pushActivity({
           direction: "system",
           kind: "game_search",
@@ -499,6 +658,12 @@ export async function runTextChatTurnPrelude(
         deps.setStreamingGameCategoryPicker(true);
         gameSearchHint = " · לא נמצא — קטגוריות";
         gameSearchCannedReply = buildGameSearchNotFoundReply(gameReq);
+        finishChatSearchProgress(
+          deps,
+          effectivePrompt,
+          [{ provider: "live-tv", label: "ארכיון משחקים", ok: false, text: "", error: "no match", latencyMs: 0 }],
+          "לא נמצאו משחקים",
+        );
         deps.pushActivity({
           direction: "system",
           kind: "game_search",
@@ -515,8 +680,6 @@ export async function runTextChatTurnPrelude(
       gameNoResults = true;
       deps.pendingGameCategoryPickerRef.current = true;
       deps.setStreamingGameCategoryPicker(true);
-      deps.setGamesPanelLayout("side");
-      if (desktopLayout) deps.setGamesPanelOpen(true);
       deps.setGamesPanelGames([]);
       gameSearchCannedReply = buildGameSearchNotFoundReply(
         parseGameUserRequest(trimmed || effectivePrompt),
@@ -527,8 +690,85 @@ export async function runTextChatTurnPrelude(
   const qaForceLlm = deps.qaForceLlm();
 
   if (!qaForceLlm && wantsGameSearch && gameSearchCannedReply) {
+    if (inlineGames.length) deps.pendingInlineGamesRef.current = inlineGames;
     deps.deliverCanned(gameSearchCannedReply, "", "canned-game");
     return { action: "canned" };
+  }
+
+  const wantsStandaloneLiveMedia =
+    !greeting &&
+    !wantsGameSearch &&
+    !shouldRunWebSearch &&
+    (shouldSearchLiveMedia(effectivePrompt, false) || liveCatalogQuery);
+
+  if (wantsStandaloneLiveMedia) {
+    const sportsPackage = isSportsLiveMediaRequest(effectivePrompt);
+    const moviesCategory = isLiveTvCategoryChannelQuery(effectivePrompt) && /סרט|movies?/i.test(effectivePrompt);
+    const liveQuery = sportsPackage
+      ? "sport"
+      : liveCatalogQuery
+        ? liveMediaCatalogSearchQuery(effectivePrompt)
+        : effectivePrompt;
+    const countryCode = startupContext?.countryCode;
+    const progressLabel = isRadioMediaQuery(liveQuery)
+      ? "מחפש תחנות רדיו…"
+      : moviesCategory
+        ? "מחפש ערוצי סרטים…"
+        : "מחפש ערוצים חיים…";
+    beginChatSearchProgress(deps, effectivePrompt, progressLabel);
+    deps.setStatus(progressLabel);
+    try {
+      const liveResult = await fetchLiveMediaSearch(liveQuery, {
+        panelSearch: true,
+        countryCode,
+        catalogSearch: liveCatalogQuery,
+      });
+      const allHits = liveMediaSerpHitsToUnified(liveResult.liveMediaHits ?? []);
+      const mode = resolveLiveMediaModeFromQuery(liveQuery, allHits);
+      const hits = filterUnifiedLiveMediaHits(allHits, mode);
+      if (!deps.qaForceLlm()) {
+        finishChatSearchProgress(
+          deps,
+          effectivePrompt,
+          [
+            {
+              provider: "live-tv",
+              label:
+                mode === "radio" ? "מאגר רדיו" : moviesCategory ? "ערוצי סרטים" : "TV LIVE",
+              ok: hits.length > 0,
+              text: liveResult.text,
+              latencyMs: liveResult.latencyMs,
+              error: hits.length ? undefined : liveResult.error ?? "no channels",
+            },
+          ],
+          hits.length ? `${hits.length} תוצאות` : "לא נמצאו ערוצים",
+        );
+        deliverLiveMediaInlineCanned(
+          deps,
+          effectivePrompt,
+          uiLang,
+          hits,
+          mode,
+          { sportsPackage, movies: moviesCategory },
+          liveResult.text,
+        );
+        return { action: "canned" };
+      }
+    } catch {
+      deps.setStreamingSearchSources(null);
+      if (!deps.qaForceLlm()) {
+        deliverLiveMediaInlineCanned(
+          deps,
+          effectivePrompt,
+          uiLang,
+          [],
+          "livetv",
+          { sportsPackage, movies: moviesCategory },
+          "",
+        );
+        return { action: "canned" };
+      }
+    }
   }
 
   if (!qaForceLlm && globePlaceCannedReply) {
@@ -654,6 +894,8 @@ export async function runTextChatTurnPrelude(
       shouldRunWebSearch,
       localTimeOnly,
       greeting,
+      triviaMode: isTriviaOrSocialGame(trimmed) || chatTopic === "trivia",
+      triviaQuestionCount: extractTriviaQuestionCount(trimmed),
     },
   };
 }

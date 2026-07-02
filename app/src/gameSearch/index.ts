@@ -19,6 +19,7 @@ export {
 } from "./archiveBrowser";
 export {
   isGameSearchRequest,
+  isTriviaOrSocialGame,
   extractGameQuery,
   parseGameUserRequest,
   detectGameCategory,

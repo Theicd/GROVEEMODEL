@@ -203,7 +203,6 @@ import {
   buildUnifiedSearchPayload,
   createEmptySearchPayload,
   clearSearchResultsPayload,
-  shouldOpenSearchResultsPanel,
   type SearchResultsPayload,
 } from "./searchResults";
 import {
@@ -239,7 +238,15 @@ import {
 import {
   localTextToUiLanguage,
   prepareLocalTextTurnForModel,
+  buildLocalTextHistoryForModel,
+  LOCAL_TEXT_CONTEXT_BUDGET_CHARS,
 } from "./modelRack/localTextTranslate";
+import { resolveEarlyTurnRouting } from "./chatRoutePrelude";
+import {
+  answerSessionMemoryRecall,
+  collectSessionMemoryFacts,
+  memoryPinnedSourceIndices,
+} from "./chatSessionMemory";
 import {
   downloadLocalTextModel,
   generateLocalTextChat,
@@ -248,6 +255,7 @@ import {
 } from "./modelRack/localTextModelRuntime";
 import {
   DEFAULT_LOCAL_TEXT_SETTINGS,
+  localTextBaseSystemForUi,
   mergeLocalTextSettings,
   type LocalTextInferenceBackend,
   type LocalTextModelSettings,
@@ -340,6 +348,19 @@ import {
   subscribeGlobeHeadlineRequests,
 } from "./realityGlobe/globeHeadlineBridge";
 import { GameCategoryPicker } from "./GameCategoryPicker";
+import { TriviaQuizBlock } from "./trivia/TriviaQuizBlock";
+import {
+  parseTriviaQuiz,
+  triviaQuizSummaryHe,
+  type TriviaQuiz,
+  type TriviaOptionId,
+} from "./trivia/triviaParse";
+import {
+  buildTriviaFormatInstruction,
+  extractTriviaQuestionCount,
+  extractTriviaTopicTitle,
+  isTriviaQuizRequest,
+} from "./trivia/triviaPrompt";
 import {
   buildGameSearchFoundReply,
   buildGameSearchNotFoundReply,
@@ -353,6 +374,9 @@ import {
   type OnlineGame,
 } from "./gameSearch";
 import { loadGamesSession, recordGamePlay, saveGamesSession } from "./localExperience/gamesStore";
+import { GameResultsStrip } from "./GameResultsStrip";
+import { InlineLiveMediaStrip } from "./InlineLiveMediaStrip";
+import type { InlineLiveMediaPayload } from "./chatInlineContent";
 
 type Role = "user" | "assistant";
 
@@ -367,6 +391,10 @@ type ChatMessage = {
   thought?: string;
   /** English camera perception context — shown in collapsible "חושב…" panel, not as chat answer. */
   visionContext?: string;
+  /** Raw English model output when Hebrew bridge translated the reply — collapsible after turn ends. */
+  modelDraft?: string;
+  /** English prompt sent to SmolLM for this user turn (Hebrew bridge). */
+  userModelDraft?: string;
   /** Thumbnails for user-attached images (session memory; not persisted to localStorage). */
   images?: StoredMessageImage[];
   /** Live web search sources fetched for this turn (Search mode). */
@@ -374,11 +402,15 @@ type ChatMessage = {
   searchSummary?: string;
   /** Animated clock card for "what time" queries. */
   timeWidget?: TimeWidgetData;
-  /** @deprecated games render in side panel only — kept for old saved sessions */
+  /** Inline arcade game cards with ▶ play in chat. */
   gameResults?: OnlineGame[];
+  /** Inline live TV / radio channels with ▶ play in chat. */
+  liveMediaInline?: InlineLiveMediaPayload;
   /** Show category picker when a specific game search had no match. */
   showGameCategories?: boolean;
   gameBrowseCategory?: GameCategoryId | null;
+  /** Structured trivia card UI (game-show layout). */
+  triviaQuiz?: TriviaQuiz;
 };
 
 type WorkerOutMessage =
@@ -578,12 +610,13 @@ const loadSettings = (): AppSettings => {
       }
       inferenceBackend = "auto";
     }
+    const localText = mergeLocalTextSettings(parsed.localText);
     const settings: AppSettings = {
       ...defaultAppSettings(),
       hfRemoteHost: typeof parsed.hfRemoteHost === "string" ? parsed.hfRemoteHost : "",
       inferenceBackend,
       gemma,
-      localText: mergeLocalTextSettings(parsed.localText),
+      localText,
       startupModel:
         parsed.startupModel === "gemma" ||
         parsed.startupModel === "local-text" ||
@@ -593,7 +626,9 @@ const loadSettings = (): AppSettings => {
       vision: mergeVisionSettings(parsed.vision),
     };
     const shouldPersist =
-      systemPrompt !== mergedGemma.systemPrompt || inferenceBackend !== parsed.inferenceBackend;
+      systemPrompt !== mergedGemma.systemPrompt ||
+      inferenceBackend !== parsed.inferenceBackend ||
+      parsed.localText?.historyTurns === 6;
     if (shouldPersist) {
       saveSettings(settings);
     }
@@ -744,6 +779,34 @@ function ThinkingBlock({ thought, streaming }: { thought: string; streaming?: bo
   );
 }
 
+function ModelDraftBlock({
+  draft,
+  streaming,
+  translating,
+}: {
+  draft: string;
+  streaming?: boolean;
+  translating?: boolean;
+}) {
+  if (!draft.trim()) return null;
+  const summary = translating
+    ? "מתרגם לעברית…"
+    : streaming
+      ? "כותב באנגלית (פנימי)…"
+      : "תשובה מקורית (אנגלית)";
+  return (
+    <details
+      className={`model-draft-block${streaming || translating ? " model-draft-block--live" : ""}`}
+      open={streaming || translating}
+    >
+      <summary>{summary}</summary>
+      <pre className="model-draft-block-body" dir="ltr">
+        {draft}
+      </pre>
+    </details>
+  );
+}
+
 function UserAttachedImages({ images }: { images: StoredMessageImage[] }) {
   if (!images.length) return null;
   return (
@@ -761,6 +824,7 @@ function MessageBody({
   showThinking = false,
   savedThought,
   savedVisionContext,
+  savedModelDraft,
   savedArtifact,
   chatOnlyDocument = false,
 }: {
@@ -769,6 +833,7 @@ function MessageBody({
   showThinking?: boolean;
   savedThought?: string;
   savedVisionContext?: string;
+  savedModelDraft?: string;
   savedArtifact?: Artifact;
   /** Document/image turn — render in chat, no HTML artifact chips. */
   chatOnlyDocument?: boolean;
@@ -786,6 +851,7 @@ function MessageBody({
       {showVisionCtx ? (
         <VisionContextBlock context={savedVisionContext!} streaming={visionStreaming} />
       ) : null}
+      {savedModelDraft?.trim() ? <ModelDraftBlock draft={savedModelDraft} /> : null}
       {thoughtText.trim() ? (
         <ThinkingBlock thought={thoughtText} streaming={showThinking && streamParts.thinkingInProgress} />
       ) : null}
@@ -1127,7 +1193,7 @@ function SettingsModal({
           </p>
           <div className="settings-grid">
             <label className="settings-field">
-              <span className="settings-field-label">תורות היסטוריה</span>
+              <span className="settings-field-label">הודעות בהיסטוריה (זכור… תמיד נשמר)</span>
               <input
                 type="number"
                 min={2}
@@ -1446,6 +1512,7 @@ function App() {
   const workerRef = useRef<Worker | null>(null);
   const assistantBufferRef = useRef("");
   const pendingVisionContextRef = useRef("");
+  const pendingModelDraftRef = useRef("");
   const streamTokenCountRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1546,6 +1613,9 @@ function App() {
   const [chatOnlyDocumentMode, setChatOnlyDocumentMode] = useState(false);
   const lastTurnUsedVisionRef = useRef(false);
   const [assistantBuffer, setAssistantBuffer] = useState("");
+  const [streamingModelDraft, setStreamingModelDraft] = useState("");
+  const [streamingBridgeTranslating, setStreamingBridgeTranslating] = useState(false);
+  const streamingModelDraftRef = useRef("");
   const [streamingVisionContext, setStreamingVisionContext] = useState("");
   const [streamTokenCount, setStreamTokenCount] = useState(0);
   const [thinkingMode, setThinkingMode] = useState(false);
@@ -1559,6 +1629,9 @@ function App() {
   const [contextRefreshKey, setContextRefreshKey] = useState(0);
   const measuredSystemPromptCharsRef = useRef(0);
   const measuredWebContextCharsRef = useRef(0);
+  const measuredLocalSystemCharsRef = useRef(0);
+  const measuredLocalHistoryCharsRef = useRef(0);
+  const pendingUserModelDraftRef = useRef("");
   const [gamesPanelOpen, setGamesPanelOpen] = useState(false);
   const [globePanelOpen, setGlobePanelOpen] = useState(false);
   const [liveMediaPanelOpen, setLiveMediaPanelOpen] = useState(() => launchedViaTvDeepLink.current);
@@ -1703,6 +1776,11 @@ function App() {
   const pendingTimeWidgetRef = useRef<TimeWidgetData | null>(null);
   const pendingGameCategoryPickerRef = useRef(false);
   const pendingGameBrowseCategoryRef = useRef<GameCategoryId | null>(null);
+  const pendingInlineGamesRef = useRef<OnlineGame[] | null>(null);
+  const pendingInlineLiveMediaRef = useRef<InlineLiveMediaPayload | null>(null);
+  const pendingTriviaTurnRef = useRef(false);
+  const pendingTriviaQuestionCountRef = useRef(5);
+  const pendingTriviaTitleRef = useRef<string | undefined>(undefined);
   const cameraModeRef = useRef(cameraMode);
   const visionResultRef = useRef(visionResult);
   const isLoadingRef = useRef(isLoading);
@@ -1879,6 +1957,27 @@ function App() {
     [isGenerating],
   );
 
+  const resetActiveChatSession = useCallback(() => {
+    chatTopicRef.current = null;
+    pendingWebSearchRef.current = null;
+    pendingTimeWidgetRef.current = null;
+    pendingGameCategoryPickerRef.current = false;
+    pendingGameBrowseCategoryRef.current = null;
+    pendingInlineGamesRef.current = null;
+    pendingInlineLiveMediaRef.current = null;
+    pendingUserModelDraftRef.current = "";
+    pendingModelDraftRef.current = "";
+    pendingVisionContextRef.current = "";
+    setStreamingSearchSources(null);
+    setStreamingGameCategoryPicker(false);
+    setChatSessionsState((st) => ({
+      ...st,
+      sessions: st.sessions.map((s) =>
+        s.id === st.activeId ? { ...s, messages: [], updatedAt: Date.now() } : s,
+      ),
+    }));
+  }, []);
+
   const handleNewChat = useCallback(() => {
     if (cameraMode) {
       if (isGenerating) return;
@@ -1945,7 +2044,7 @@ function App() {
       cancelled = true;
     };
   }, [phase]);
-  const showLanding = phase === "ready" && displayMessages.length === 0 && !assistantBuffer;
+  const showLanding = phase === "ready" && displayMessages.length === 0 && !assistantBuffer && !streamingModelDraft;
   const landingContent = useLandingContent();
   const loadingByteLine = useMemo(() => {
     if (loadingPhase === "init" || loadingBytes.total <= 0) return "";
@@ -1974,7 +2073,7 @@ function App() {
     const el = messagesListRef.current;
     if (!el || phase !== "ready") return;
     el.scrollTop = el.scrollHeight;
-  }, [displayMessages, assistantBuffer, phase]);
+  }, [displayMessages, assistantBuffer, streamingModelDraft, phase]);
 
   useEffect(() => {
     if (!isGenerating && isLoaded) focusComposerInput();
@@ -2011,6 +2110,32 @@ function App() {
 
   const contextUsage = useMemo((): ContextUsage | null => {
     if (!isLoaded) return null;
+    const rack = applyLocalTextDownloadStates(modelRackRef.current, localTextDownloadingId);
+    const activeRack =
+      getRackModelById(selectedRackModelId, rack) ?? getRackModelById(GEMMA_RACK_ID, rack)!;
+    const usesLocalTextCtx = isLocalTextChatModel(activeRack) && !cameraMode;
+
+    if (usesLocalTextCtx) {
+      const systemChars = measuredLocalSystemCharsRef.current || 900;
+      const historyChars = measuredLocalHistoryCharsRef.current;
+      const draftChars = prompt.trim().length;
+      const used = systemChars + historyChars + draftChars;
+      const total = LOCAL_TEXT_CONTEXT_BUDGET_CHARS;
+      return {
+        percent: Math.max(0, Math.min(100, Math.round((1 - used / total) * 100))),
+        usedChars: used,
+        totalBudget: total,
+        profileLabel: "SmolLM2",
+        breakdown: {
+          history: historyChars,
+          web: 0,
+          system: systemChars,
+          user: draftChars,
+          images: 0,
+        },
+      };
+    }
+
     const profileId = loadChatProfileOverride() ?? detectChatHardwareProfile();
     const systemChars =
       measuredSystemPromptCharsRef.current > 0
@@ -2043,7 +2168,24 @@ function App() {
     buildHistoryForWorker,
     isGenerating,
     assistantBuffer,
+    selectedRackModelId,
+    localTextDownloadingId,
   ]);
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    const rack = applyLocalTextDownloadStates(modelRackRef.current, localTextDownloadingId);
+    const active =
+      getRackModelById(selectedRackModelId, rack) ?? getRackModelById(GEMMA_RACK_ID, rack)!;
+    if (!isLocalTextChatModel(active) || cameraMode) return;
+    const uiLang = getChatUiLanguage() === "he" ? "he" : "en";
+    measuredLocalSystemCharsRef.current = localTextBaseSystemForUi(
+      uiLang,
+      appSettingsRef.current.localText,
+    ).length;
+    measuredLocalHistoryCharsRef.current = 0;
+    setContextRefreshKey((k) => k + 1);
+  }, [selectedRackModelId, isLoaded, cameraMode, localTextDownloadingId]);
 
   const restoredImageBuffersFromMessage = useCallback((msg: ChatMessage): ArrayBuffer[] => {
     if (!msg.images?.length) return [];
@@ -2947,6 +3089,11 @@ function App() {
     setGamesEmbedGame(null);
   }, []);
 
+  const openSportsPackage = useCallback(() => {
+    launchedViaSuperSport.current = true;
+    openLiveMediaPanelFull();
+  }, [openLiveMediaPanelFull]);
+
   const toggleLiveMediaPanel = useCallback(() => {
     if (liveMediaPanelOpen) {
       setLiveMediaPanelOpen(false);
@@ -3081,10 +3228,13 @@ function App() {
       const visionContext = lastTurnUsedVisionRef.current
         ? pendingVisionContextRef.current || undefined
         : undefined;
+      const modelDraft = pendingModelDraftRef.current.trim() || undefined;
       const searchMeta = pendingWebSearchRef.current ?? undefined;
       const timeWidget = pendingTimeWidgetRef.current ?? undefined;
       const showGameCategories = pendingGameCategoryPickerRef.current;
       const gameBrowseCategory = pendingGameBrowseCategoryRef.current ?? undefined;
+      const inlineGames = pendingInlineGamesRef.current ?? undefined;
+      const liveMediaInline = pendingInlineLiveMediaRef.current ?? undefined;
       const { content, artifact, thought } = raw.trim()
         ? buildPersistedAssistantPayload(raw, thinkingRef.current, {
             chatOnlyDocument: generationChatOnlyDocumentRef.current,
@@ -3109,6 +3259,8 @@ function App() {
         !artifact &&
         !showGameCategories &&
         !timeWidget &&
+        !inlineGames?.length &&
+        !liveMediaInline?.hits.length &&
         searchMeta?.sources?.length &&
         searchMeta.query
       ) {
@@ -3121,14 +3273,27 @@ function App() {
         if (cannedFallback?.trim()) finalContent = cannedFallback;
       }
 
-      if (!finalContent.trim() && !artifact && !showGameCategories && !timeWidget) {
+      if (
+        !finalContent.trim() &&
+        !artifact &&
+        !showGameCategories &&
+        !timeWidget &&
+        !inlineGames?.length &&
+        !liveMediaInline?.hits.length
+      ) {
         setAssistantBuffer("");
         assistantBufferRef.current = "";
         pendingVisionContextRef.current = "";
+        pendingModelDraftRef.current = "";
+        pendingUserModelDraftRef.current = "";
+        setStreamingModelDraft("");
+        streamingModelDraftRef.current = "";
         pendingWebSearchRef.current = null;
         pendingTimeWidgetRef.current = null;
         pendingGameCategoryPickerRef.current = false;
         pendingGameBrowseCategoryRef.current = null;
+        pendingInlineGamesRef.current = null;
+        pendingInlineLiveMediaRef.current = null;
         setStreamingSearchSources(null);
         setStreamingGameCategoryPicker(false);
         setStatus(stopped ? "התשובה נעצרה" : "Ready");
@@ -3152,6 +3317,7 @@ function App() {
                   content: finalContent,
                   thought: thought ?? next[i].thought,
                   visionContext: visionContext ?? next[i].visionContext,
+                  modelDraft: modelDraft ?? next[i].modelDraft,
                 };
                 return next;
               }
@@ -3181,6 +3347,9 @@ function App() {
                   artifact: artifact ?? next[i].artifact,
                   thought: thought ?? next[i].thought,
                   visionContext: visionContext ?? next[i].visionContext,
+                  modelDraft: modelDraft ?? next[i].modelDraft,
+                  gameResults: inlineGames ?? next[i].gameResults,
+                  liveMediaInline: liveMediaInline ?? next[i].liveMediaInline,
                 };
                 return next;
               }
@@ -3194,11 +3363,14 @@ function App() {
                 artifact: artifact ?? undefined,
                 thought,
                 visionContext,
+                modelDraft,
                 searchSources: searchMeta?.sources,
                 searchSummary: searchMeta?.summary,
                 timeWidget,
                 showGameCategories,
                 gameBrowseCategory,
+                gameResults: inlineGames,
+                liveMediaInline,
                 modelLabel: "HAL",
               },
             ];
@@ -3223,23 +3395,40 @@ function App() {
         });
         persistCameraMemory();
       } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: finalContent,
-            artifact: artifact ?? undefined,
-            thought,
-            visionContext,
-            searchSources: searchMeta?.sources,
-            searchSummary: searchMeta?.summary,
-            timeWidget,
-            showGameCategories,
-            gameBrowseCategory,
-            modelLabel: "HAL",
-          },
-        ]);
+        const userDraft = pendingUserModelDraftRef.current.trim() || undefined;
+        setMessages((prev) => {
+          let base = prev;
+          if (userDraft) {
+            const next = [...prev];
+            for (let i = next.length - 1; i >= 0; i--) {
+              if (next[i].role === "user") {
+                next[i] = { ...next[i], userModelDraft: userDraft };
+                break;
+              }
+            }
+            base = next;
+          }
+          return [
+            ...base,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: finalContent,
+              artifact: artifact ?? undefined,
+              thought,
+              visionContext,
+              modelDraft,
+              searchSources: searchMeta?.sources,
+              searchSummary: searchMeta?.summary,
+              timeWidget,
+              showGameCategories,
+              gameBrowseCategory,
+              gameResults: inlineGames,
+              liveMediaInline,
+              modelLabel: "HAL",
+            },
+          ];
+        });
       }
 
       if (artifact && !generationChatOnlyDocumentRef.current) {
@@ -3249,13 +3438,20 @@ function App() {
       setAssistantBuffer("");
       assistantBufferRef.current = "";
       pendingVisionContextRef.current = "";
+      pendingModelDraftRef.current = "";
+      pendingUserModelDraftRef.current = "";
       pendingWebSearchRef.current = null;
       pendingTimeWidgetRef.current = null;
       pendingGameCategoryPickerRef.current = false;
       pendingGameBrowseCategoryRef.current = null;
+      pendingInlineGamesRef.current = null;
+      pendingInlineLiveMediaRef.current = null;
       setStreamingSearchSources(null);
       setStreamingGameCategoryPicker(false);
       setStreamingVisionContext("");
+      setStreamingModelDraft("");
+      streamingModelDraftRef.current = "";
+      setStreamingBridgeTranslating(false);
       setStatus(stopped ? "התשובה נעצרה" : "Ready");
       generationCameraModeRef.current = false;
       generationChatOnlyDocumentRef.current = false;
@@ -4235,20 +4431,58 @@ function App() {
     let marineLiveCannedReply: string | null = null;
     pendingWebSearchRef.current = null;
     pendingTimeWidgetRef.current = null;
-    const wantsGameSearch =
-      !cameraActive &&
-      !hasAttachments &&
-      shouldOpenGamePanel(trimmed || effectivePrompt, chatTopic);
+
+    const uiLangRoute: "he" | "en" =
+      getChatUiLanguage() === "he" || isRtlText(trimmed) ? "he" : "en";
+    const sessionMemoryFacts = collectSessionMemoryFacts(priorMessages);
+    const memoryRecallReply = answerSessionMemoryRecall(trimmed, sessionMemoryFacts, uiLangRoute);
+    const earlyRoute = resolveEarlyTurnRouting({
+      text: trimmed,
+      effectivePrompt,
+      chatTopic,
+      uiLang: uiLangRoute,
+      startupContext,
+      blockGames: cameraActive || hasAttachments,
+      blockSearch: hasAttachments,
+    });
+
+    const deliverRoutingCanned = (reply: string, replySource: string, resetSession?: boolean) => {
+      if (resetSession) resetActiveChatSession();
+      qaChatBridge.setWebContext("");
+      qaChatBridge.setReplySource(replySource);
+      assistantBufferRef.current = reply;
+      setAssistantBuffer(reply);
+      setStatus("Ready");
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: replySource === "reset" ? "איפוס שיחה" : "GROVEE · routing",
+        detail: reply.slice(0, 1200),
+      });
+      finalizeAssistantReply(false);
+    };
+
+    if (earlyRoute.action === "canned" && !cameraActive && !hasAttachments) {
+      deliverRoutingCanned(earlyRoute.reply, earlyRoute.replySource, earlyRoute.resetSession);
+      return;
+    }
+
+    if (memoryRecallReply && !cameraActive && !hasAttachments) {
+      deliverRoutingCanned(memoryRecallReply, "session-memory");
+      return;
+    }
+
+    let wantsGameSearch = false;
+    let shouldRunWebSearch = false;
+    if (earlyRoute.action === "continue") {
+      wantsGameSearch = earlyRoute.wantsGameSearch;
+      shouldRunWebSearch = earlyRoute.shouldRunWebSearch;
+    }
     const localTimeOnly =
       !hasAttachments &&
       !wantsGameSearch &&
       startupContext &&
       isLocalContextTimeQuery(trimmed || effectivePrompt);
-    const shouldRunWebSearch =
-      !hasAttachments &&
-      !wantsGameSearch &&
-      !localTimeOnly &&
-      needsWebSearch(trimmed || effectivePrompt);
     let searchIntentsForGlobe: SearchIntent[] = [];
     let lastSearchSources: SearchSourceResult[] = [];
 
@@ -4344,22 +4578,6 @@ function App() {
         lastSearchSources = searchResult.sources;
         webContext = searchResult.contextText;
         const unifiedSearchPayload = buildUnifiedSearchPayload(effectivePrompt, searchResult.sources);
-        const placeOrRouteOnly =
-          (searchResult.intents.includes("places") || searchResult.intents.includes("distance")) &&
-          shouldOpenGlobeForStructuredGeo(effectivePrompt, searchResult.intents, searchResult.sources) &&
-          !unifiedSearchPayload.hits.some((h) =>
-            ["rss", "web", "youtube", "video", "image", "movie"].includes(h.kind),
-          );
-        if (shouldOpenSearchResultsPanel(unifiedSearchPayload) && !placeOrRouteOnly) {
-          setSearchResultsPayload(unifiedSearchPayload);
-          // Mobile: keep the answer inline in chat; don't cover it with the side panel.
-          if (desktopLayout) {
-            setSearchResultsOpen(true);
-            setArtifactOpen(false);
-            setGlobePanelOpen(false);
-            setGamesPanelOpen(false);
-          }
-        }
         const newsPayloadAfterSearch = unifiedSearchPayload.hits.length
           ? { cardCount: unifiedSearchPayload.facets.rss, mode: "search" as const }
           : null;
@@ -4500,7 +4718,7 @@ function App() {
           searchHint = " · אין תוצאות חיפוש";
         } else {
           searchHint = unifiedSearchPayload.hits.length
-            ? ` · ${unifiedSearchPayload.hits.length} תוצאות בפאנל · ${searchResult.summaryHe}`
+            ? ` · ${unifiedSearchPayload.hits.length} מקורות · ${searchResult.summaryHe}`
             : ` · ${searchResult.summaryHe}`;
         }
         pushActivity({
@@ -5201,6 +5419,8 @@ function App() {
     const priorTurns = buildHistoryForWorker(priorChatMessages).filter(
       (t) => t.role === "user" || t.role === "assistant",
     );
+    const capUiLang: "he" | "en" =
+      getChatUiLanguage() === "he" || isRtlText(trimmed) ? "he" : "en";
 
     const deliverCanned = (
       reply: string,
@@ -5233,6 +5453,7 @@ function App() {
           chatTopic,
           startupContext,
           desktopLayout,
+          uiLang: capUiLang,
         },
         {
           setStatus,
@@ -5257,7 +5478,10 @@ function App() {
           pendingTimeWidgetRef,
           pendingGameCategoryPickerRef,
           pendingGameBrowseCategoryRef,
+          pendingInlineGamesRef,
+          pendingInlineLiveMediaRef,
           deliverCanned,
+          onResetSession: resetActiveChatSession,
         },
       );
 
@@ -5307,6 +5531,9 @@ function App() {
     setIsGenerating(true);
     setAssistantBuffer("");
     assistantBufferRef.current = "";
+    setStreamingModelDraft("");
+    streamingModelDraftRef.current = "";
+    setStreamingBridgeTranslating(false);
     streamTokenCountRef.current = 0;
     setStreamTokenCount(0);
     setStatus(`שיחה עם ${model.label}…`);
@@ -5326,6 +5553,25 @@ function App() {
     console.info(
       `[translate] bridge ${bridgeHe ? "ON" : "off"} (uiSetting=${settingLang}, inputHebrew=${inputIsHebrew})`,
     );
+
+    const sessionMemoryFacts = collectSessionMemoryFacts(priorChatMessages);
+    const memoryRecallReply = answerSessionMemoryRecall(trimmed, sessionMemoryFacts, uiLang);
+    if (memoryRecallReply) {
+      qaChatBridge.setWebContext("");
+      qaChatBridge.setReplySource("session-memory");
+      assistantBufferRef.current = memoryRecallReply;
+      setAssistantBuffer(memoryRecallReply);
+      setStatus("Ready");
+      pushActivity({
+        direction: "system",
+        kind: "web_search",
+        title: "GROVEE · session memory",
+        detail: memoryRecallReply.slice(0, 1200),
+      });
+      finalizeAssistantReply(false);
+      qaChatBridge.notifyTurnComplete(memoryRecallReply);
+      return;
+    }
 
     const deliverCanned = (
       reply: string,
@@ -5358,6 +5604,7 @@ function App() {
           chatTopic,
           startupContext,
           desktopLayout,
+          uiLang,
         },
         {
           setStatus,
@@ -5382,7 +5629,10 @@ function App() {
           pendingTimeWidgetRef,
           pendingGameCategoryPickerRef,
           pendingGameBrowseCategoryRef,
+          pendingInlineGamesRef,
+          pendingInlineLiveMediaRef,
           deliverCanned,
+          onResetSession: resetActiveChatSession,
         },
       );
 
@@ -5396,9 +5646,21 @@ function App() {
       setStatus(`שיחה עם ${model.label}…${statusSuffix}`);
 
       const lt = appSettingsRef.current.localText;
-      const history = priorTurns
-        .slice(-lt.historyTurns)
-        .map((t) => ({ role: t.role, content: t.content }));
+      const chatHistoryRows = priorChatMessages
+        .map((m, sourceIndex) => ({ m, sourceIndex }))
+        .filter(({ m }) => m.role === "user" || m.role === "assistant");
+      const historyPayload = chatHistoryRows.map(({ m }) => ({
+        role: m.role,
+        content: m.content,
+        modelDraft: m.modelDraft,
+        userModelDraft: m.userModelDraft,
+      }));
+      const pinnedSourceIndices = memoryPinnedSourceIndices(historyPayload);
+      const { entries: historyEntries, sourceIndices: historySourceIndices } =
+        buildLocalTextHistoryForModel(historyPayload, {
+          maxMessageSlots: lt.historyTurns,
+          pinnedSourceIndices,
+        });
 
       const baseSystem = buildLocalTextSystemPrompt({
         uiLang,
@@ -5407,10 +5669,47 @@ function App() {
         startupContext,
         webContext: preludeCtx.webContext,
         settings: lt,
+        sessionMemoryFacts,
       });
 
       if (bridgeHe) setStatus("מתרגם מעברית לאנגלית…");
-      const prepared = await prepareLocalTextTurnForModel(trimmed, history, uiLang, baseSystem);
+      const prepared = await prepareLocalTextTurnForModel(
+        trimmed,
+        historyEntries,
+        uiLang,
+        baseSystem,
+      );
+
+      if (prepared.userModelDraft) {
+        pendingUserModelDraftRef.current = prepared.userModelDraft;
+      }
+
+      if (prepared.historyDraftUpdates.length) {
+        setChatSessionsState((st) => ({
+          ...st,
+          sessions: st.sessions.map((s) => {
+            if (s.id !== st.activeId) return s;
+            const msgs = [...s.messages];
+            for (const upd of prepared.historyDraftUpdates) {
+              const idx = historySourceIndices[upd.index];
+              if (idx == null || idx < 0 || idx >= msgs.length) continue;
+              msgs[idx] = {
+                ...msgs[idx],
+                userModelDraft: upd.userModelDraft ?? msgs[idx].userModelDraft,
+                modelDraft: upd.modelDraft ?? msgs[idx].modelDraft,
+              };
+            }
+            return { ...s, messages: msgs, updatedAt: Date.now() };
+          }),
+        }));
+      }
+
+      measuredLocalSystemCharsRef.current = prepared.systemPrompt.length;
+      measuredLocalHistoryCharsRef.current = prepared.history.reduce(
+        (sum, t) => sum + t.content.length + 64,
+        0,
+      );
+      setContextRefreshKey((k) => k + 1);
       setStatus(`שיחה עם ${model.label}…${statusSuffix}`);
 
       let modelReply = "";
@@ -5426,7 +5725,10 @@ function App() {
         backend: lt.inferenceBackend,
         onToken: (text) => {
           modelReply += text;
-          if (!bridgeHe) {
+          if (bridgeHe) {
+            streamingModelDraftRef.current += text;
+            setStreamingModelDraft((prev) => prev + text);
+          } else {
             assistantBufferRef.current += text;
             setAssistantBuffer((prev) => prev + text);
           }
@@ -5435,25 +5737,39 @@ function App() {
       });
 
       const rawEnglish = (reply.trim() || modelReply.trim() || assistantBufferRef.current.trim() || "").trim();
-      if (bridgeHe) setStatus("מתרגם תשובה לעברית…");
+      if (bridgeHe) {
+        setStreamingBridgeTranslating(true);
+        setStatus("מתרגם תשובה לעברית…");
+      }
       const content =
         (await localTextToUiLanguage(rawEnglish, uiLang)).trim() || rawEnglish || "…";
 
       qaChatBridge.setWebContext(preludeCtx.webContext);
       qaChatBridge.setReplySource("local-text");
+      if (bridgeHe && rawEnglish) pendingModelDraftRef.current = rawEnglish;
       assistantBufferRef.current = content;
       setAssistantBuffer(content);
+      setStreamingBridgeTranslating(false);
       finalizeAssistantReply(false);
       qaChatBridge.notifyTurnComplete(content);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus(msg);
       const partial = assistantBufferRef.current.trim();
-      if (partial) {
-        const shown = bridgeHe ? await localTextToUiLanguage(partial, uiLang).catch(() => partial) : partial;
+      const draftPartial = streamingModelDraftRef.current.trim();
+      if (partial || draftPartial) {
+        const english = draftPartial || partial;
+        const shown = bridgeHe
+          ? await localTextToUiLanguage(english, uiLang).catch(() => english)
+          : partial;
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: "assistant", content: shown },
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: shown,
+            modelDraft: bridgeHe && draftPartial ? draftPartial : undefined,
+          },
         ]);
       } else {
         setMessages((prev) => [
@@ -5467,6 +5783,9 @@ function App() {
       setIsGenerating(false);
       setAssistantBuffer("");
       assistantBufferRef.current = "";
+      setStreamingModelDraft("");
+      streamingModelDraftRef.current = "";
+      setStreamingBridgeTranslating(false);
       focusComposerInput();
     }
   };
@@ -6474,18 +6793,36 @@ function App() {
                                     onOpenFavorites={openGamesFavorites}
                                   />
                                 ) : null}
+                                {msg.gameResults?.length ? (
+                                  <GameResultsStrip
+                                    games={msg.gameResults}
+                                    onPlay={handlePlayGame}
+                                    onOpenPanel={expandGamesPanelFull}
+                                    onOpenFavorites={openGamesFavorites}
+                                  />
+                                ) : null}
+                                {msg.liveMediaInline?.hits.length ? (
+                                  <InlineLiveMediaStrip
+                                    hits={msg.liveMediaInline.hits}
+                                    uiLang={uiLang}
+                                    mode={msg.liveMediaInline.mode}
+                                    sportsPackage={msg.liveMediaInline.sportsPackage}
+                                    onOpenSportsPackage={openSportsPackage}
+                                  />
+                                ) : null}
                                 <MessageBody
                                   content={msg.content}
                                   onOpenArtifact={openArtifact}
                                   savedThought={msg.thought}
                                   savedVisionContext={msg.visionContext}
+                                  savedModelDraft={msg.modelDraft}
                                 />
                               </>
                             )}
                           </div>
                         </article>
                       ))}
-                  {assistantBuffer && (
+                  {assistantBuffer || streamingModelDraft ? (
                     <article className="msg">
                       <ChatMessageAvatar role="assistant" variant={cameraMode ? "hal" : "default"} />
                       <div className="msg-txt">
@@ -6505,16 +6842,29 @@ function App() {
                             onOpenFavorites={openGamesFavorites}
                           />
                         ) : null}
-                        <MessageBody
-                          content={assistantBuffer}
-                          onOpenArtifact={openArtifact}
-                          showThinking={thinkingMode}
-                          savedVisionContext={streamingVisionContext}
-                          chatOnlyDocument={chatOnlyDocumentMode}
-                        />
+                        {streamingModelDraft ? (
+                          <ModelDraftBlock
+                            draft={streamingModelDraft}
+                            streaming={
+                              isGenerating &&
+                              !streamingBridgeTranslating &&
+                              !assistantBuffer.trim()
+                            }
+                            translating={streamingBridgeTranslating}
+                          />
+                        ) : null}
+                        {assistantBuffer ? (
+                          <MessageBody
+                            content={assistantBuffer}
+                            onOpenArtifact={openArtifact}
+                            showThinking={thinkingMode}
+                            savedVisionContext={streamingVisionContext}
+                            chatOnlyDocument={chatOnlyDocumentMode}
+                          />
+                        ) : null}
                       </div>
                     </article>
-                  )}
+                  ) : null}
                   </div>
                 </div>
               ) : (

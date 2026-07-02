@@ -18,11 +18,16 @@ describe("localTextModelSettings", () => {
     expect(mergeLocalTextSettings({ historyTurns: 0 }).historyTurns).toBe(2);
   });
 
-  it("adds English-only hint for Hebrew UI when missing", () => {
+  it("migrates legacy historyTurns 6 to 12", () => {
+    expect(mergeLocalTextSettings({ historyTurns: 6 }).historyTurns).toBe(12);
+  });
+
+  it("uses GROVEE core identity for Hebrew UI", () => {
     const base = localTextBaseSystemForUi("he", {
       ...DEFAULT_LOCAL_TEXT_SETTINGS,
       systemPrompt: "You are helpful.",
     });
-    expect(base).toContain("English only");
+    expect(base).toContain("GROVEE");
+    expect(base).toContain("Do NOT activate games");
   });
 });

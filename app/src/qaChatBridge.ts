@@ -7,6 +7,13 @@ export type QaReplySource =
   | "canned-globe"
   | "canned-game"
   | "local-time"
+  | "meta-capabilities"
+  | "disambiguation"
+  | "reset"
+  | "capabilities-only"
+  | "local-text"
+  | "session-memory"
+  | "greeting"
   | "unknown";
 
 export type QaTurnResult = {

@@ -1,6 +1,8 @@
 import Fuse from "fuse.js";
 import type { Channel, RadioStation, SearchFilter } from "./types";
 import { expandLiveMediaSearchTerms, extractChannelDigits, isChannelNameQuery, resolveCategoryFromQuery } from "./queryMatch";
+import { isRadioFrequencyQuery } from "./mediaIntent";
+import { radioMatchesRegion } from "./cableTunerRadio";
 import {
   channelLanguageMatches,
   countryMatches,
@@ -146,7 +148,7 @@ function visibleChannels(channels: Channel[], showOffline = false): Channel[] {
 /** Search TV channels — category aliases, fuse, and channel-number heuristics. */
 export function searchLiveMediaChannels(channels: Channel[], query: string, limit = 24): Channel[] {
   const q = query.trim();
-  if (!q) return [];
+  if (!q || isRadioFrequencyQuery(q)) return [];
   const pool = visibleChannels(channels);
   const category = resolveCategoryFromQuery(q);
   if (category) {
@@ -175,19 +177,36 @@ export function searchLiveMediaChannels(channels: Channel[], query: string, limi
 }
 
 /** Search radio stations with fuse + tag/name substring fallback. */
-export function searchLiveMediaRadio(stations: RadioStation[], query: string, limit = 18): RadioStation[] {
+export function searchLiveMediaRadio(
+  stations: RadioStation[],
+  query: string,
+  limit = 18,
+  countryCode?: string,
+): RadioStation[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const pool = stations.filter((s) => s.status !== "offline");
   const index = makeRadioIndex(pool);
   const fuseResults = index.search(q).map((r) => r.item);
-  if (fuseResults.length) return fuseResults.slice(0, limit);
-  return pool
-    .filter(
+  let results: RadioStation[];
+  if (fuseResults.length) {
+    results = fuseResults;
+  } else {
+    results = pool.filter(
       (s) =>
         s.name.toLowerCase().includes(q) ||
         s.tags.some((t) => t.toLowerCase().includes(q)) ||
         s.country.toLowerCase().includes(q),
-    )
-    .slice(0, limit);
+    );
+  }
+  if (countryCode?.trim()) {
+    const cc = countryCode.trim();
+    results = [...results].sort((a, b) => {
+      const ar = radioMatchesRegion(a, cc) ? 1 : 0;
+      const br = radioMatchesRegion(b, cc) ? 1 : 0;
+      if (br !== ar) return br - ar;
+      return 0;
+    });
+  }
+  return results.slice(0, limit);
 }

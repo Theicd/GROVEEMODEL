@@ -685,9 +685,6 @@ export const buildUnifiedSearchPayload = (
 
 
 
-export const shouldOpenSearchResultsPanel = (payload: SearchResultsPayload): boolean =>
-  payload.hits.length > 0 ||
-  payload.providerErrors.some((e) => /SearXNG/i.test(e)) ||
-  (payload.facets.earthquakes ?? 0) + (payload.facets.disasters ?? 0) > 0 ||
-  (payload.facets.ships ?? 0) > 0;
+/** Chat turns keep search inline; the side panel opens only from the rail (manual). */
+export const shouldOpenSearchResultsPanel = (_payload: SearchResultsPayload): boolean => false;
 

@@ -7,6 +7,7 @@ vi.mock("../groveeNews/engine/translate/googleTranslate", () => ({
 }));
 
 import {
+  buildLocalTextHistoryForModel,
   localTextToModelLanguage,
   localTextToUiLanguage,
   needsLocalTextTranslationBridge,
@@ -50,7 +51,8 @@ describe("localTextTranslate", () => {
   it("prepareLocalTextTurnForModel batches history translation", async () => {
     translateTextsMock
       .mockResolvedValueOnce({ texts: ["Hi"], provider: "cache" })
-      .mockResolvedValueOnce({ texts: ["How are you?", "I am fine"], provider: "cache" });
+      .mockResolvedValueOnce({ texts: ["Hello"], provider: "cache" })
+      .mockResolvedValueOnce({ texts: ["Hey"], provider: "cache" });
 
     const prepared = await prepareLocalTextTurnForModel(
       "מה שלומך?",
@@ -62,9 +64,9 @@ describe("localTextTranslate", () => {
     );
 
     expect(prepared.prompt).toBe("Hi");
-    expect(prepared.history[0].content).toBe("How are you?");
-    expect(prepared.history[1].content).toBe("I am fine");
-    expect(prepared.systemPrompt).toContain("English only");
+    expect(prepared.history[0].content).toBe("Hello");
+    expect(prepared.history[1].content).toBe("Hey");
+    expect(prepared.systemPrompt).toContain("GROVEE");
   });
 
   it("falls back to original text when translate fails", async () => {
@@ -74,5 +76,38 @@ describe("localTextTranslate", () => {
       "he",
     );
     expect(history[0].content).toBe("שלום");
+  });
+
+  it("buildLocalTextHistoryForModel pins remember messages mid-chat", () => {
+    const entries = Array.from({ length: 10 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as const,
+      content: `msg-${i}`,
+    }));
+    entries[6] = { role: "user", content: "זכור: העיר האהובה עליי היא פריז" };
+    entries[7] = { role: "assistant", content: "Noted." };
+    const pinned = [6, 7];
+    const { entries: picked, sourceIndices } = buildLocalTextHistoryForModel(entries, {
+      maxMessageSlots: 6,
+      pinnedSourceIndices: pinned,
+    });
+    expect(sourceIndices).toContain(6);
+    expect(picked.some((e) => /פריז/.test(e.content))).toBe(true);
+  });
+
+  it("QA memory script: Paris survives filler turns", () => {
+    const entries = [
+      { role: "user" as const, content: "remember: my favorite city is Paris" },
+      { role: "assistant" as const, content: "Got it." },
+      { role: "user" as const, content: "weather?" },
+      { role: "assistant" as const, content: "Sunny." },
+      { role: "user" as const, content: "random fact" },
+      { role: "assistant" as const, content: "Cats sleep a lot." },
+      { role: "user" as const, content: "which city do I love?" },
+    ];
+    const { entries: picked } = buildLocalTextHistoryForModel(entries, {
+      maxMessageSlots: 12,
+      pinnedSourceIndices: [0, 1],
+    });
+    expect(picked.some((e) => /paris/i.test(e.content))).toBe(true);
   });
 });

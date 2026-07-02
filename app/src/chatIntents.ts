@@ -9,9 +9,16 @@ export type ChatTurn = {
 };
 
 export const isSimpleGreeting = (text: string): boolean => {
-  const normalized = text.trim().toLowerCase();
+  const t = text.trim();
+  const normalized = t.toLowerCase();
   if (/^(hi|hey|hello|shalom|שלום|היי|הי)$/.test(normalized)) return true;
-  if (/^(?:שלום\s+)?(?:בוקר|ערב|לילה)\s+טוב(?:[\s!?.،,]*)*$/i.test(text.trim())) return true;
+  if (/^(?:שלום\s+)?(?:בוקר|ערב|לילה)\s+טוב(?:[\s!?.،,]*)*$/i.test(t)) return true;
+  if (/^(?:שלום|היי|הי|hi|hey|hello)\s+(?:גרובי|groovie|groovee|grovee)(?:[\s!?.،,]*)*$/i.test(t)) {
+    return true;
+  }
+  if (/^(?:גרובי|groovie|groovee|grovee)[\s,!.]*(?:שלום|היי|hi|hey|hello)?(?:[\s!?.،,]*)*$/i.test(t)) {
+    return true;
+  }
   return false;
 };
 
@@ -394,9 +401,12 @@ export const getArtifactScanContent = (raw: string, thinkingEnabled: boolean): s
 export type ChatTopic =
   | "greeting"
   | "design"
+  | "trivia"
   | "bored_play"
   | "camera"
   | "general";
+
+import { isTriviaOrSocialGame } from "./gameSearch/gameIntents";
 
 const DESIGN_RE =
   /עיצוב|כסא|כיסא|חומר|מינימל|אווירה|חדר|ריהוט|סגנון|design|chair|material|minimal|room decor|interior/i;
@@ -407,6 +417,7 @@ export const classifyChatTopic = (text: string): ChatTopic => {
   const t = text.trim();
   if (!t) return "general";
   if (isSimpleGreeting(t)) return "greeting";
+  if (isTriviaOrSocialGame(t)) return "trivia";
   if (BORED_PLAY_RE.test(t)) return "bored_play";
   if (needsCameraVisionEscalation(t) || isCameraContextQuestion(t)) return "camera";
   if (DESIGN_RE.test(t)) return "design";
@@ -513,6 +524,7 @@ export const formatCameraTopicLabel = (topic: string): string => {
     general: "שיחה",
     design: "עיצוב",
     bored_play: "משחק / שעמום",
+    trivia: "טריוויה / חידון",
     scene_general: "סצנה",
     visibility: "נוכחות",
     person: "אדם בפריים",

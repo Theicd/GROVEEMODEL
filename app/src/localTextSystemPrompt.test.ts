@@ -33,7 +33,7 @@ describe("localTextSystemPrompt", () => {
     expect(prompt.length).toBeLessThanOrEqual(LOCAL_TEXT_MAX_SYSTEM_CHARS);
   });
 
-  it("uses short greeting instruction", () => {
+  it("includes GROVEE identity in he UI prompt", () => {
     const prompt = buildLocalTextSystemPrompt({
       uiLang: "he",
       prelude: { ...basePrelude, greeting: true },
@@ -41,8 +41,9 @@ describe("localTextSystemPrompt", () => {
       startupContext: null,
       webContext: "",
     });
+    expect(prompt).toContain("GROVEE");
     expect(prompt).toContain("greeting");
-    expect(prompt.length).toBeLessThan(220);
+    expect(prompt.length).toBeLessThanOrEqual(LOCAL_TEXT_MAX_SYSTEM_CHARS);
   });
 
   it("adds compact game grounding block when games found", () => {

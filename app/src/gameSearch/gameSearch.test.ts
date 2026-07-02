@@ -6,6 +6,7 @@ import {
   extractGameQuery,
   extractUserIntentPrefix,
   isGameSearchRequest,
+  isTriviaOrSocialGame,
   isTextCompositionRequest,
   parseGameUserRequest,
   shouldOpenGamePanel,
@@ -24,7 +25,22 @@ describe("gameIntents", () => {
     expect(shouldOpenGamePanel("בוא נשחק משחק חשיבה", "")).toBe(false);
   });
 
-  it("detects decade and recommendation browse requests", () => {
+  it("routes trivia and word games to LLM, not arcade panel", () => {
+    const msg =
+      "בוא נשחק טריוויה במשחק מילים של מסע בין כוכבים אתה שואל שאלה ונותן 4 תשובות ואני בוחר אחת";
+    expect(isTriviaOrSocialGame(msg)).toBe(true);
+    expect(isGameSearchRequest(msg)).toBe(false);
+    expect(shouldOpenGamePanel(msg, "bored_play")).toBe(false);
+    expect(shouldOpenGamePanel(msg, "general")).toBe(false);
+  });
+
+  it("routes quiz phrasing to LLM", () => {
+    expect(isTriviaOrSocialGame("בוא נעשה חידון על מסע בין כוכבים")).toBe(true);
+    expect(isTriviaOrSocialGame("שאל אותי שאלות טריוויה על סטאר טרק")).toBe(true);
+    expect(shouldOpenGamePanel("בוא נעשה חידון על מסע בין כוכבים", "bored_play")).toBe(false);
+  });
+
+  it("still opens arcade for explicit archive browse", () => {
     expect(isGameSearchRequest("חפש משחקים משנות ה80 ותציג אותם")).toBe(true);
     expect(isGameSearchRequest("האם יש משחקים מומלצים?")).toBe(true);
     expect(isGameSearchRequest("חפש משחקים משנות ה80 בקטגוריית ארקייד")).toBe(true);

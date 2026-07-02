@@ -1,6 +1,8 @@
 import type { SearchIntent } from "./types";
 import { getIntentScanText, isInlineTextTaskRequest } from "../chatComposition";
 import { isSimpleMathQuery } from "../chatIntents";
+import { LIVE_MEDIA_CATEGORIES } from "../liveMedia/catalogs";
+import { isLiveMediaCatalogQuery, isLiveTvCategoryChannelQuery, isRadioFrequencyQuery } from "../liveMedia/mediaIntent";
 import { expandCrossSourceIntents, isCrossSourceQuery } from "./crossSourceIntents";
 import { isLocalContextTimeQuery } from "../startupContext/localTime";
 import { hasUrlInQuery, isGitHubRepoUrlInQuery } from "./urlExtract";
@@ -120,6 +122,9 @@ export const isCasualConversation = (text: string): boolean => {
   const q = text.trim();
   if (!q) return true;
   if (CASUAL_CHAT_RE.test(q)) return true;
+  if (/^(?:שלום|היי|הי|hi|hey|hello)\s+(?:גרובי|groovie|groovee|grovee)(?:[\s!?.،,]*)*$/i.test(q)) {
+    return true;
+  }
   if (/^(?:היי|הי|שלום|hey|hi|hello)\s+מה\s+שלומ/i.test(q)) return true;
   if (/^(?:שלום\s+)?(?:בוקר|ערב|לילה)\s+טוב(?:[\s!?.،,]*)*$/i.test(q)) return true;
   if (/^מה\s+שלומ(?:ך|כם|ן|ה)?(?:[\s!?.،,]*)*$/i.test(q)) return true;
@@ -216,6 +221,13 @@ export const isHuggingFaceImageQuery = (text: string): boolean =>
 /** Scope broad intent regexes to the instruction line when pasted payload is not a live lookup. */
 const scan = (text: string): string => getIntentScanText(text, { userRequestsSearch });
 
+function isCatalogCategoryToken(text: string): boolean {
+  const q = text.trim().toLowerCase();
+  return LIVE_MEDIA_CATEGORIES.some(
+    (cat) => q === cat.id || q === cat.name.toLowerCase() || q === cat.nameHe,
+  );
+}
+
 export const isMusicQuery = (text: string): boolean =>
   /(?:שיר(?:ים)?|מוזיקה|שירון|פלייליסט|playlist|song|songs|music|album|אלבום|קליפ|clip|artist|אמן|זמר(?:ה)?|band|להקה|מלודיה|\brock\b|\bjazz\b|\bclassical\b|\bpop\b|\bmetal\b|\bblues\b|country music)/i.test(
     scan(text),
@@ -225,6 +237,7 @@ export const isMusicQuery = (text: string): boolean =>
 export const isLiveMediaQuery = (text: string): boolean => {
   const q = scan(text);
   return (
+    isRadioFrequencyQuery(text) ||
     isMusicQuery(text) ||
     /(?:רוק|ג(?:'|')(?:ל|לצ)|קול|רדיו|radio|טלוויזיה|טלויזיה|tv live|live tv|ערוץ|תחנה|שידור|iptv|stream|now\s*\d+|כאן\s*\d+)/i.test(q) ||
     /(?:rock|jazz|classical|metal|blues|news channel|sport channel|comedy|entertainment|kids channel)/i.test(q) ||
@@ -236,6 +249,7 @@ export const isLiveMediaQuery = (text: string): boolean => {
 export const shouldSearchLiveMedia = (text: string, panelSearch?: boolean): boolean => {
   const q = text.trim();
   if (q.length < 2) return false;
+  if (isCatalogCategoryToken(q)) return true;
   if (isLiveMediaQuery(q)) return true;
   if (panelSearch && isMusicQuery(q)) return true;
   return false;
@@ -383,6 +397,8 @@ export const isStarlinkRegionalQuery = (text: string): boolean =>
 export const needsWebSearch = (text: string): boolean => {
   const q = text.trim();
   if (!q || isInlineTextTaskRequest(q) || isCasualConversation(q) || isSimpleMathQuery(q)) return false;
+  /** Local IPTV/radio catalog — not web news, GitHub, or OMDb. */
+  if (isLiveMediaCatalogQuery(q)) return false;
   if (hasUrlInQuery(q)) return true;
   if (userRequestsSearch(q)) return true;
   if (isOpenWebTopicQuery(q)) return true;
@@ -611,10 +627,14 @@ export const isGitHubQuery = (text: string): boolean =>
   (/^מצא\s+/i.test(text) &&
     /(?:פרויקט|webgpu|three|ollama|ai\b|github|גיטהב|משחק)/i.test(text));
 
-export const isMoviesQuery = (text: string): boolean =>
-  /(?:סרט(?:ים)?|סדרה|סדרות|film|movie|movies|cinema|נטפליקס|netflix|imdb|trailer|טריילר|ביקורות?|reviews?|rating|ציון|שחקן|שחקנית|במאי|director|actor|actress|cast|tv\s*show|series|עונה|season)/i.test(
-    text,
-  ) || /(?:מה\s+על|על\s+הסרט|about\s+the\s+movie)/i.test(text);
+export const isMoviesQuery = (text: string): boolean => {
+  if (isLiveTvCategoryChannelQuery(text)) return false;
+  return (
+    /(?:סרט(?:ים)?|סדרה|סדרות|film|movie|movies|cinema|נטפליקס|netflix|imdb|trailer|טריילר|ביקורות?|reviews?|rating|ציון|שחקן|שחקנית|במאי|director|actor|actress|cast|tv\s*show|series|עונה|season)/i.test(
+      text,
+    ) || /(?:מה\s+על|על\s+הסרט|about\s+the\s+movie)/i.test(text)
+  );
+};
 
 export const isSeriesQuery = (text: string): boolean =>
   /(?:סדרה|סדרות|tv\s*show|television|series|עונה|season|פרק|episode)/i.test(text);
@@ -750,6 +770,9 @@ export const classifySearchIntents = (query: string): SearchIntent[] => {
   }
   if (isTopicalOverviewQuery(query)) {
     return ["news"];
+  }
+  if (isLiveMediaCatalogQuery(query)) {
+    return ["livemedia"];
   }
   const intents: SearchIntent[] = [];
   if (isWorldOverviewQuery(query)) {

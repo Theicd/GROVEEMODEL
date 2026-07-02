@@ -1,3 +1,5 @@
+import { buildTriviaFormatInstruction } from "./trivia/triviaPrompt";
+import { formatSessionMemoryForPrompt } from "./chatSessionMemory";
 import { capWebContext } from "./chatResourceBudget";
 import type { ChatTurnPreludeContinue, PendingWebSearchMeta } from "./chatTurnPrelude";
 import {
@@ -5,6 +7,7 @@ import {
   localTextBaseSystemForUi,
   type LocalTextModelSettings,
 } from "./modelRack/localTextModelSettings";
+import { SMOLLM_GROVEE_IDENTITY } from "./modelRack/localTextTranslate";
 import type { ChatUiLanguage } from "./ui/useUiLanguage";
 import type { StartupContext } from "./startupContext";
 
@@ -27,23 +30,46 @@ export type LocalTextContextInput = {
   startupContext: StartupContext | null;
   webContext: string;
   settings?: LocalTextModelSettings;
+  /** User "remember …" facts extracted from the session. */
+  sessionMemoryFacts?: string[];
+  triviaMode?: boolean;
+  triviaQuestionCount?: number;
 };
 
-function trimSystemPrompt(text: string): string {
-  const clean = text.trim();
-  if (clean.length <= LOCAL_TEXT_MAX_SYSTEM_CHARS) return clean;
-  return `${clean.slice(0, LOCAL_TEXT_MAX_SYSTEM_CHARS - 1)}…`;
+/** Trim append blocks first; never truncate GROVEE identity core. */
+export function trimLocalTextSystemPrompt(base: string, appendBlocks: string[]): string {
+  const core = base.trim();
+  const parts = appendBlocks.map((b) => b.trim()).filter(Boolean);
+  let combined = core;
+  for (const block of parts) {
+    const next = `${combined}\n\n${block}`;
+    if (next.length <= LOCAL_TEXT_MAX_SYSTEM_CHARS) {
+      combined = next;
+      continue;
+    }
+    const room = LOCAL_TEXT_MAX_SYSTEM_CHARS - combined.length - 2;
+    if (room > 40) {
+      combined = `${combined}\n\n${block.slice(0, room - 1)}…`;
+    }
+    break;
+  }
+  if (combined.length <= LOCAL_TEXT_MAX_SYSTEM_CHARS) return combined;
+  const identityLen = Math.min(core.length, SMOLLM_GROVEE_IDENTITY.length + 80);
+  const head = core.slice(0, identityLen).trim();
+  const tailRoom = LOCAL_TEXT_MAX_SYSTEM_CHARS - head.length - 1;
+  return tailRoom > 0 ? `${head.slice(0, tailRoom)}…` : head.slice(0, LOCAL_TEXT_MAX_SYSTEM_CHARS - 1) + "…";
 }
 
 export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string {
   const settings = input.settings ?? DEFAULT_LOCAL_TEXT_SETTINGS;
   const { uiLang, prelude, pendingWebSearch, webContext } = input;
-  let systemPrompt = localTextBaseSystemForUi(uiLang, settings);
+  const baseSystem = localTextBaseSystemForUi(uiLang, settings);
+  const appendBlocks: string[] = [];
 
   if (prelude.greeting) {
-    return trimSystemPrompt(
-      `${systemPrompt}\nThe user sent a short greeting. Reply with one warm sentence only.`,
-    );
+    return uiLang === "he"
+      ? "You are Groovie. Reply with one short friendly Hebrew greeting sentence only."
+      : "You are Groovie. Reply with one short friendly greeting sentence only.";
   }
 
   const searchHadLiveData =
@@ -51,32 +77,46 @@ export function buildLocalTextSystemPrompt(input: LocalTextContextInput): string
 
   const cappedWeb = capWebContext(webContext, Math.min(settings.webBriefChars, 420));
   if (cappedWeb.trim() && searchHadLiveData) {
-    systemPrompt = `${systemPrompt}\n\nUse only these live facts:\n${cappedWeb}`;
+    appendBlocks.push(`Use only these live facts:\n${cappedWeb}`);
   } else if (prelude.shouldRunWebSearch && !searchHadLiveData) {
-    systemPrompt = `${systemPrompt}\n\nLive search returned no usable data. Say briefly that live fetch failed. Do not invent facts.`;
+    appendBlocks.push(
+      "Live search returned no usable data. Say briefly that live fetch failed. Do not invent facts.",
+    );
   }
 
   if (prelude.gameNoResults) {
-    systemPrompt = `${systemPrompt}\n\nNo games matched. Tell the user briefly and point to category browse.`;
+    appendBlocks.push("No games matched. Tell the user briefly and point to category browse.");
   } else if (prelude.gameGroundingBlock.trim()) {
-    systemPrompt = `${systemPrompt}\n\nGames are listed in the side panel only:\n${prelude.gameGroundingBlock.slice(0, 240)}`;
+    appendBlocks.push(
+      `Games are shown inline in chat — user taps ▶ on cards:\n${prelude.gameGroundingBlock.slice(0, 200)}`,
+    );
   }
 
   if (prelude.globePlaceLabel) {
-    systemPrompt = `${systemPrompt}\n\nMap focus: ${prelude.globePlaceLabel}`;
+    appendBlocks.push(`Map focus: ${prelude.globePlaceLabel}`);
   }
 
   if (prelude.localTimeOnly) {
-    systemPrompt = `${systemPrompt}\n\nAnswer using local time context only.`;
+    appendBlocks.push("Answer using local time context only.");
   }
 
-  return trimSystemPrompt(systemPrompt);
+  const memoryBlock = formatSessionMemoryForPrompt(input.sessionMemoryFacts ?? []);
+  if (memoryBlock) appendBlocks.push(memoryBlock);
+
+  if (input.triviaMode) {
+    appendBlocks.push(
+      buildTriviaFormatInstruction(uiLang, input.triviaQuestionCount ?? 5),
+    );
+  }
+
+  return trimLocalTextSystemPrompt(baseSystem, appendBlocks);
 }
 
 export function localTextMaxNewTokens(
   prelude: ChatTurnPreludeContinue,
   settings: LocalTextModelSettings = DEFAULT_LOCAL_TEXT_SETTINGS,
 ): number {
+  if (prelude.triviaMode) return Math.min(896, Math.max(settings.maxNewTokensSearch, 640));
   if (prelude.shouldRunWebSearch || prelude.localTimeOnly) {
     return Math.min(settings.maxNewTokensSearch, 320);
   }
