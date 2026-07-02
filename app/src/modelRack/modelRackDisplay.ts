@@ -1,4 +1,5 @@
 import { GEMMA_RACK_ID, type RackModelEntry } from "./modelRack";
+import { HUNYUAN_RACK_ID } from "./localTextModels";
 
 export type ImageModelMeta = {
   badge: string;
@@ -46,6 +47,7 @@ export function rackPickerTitle(entry: RackModelEntry): string {
 export function rackPickerHint(entry: RackModelEntry): string | null {
   if (entry.id === GEMMA_RACK_ID) return "שיחה מקומית";
   if (entry.adapter === "hf-local-text") {
+    if (entry.id === HUNYUAN_RACK_ID) return "הקשר ארוך · זיכרון שיחה";
     if (entry.status === "ready") return "מודל מקומי · שיחה טקסט";
     if (entry.status === "downloading") return "מוריד…";
     return "לחץ הורדה לפני שיחה";

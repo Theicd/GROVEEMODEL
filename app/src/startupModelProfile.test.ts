@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { HUNYUAN_RACK_ID } from "./modelRack/localTextModels";
 import {
   detectMobileDevice,
   quickStartupModelChoice,
@@ -95,11 +96,23 @@ describe("startupModelProfile", () => {
     ).toBe("hf--HuggingFaceTB--SmolLM2-135M-Instruct");
   });
 
-  it("recommendLocalTextRackId picks 360M on capable device", () => {
+  it("recommendLocalTextRackId picks 360M on capable device without WebGPU", () => {
     expect(
       recommendLocalTextRackId(
-        weakSignals({ deviceMemoryGb: 8, isMobile: false }),
+        weakSignals({
+          deviceMemoryGb: 8,
+          isMobile: false,
+          webgpu: { ...desktopGpu, available: false },
+        }),
       ),
     ).toBe("hf--HuggingFaceTB--SmolLM2-360M-Instruct");
+  });
+
+  it("recommendLocalTextRackId picks Hunyuan on strong desktop with WebGPU", () => {
+    expect(
+      recommendLocalTextRackId(
+        weakSignals({ deviceMemoryGb: 8, isMobile: false, webgpu: desktopGpu }),
+      ),
+    ).toBe(HUNYUAN_RACK_ID);
   });
 });

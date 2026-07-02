@@ -9,6 +9,16 @@ export const SMOLLM_RACK_ID = `hf--${SMOLLM_HF_MODEL_ID.replace(/\//g, "--")}`;
 export const SMOLLM_135M_HF_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
 export const SMOLLM_135M_RACK_ID = `hf--${SMOLLM_135M_HF_MODEL_ID.replace(/\//g, "--")}`;
 
+/** Browser ONNX build (q4) of tencent/Hunyuan-0.5B-Instruct — GGUF is not supported in-browser. */
+export const HUNYUAN_HF_MODEL_ID = "Theicd/Hunyuan-0.5B-Instruct-ONNX";
+export const HUNYUAN_RACK_ID = `hf--${HUNYUAN_HF_MODEL_ID.replace(/\//g, "--")}`;
+
+/**
+ * Interim ONNX weights until Hunyuan-0.5B-Instruct is published in ONNX format on HF.
+ * Same ~0.5B instruct class; long-context profile applies to both.
+ */
+export const HUNYUAN_INTERIM_ONNX_HF_MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
+
 export const LOCAL_TEXT_READY_KEY = "grovee_local_text_ready_v1";
 
 import type { RackModelEntry, RackModelStatus } from "./modelRack";
@@ -36,6 +46,17 @@ const DOWNLOADABLE_TEXT_BUILTINS: RackModelEntry[] = [
     pipelineTag: "text-generation",
     addedAt: 1,
   },
+  {
+    id: HUNYUAN_RACK_ID,
+    label: "Hunyuan 0.5B",
+    modality: "text",
+    adapter: "hf-local-text",
+    status: "not_downloaded",
+    source: "builtin",
+    hfModelId: HUNYUAN_HF_MODEL_ID,
+    pipelineTag: "text-generation",
+    addedAt: 2,
+  },
 ];
 
 const RACK_TO_HF = new Map(
@@ -45,6 +66,12 @@ const RACK_TO_HF = new Map(
 export function hfModelIdForLocalTextRack(rackId: string): string | null {
   const id = RACK_TO_HF.get(rackId);
   return id || null;
+}
+
+/** HF repo id used for download/inference (Hunyuan maps to interim ONNX until published). */
+export function resolveLocalTextLoadModelId(hfModelId: string): string {
+  if (hfModelId === HUNYUAN_HF_MODEL_ID) return HUNYUAN_INTERIM_ONNX_HF_MODEL_ID;
+  return hfModelId;
 }
 
 export function isLocalTextRackId(rackId: string): boolean {

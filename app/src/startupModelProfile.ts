@@ -1,4 +1,5 @@
 import {
+  HUNYUAN_RACK_ID,
   SMOLLM_135M_RACK_ID,
   SMOLLM_RACK_ID,
 } from "./modelRack/localTextModels";
@@ -182,19 +183,26 @@ export async function resolveStartupModelChoice(
   return recommendStartupModel(signals);
 }
 
-/** Pick 135M on low memory; 360M otherwise for local-text boot. */
+/** Pick 135M on low memory; Hunyuan on capable devices; else 360M. */
 export function recommendLocalTextRackId(signals: StartupDeviceSignals): string {
   const lowMem = signals.deviceMemoryGb != null && signals.deviceMemoryGb <= 4;
   if (lowMem) return SMOLLM_135M_RACK_ID;
   if (signals.isMobile && signals.deviceMemoryGb != null && signals.deviceMemoryGb <= 6) {
     return SMOLLM_135M_RACK_ID;
   }
+  const capableForHunyuan =
+    !signals.isMobile &&
+    (signals.deviceMemoryGb == null || signals.deviceMemoryGb >= 6) &&
+    signals.webgpu.available &&
+    !signals.webgpu.isFallbackAdapter;
+  if (capableForHunyuan) return HUNYUAN_RACK_ID;
   return SMOLLM_RACK_ID;
 }
 
 export function localTextRackLabelHe(rackId: string): string {
   if (rackId === SMOLLM_135M_RACK_ID) return "SmolLM2 135M";
   if (rackId === SMOLLM_RACK_ID) return "SmolLM2 360M";
+  if (rackId === HUNYUAN_RACK_ID) return "Hunyuan 0.5B";
   return "SmolLM2";
 }
 

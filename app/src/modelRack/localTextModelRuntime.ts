@@ -1,4 +1,4 @@
-import { markLocalTextReady } from "./localTextModels";
+import { markLocalTextReady, resolveLocalTextLoadModelId } from "./localTextModels";
 import type { LocalTextInferenceBackend } from "./localTextModelSettings";
 import { pushWorkerLog, type ConsoleLogLevel } from "../consoleLogStore";
 
@@ -50,6 +50,7 @@ export function downloadLocalTextModel(
   backend: LocalTextInferenceBackend = "auto",
 ): Promise<void> {
   const w = getWorker();
+  const loadModelId = resolveLocalTextLoadModelId(modelId);
   return new Promise((resolve, reject) => {
     let stallTimer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
@@ -83,11 +84,11 @@ export function downloadLocalTextModel(
       // Any activity for this model counts as progress toward completion.
       if (
         (data.type === "progress" || data.type === "status" || data.type === "loaded") &&
-        data.modelId === modelId
+        data.modelId === loadModelId
       ) {
         armStall();
       }
-      if (data.type === "progress" && data.modelId === modelId) {
+      if (data.type === "progress" && data.modelId === loadModelId) {
         onProgress({
           pct: data.pct,
           message: data.message,
@@ -95,7 +96,7 @@ export function downloadLocalTextModel(
           total: data.total,
         });
       }
-      if (data.type === "status" && data.modelId === modelId) {
+      if (data.type === "status" && data.modelId === loadModelId) {
         onProgress({
           pct: 0,
           message: data.text,
@@ -103,9 +104,10 @@ export function downloadLocalTextModel(
           total: 0,
         });
       }
-      if (data.type === "loaded" && data.modelId === modelId) {
+      if (data.type === "loaded" && data.modelId === loadModelId) {
         console.info("[GROVEE:boot]", "SmolLM worker loaded", {
-          modelId: data.modelId,
+          modelId: loadModelId,
+          rackModelId: modelId,
           device: data.device,
           usesGpu: data.device === "webgpu",
         });
@@ -120,7 +122,7 @@ export function downloadLocalTextModel(
     };
     w.addEventListener("message", onMessage);
     armStall();
-    w.postMessage({ type: "load", modelId, backend });
+    w.postMessage({ type: "load", modelId: loadModelId, backend });
   });
 }
 
@@ -139,6 +141,7 @@ export type LocalTextGenerateOptions = {
 
 export function generateLocalTextChat(opts: LocalTextGenerateOptions): Promise<string> {
   const w = getWorker();
+  const loadModelId = resolveLocalTextLoadModelId(opts.modelId);
   return new Promise((resolve, reject) => {
     let full = "";
     const onMessage = (ev: MessageEvent<WorkerOut>) => {
@@ -166,7 +169,8 @@ export function generateLocalTextChat(opts: LocalTextGenerateOptions): Promise<s
     w.addEventListener("message", onMessage);
     w.postMessage({
       type: "generate",
-      modelId: opts.modelId,
+      modelId: loadModelId,
+      rackModelId: opts.modelId,
       systemPrompt: opts.systemPrompt,
       history: opts.history,
       prompt: opts.prompt,

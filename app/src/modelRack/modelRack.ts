@@ -73,8 +73,12 @@ export {
   SMOLLM_HF_MODEL_ID,
   SMOLLM_135M_RACK_ID,
   SMOLLM_135M_HF_MODEL_ID,
+  HUNYUAN_RACK_ID,
+  HUNYUAN_HF_MODEL_ID,
+  HUNYUAN_INTERIM_ONNX_HF_MODEL_ID,
   SMOLLM_CHAT_SYSTEM,
   hfModelIdForLocalTextRack,
+  resolveLocalTextLoadModelId,
   isLocalTextRackId,
 } from "./localTextModels";
 

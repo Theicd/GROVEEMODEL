@@ -34,6 +34,46 @@ try {
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
+const HUNYUAN_HF_MODEL_ID = "Theicd/Hunyuan-0.5B-Instruct-ONNX";
+
+type GenerationProfile = {
+  temperatureDefault: number;
+  repetitionPenalty: number;
+  repetitionPenaltyWasm: number;
+  topPDefault: number;
+  topK: number;
+  topKWasm: number;
+  wasmMaxNewTokensCap: number;
+  noRepeatNgramSize: number;
+};
+
+const SMOLLM_GENERATION: GenerationProfile = {
+  temperatureDefault: 0.35,
+  repetitionPenalty: 1.15,
+  repetitionPenaltyWasm: 1.3,
+  topPDefault: 0.85,
+  topK: 50,
+  topKWasm: 40,
+  wasmMaxNewTokensCap: 160,
+  noRepeatNgramSize: 3,
+};
+
+const HUNYUAN_GENERATION: GenerationProfile = {
+  temperatureDefault: 0.7,
+  repetitionPenalty: 1.1,
+  repetitionPenaltyWasm: 1.15,
+  topPDefault: 0.9,
+  topK: 50,
+  topKWasm: 45,
+  wasmMaxNewTokensCap: 320,
+  noRepeatNgramSize: 3,
+};
+
+function generationProfileFor(modelId: string): GenerationProfile {
+  if (modelId === HUNYUAN_HF_MODEL_ID) return HUNYUAN_GENERATION;
+  return SMOLLM_GENERATION;
+}
+
 type HfProgress = {
   status?: string;
   file?: string;
@@ -302,6 +342,7 @@ self.onmessage = async (ev: MessageEvent) => {
     maxNewTokens?: number;
     temperature?: number;
     topP?: number;
+    rackModelId?: string;
   };
 
   try {
@@ -331,6 +372,8 @@ self.onmessage = async (ev: MessageEvent) => {
       }
 
       const pipe = await ensureGenerator(msg.modelId, msg.backend ?? "auto");
+      const profileModelId =
+        typeof msg.rackModelId === "string" && msg.rackModelId ? msg.rackModelId : msg.modelId;
       chatBusy = true;
       abortRequested = false;
       const interrupt = new InterruptableStoppingCriteria();
@@ -353,35 +396,27 @@ self.onmessage = async (ev: MessageEvent) => {
 
       const historyLen = msg.history?.length ?? 0;
       const promptLen = msg.prompt?.length ?? 0;
+      console.info("[local-text:worker] generate", { historyLen, promptLen, modelId: msg.modelId });
       const simpleTurn = historyLen === 0 && promptLen < 64;
-      // On mobile/CPU the tiny 135M model collapses into single-word loops with the
-      // near-greedy (very low temperature) decoding we use on desktop. Keep enough
-      // sampling entropy there and lean harder on repetition controls.
+      const genProfile = generationProfileFor(profileModelId);
       const onCpu = activeDevice === "wasm";
-      // Tiny 135M model rambles and rarely stops on its own. Keep replies short and
-      // focused: a lower temperature (safe now that repetition_penalty +
-      // no_repeat_ngram guard against loops) gives more accurate, less wandering
-      // answers, and we cap the length on the CPU/mobile path.
       const temperature = onCpu
-        ? Math.min(msg.temperature ?? 0.4, 0.45)
-        : simpleTurn
-          ? Math.min(msg.temperature ?? 0.35, 0.25)
-          : (msg.temperature ?? 0.35);
+        ? Math.min(msg.temperature ?? genProfile.temperatureDefault, genProfile.temperatureDefault + 0.05)
+        : simpleTurn && profileModelId !== HUNYUAN_HF_MODEL_ID
+          ? Math.min(msg.temperature ?? genProfile.temperatureDefault, 0.25)
+          : (msg.temperature ?? genProfile.temperatureDefault);
       const maxNewTokens = onCpu
-        ? Math.min(msg.maxNewTokens ?? 160, 160)
-        : (msg.maxNewTokens ?? 192);
+        ? Math.min(msg.maxNewTokens ?? genProfile.wasmMaxNewTokensCap, genProfile.wasmMaxNewTokensCap)
+        : (msg.maxNewTokens ?? genProfile.wasmMaxNewTokensCap + 64);
 
       try {
         const out = await pipe(messages, {
           max_new_tokens: maxNewTokens,
           temperature,
-          top_p: onCpu ? 0.85 : (msg.topP ?? 0.85),
-          top_k: onCpu ? 40 : 50,
-          // Anti-repetition: penalize already-seen tokens and forbid repeating any
-          // 3-gram. This is what stops the "same word over and over" failure mode
-          // on small quantized models.
-          repetition_penalty: onCpu ? 1.3 : 1.15,
-          no_repeat_ngram_size: 3,
+          top_p: onCpu ? genProfile.topPDefault : (msg.topP ?? genProfile.topPDefault),
+          top_k: onCpu ? genProfile.topKWasm : genProfile.topK,
+          repetition_penalty: onCpu ? genProfile.repetitionPenaltyWasm : genProfile.repetitionPenalty,
+          no_repeat_ngram_size: genProfile.noRepeatNgramSize,
           do_sample: true,
           streamer,
           stopping_criteria: interrupt,
