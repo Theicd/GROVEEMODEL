@@ -1,7 +1,10 @@
+import type { LiveEarthquakeItem } from "../../liveWorld/types";
 import { fetchJson } from "../fetchJson";
 import type { SearchSourceResult } from "../types";
 
 type UsgsFeature = {
+  id?: string;
+  geometry?: { coordinates?: [number, number, number] };
   properties: {
     mag: number | null;
     place: string | null;
@@ -117,6 +120,51 @@ const extractRegionMatchers = (query: string): string[] => {
     .forEach((w) => matchers.add(w));
 
   return [...matchers];
+};
+
+const USGS_HOUR_FEED =
+  "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson";
+
+const USGS_DAY_FEED =
+  "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson";
+
+export const usgsFeatureToItem = (f: UsgsFeature): LiveEarthquakeItem | null => {
+  const coords = f.geometry?.coordinates;
+  const lat = coords?.[1];
+  const lon = coords?.[0];
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const p = f.properties;
+  return {
+    magnitude: p.mag,
+    place: p.place ?? "unknown",
+    time: p.time,
+    lat,
+    lon,
+    depth: coords?.[2],
+    url: p.url ?? undefined,
+    tsunami: p.tsunami === 1,
+  };
+};
+
+/** Structured USGS feed for globe / cache (includes coordinates). */
+export const fetchUsgsEarthquakesForCache = async (
+  minMag = 2.5,
+  window: "hour" | "day" = "day",
+): Promise<{ items: LiveEarthquakeItem[]; feedLabel: string } | null> => {
+  try {
+    const url = window === "hour" ? USGS_HOUR_FEED : USGS_DAY_FEED;
+    const data = await fetchJson<UsgsFeed>(url);
+    const items = (data.features ?? [])
+      .filter((f) => (f.properties.mag ?? 0) >= minMag)
+      .map(usgsFeatureToItem)
+      .filter((item): item is LiveEarthquakeItem => item != null)
+      .sort((a, b) => b.time - a.time)
+      .slice(0, window === "hour" ? 120 : 50);
+    if (!items.length) return null;
+    return { items, feedLabel: window === "hour" ? "USGS · שעה אחרונה" : "USGS" };
+  } catch {
+    return null;
+  }
 };
 
 export const fetchEarthquakeSearch = async (query: string): Promise<SearchSourceResult> => {

@@ -62,8 +62,14 @@ export type UnifiedSearchHit = {
   score?: number;
   meta?: { stars?: number; engine?: string; year?: number; priceNis?: number;
     magnitude?: number;
+    lat?: number;
+    lon?: number;
+    depth?: number;
     alertLevel?: string;
     disasterType?: string;
+    gdacsEventId?: number;
+    gdacsEpisodeId?: number;
+    severityText?: string;
     status?: string;
     loadTimeMs?: number;
     hfStatus?: string;

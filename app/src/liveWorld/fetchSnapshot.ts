@@ -1,4 +1,4 @@
-import { fetchEarthquakeSearch } from "../webSearch/providers/usgsEarthquake";
+import { fetchEarthquakeSearch, fetchUsgsEarthquakesForCache } from "../webSearch/providers/usgsEarthquake";
 import { fetchIssSearch } from "../realityData/providers/iss";
 import { fetchShipsSearch } from "../realityData/providers/ships";
 import { fetchAviationSearch } from "../realityData/providers/aviation";
@@ -173,7 +173,7 @@ export async function fetchLiveWorldSnapshot(force = false): Promise<LiveWorldSn
     av: "כמה מטוסים נמצאים כרגע מעל ישראל?",
   };
 
-  const [eq, iss, ships, av, avItems, shipLayer, marineInfra] = await Promise.all([
+  const [eq, iss, ships, av, avItems, shipLayer, marineInfra, usgsCache] = await Promise.all([
     fetchEarthquakeSearch(queries.eq),
     fetchIssSearch(queries.iss),
     fetchShipsSearch(queries.ships),
@@ -181,9 +181,13 @@ export async function fetchLiveWorldSnapshot(force = false): Promise<LiveWorldSn
     fetchAviationItemsForCache(),
     fetchLiveShipLayerForCache(),
     fetchLiveMarineInfraForCache(),
+    fetchUsgsEarthquakesForCache(0, "hour"),
   ]);
 
   const snapshot = buildSnapshotFromResults([eq, iss, ships, av], "fetch");
+  if (usgsCache) {
+    snapshot.earthquake = { items: usgsCache.items, feedLabel: usgsCache.feedLabel };
+  }
   if (shipLayer?.items?.length) {
     snapshot.ships = mergeShipLayers(snapshot.ships, shipLayer) ?? shipLayer;
   }

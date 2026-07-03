@@ -6,6 +6,7 @@ export type LiveEarthquakeItem = {
   time: number;
   lat?: number;
   lon?: number;
+  depth?: number;
   url?: string;
   tsunami?: boolean;
 };
@@ -16,6 +17,20 @@ export type LiveDisasterItem = {
   alertLevel: string;
   eventType?: string;
   url?: string;
+  lat?: number;
+  lon?: number;
+  eventId?: number;
+  episodeId?: number;
+  geometryUrl?: string;
+  severityText?: string;
+  /** GDACS episode start (ms) when available. */
+  startTime?: number;
+  /** GDACS episode end / todate (ms). */
+  endTime?: number;
+  /** Last GDACS update (ms). */
+  dateModified?: number;
+  /** GDACS iscurrent flag. */
+  isCurrent?: boolean;
 };
 
 export type LiveIssPosition = {

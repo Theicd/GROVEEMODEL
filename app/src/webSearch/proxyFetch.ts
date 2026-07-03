@@ -104,6 +104,7 @@ const CORS_DIRECT_SUFFIXES = [
   "www.wikidata.org",
   "eonet.gsfc.nasa.gov",
   "www.gdacs.org",
+  "ssd-api.jpl.nasa.gov",
   "api.open-notify.org",
   "time.now",
   "ipapi.co",
