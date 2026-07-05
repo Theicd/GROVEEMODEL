@@ -69,6 +69,9 @@ export type UnifiedSearchHit = {
     disasterType?: string;
     gdacsEventId?: number;
     gdacsEpisodeId?: number;
+    gdacsIsCurrent?: boolean;
+    gdacsEndTime?: number;
+    dateModified?: number;
     severityText?: string;
     status?: string;
     loadTimeMs?: number;

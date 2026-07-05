@@ -19,13 +19,20 @@ export type NeoOrbitTrack = {
 
 const AU_PER_LD = 384_400 / 149_597_870.7;
 
-/** Map lunar distance → scene radius (Earth surface = 1). Spread NEOs visibly in space. */
+/** Scene moon orbit radius and mesh — reference for asteroid angular sizing. */
+export const MOON_SCENE_ORBIT = 2.8;
+export const MOON_SCENE_RADIUS = 0.27;
+export const MOON_SCENE_ANGULAR = MOON_SCENE_RADIUS / MOON_SCENE_ORBIT;
+
+/** Map lunar distance → scene radius (Earth surface = 1). Moon shell ≈ 2.8. */
 export function visualRadiusFromLd(distLd: number): number {
-  const ld = Math.max(0.05, distLd);
-  if (ld <= 1) return 1.1 + ld * 0.18;
-  if (ld <= 6) return 1.28 + (ld - 1) * 0.2;
-  if (ld <= 15) return 2.28 + (ld - 6) * 0.12;
-  return Math.min(3.8, 3.36 + (ld - 15) * 0.04);
+  const moonR = 2.8;
+  const ld = Math.max(0.5, distLd);
+  if (ld <= 1) return moonR + 0.55 + ld * 0.35;
+  if (ld <= 6) return moonR + 0.9 + (ld - 1) * 0.42;
+  if (ld <= 20) return moonR + 3.0 + (ld - 6) * 0.32;
+  if (ld <= 60) return moonR + 7.48 + (ld - 20) * 0.14;
+  return Math.min(22, moonR + 13.08 + (ld - 60) * 0.08);
 }
 
 export function visualRadiusFromDistAu(distAu: number): number {

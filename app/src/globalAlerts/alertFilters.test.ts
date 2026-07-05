@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   passesRealtimeEarthquakeFilter,
+  pickClosestNeoAlert,
   sortAlertEvents,
 } from "./alertFilters";
 import { EQ_LIVE_WINDOW_MS } from "./types";
@@ -30,6 +31,32 @@ describe("passesRealtimeEarthquakeFilter", () => {
         time: Date.now() - EQ_LIVE_WINDOW_MS - 60_000,
       }),
     ).toBe(false);
+  });
+});
+
+describe("pickClosestNeoAlert", () => {
+  const mkNeo = (id: string, distLd: number, approachOffsetMs: number): GlobeAlertEvent => ({
+    id,
+    type: "neo",
+    lat: 0,
+    lon: 0,
+    location: id,
+    time: Date.now(),
+    source: "nasa-jpl",
+    distLd,
+    approachTime: Date.now() + approachOffsetMs,
+  });
+
+  it("picks smallest LD", () => {
+    const a = mkNeo("a", 13.2, 3_600_000);
+    const b = mkNeo("b", 17.3, 1_800_000);
+    expect(pickClosestNeoAlert([a, b])?.id).toBe("a");
+  });
+
+  it("breaks LD ties by soonest approach", () => {
+    const a = mkNeo("a", 10, 5_000_000);
+    const b = mkNeo("b", 10, 2_000_000);
+    expect(pickClosestNeoAlert([a, b])?.id).toBe("b");
   });
 });
 

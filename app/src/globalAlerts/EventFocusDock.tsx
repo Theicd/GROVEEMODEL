@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import type { EnrichedStormBriefing } from "./enrichStormBriefing";
 import { hurricaneColorCss } from "./hurricaneIntensity";
-import { formatNeoEta } from "./neoEta";
+import { formatNeoCountdown } from "./neoEta";
 import type { EnrichedNeoBriefing } from "./enrichNeoBriefing";
 import { liveNeoMetrics } from "./neoLiveMetrics";
 import { approachClosurePercent } from "./neoApproachTrack";
@@ -147,7 +147,7 @@ function NeoDock({
 }) {
   const [, setTick] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setTick((t) => t + 1), 500);
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
   }, []);
   const live = liveNeoMetrics(ev, neoTrack);
@@ -213,10 +213,16 @@ function NeoDock({
               </div>
               <span className="ga-focus-dock__bearing">מהירות יחסית</span>
               <span className="ga-focus-dock__track-speed">
-                {live.diameterKm != null ? `Ø ${live.diameterKm.toFixed(2)} km` : "קוטר בהערכה"} ·{" "}
-                {formatNeoEta(ev.approachTime ?? ev.time)}
+                {live.diameterKm != null ? `Ø ${live.diameterKm.toFixed(2)} km` : "קוטר בהערכה"}
               </span>
             </div>
+          </div>
+
+          <div className="ga-neo-countdown-banner" aria-live="polite">
+            <span className="ga-neo-countdown-banner__label">ספירה לקרבה / מעבר</span>
+            <time className="ga-neo-countdown-banner__val">
+              {formatNeoCountdown(ev.approachTime ?? ev.time)}
+            </time>
           </div>
 
           <p className="ga-focus-dock__region">

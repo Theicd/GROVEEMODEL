@@ -60,6 +60,7 @@ const PROXY_REQUIRED = new Set([
   "stooq.com",
   "query1.finance.yahoo.com",
   "finance.yahoo.com",
+  "ssd-api.jpl.nasa.gov",
 ]);
 
 /** These APIs allow browser CORS — prefer direct fetch (fast, reliable on GitHub Pages). */
@@ -104,7 +105,6 @@ const CORS_DIRECT_SUFFIXES = [
   "www.wikidata.org",
   "eonet.gsfc.nasa.gov",
   "www.gdacs.org",
-  "ssd-api.jpl.nasa.gov",
   "api.open-notify.org",
   "time.now",
   "ipapi.co",

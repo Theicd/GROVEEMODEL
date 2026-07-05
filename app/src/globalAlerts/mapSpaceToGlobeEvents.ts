@@ -1,14 +1,31 @@
 import type { CadRecord } from "./fetchJplCad";
 import type { ScoutRecord } from "./fetchJplScout";
 import { fetchNeoHorizonsTrack } from "./fetchNeoHorizonsTrack";
-import { buildSyntheticNeoTrack } from "./syntheticNeoTrack";
 import { filterNeoAlerts } from "./alertFilters";
 import { formatNeoEta, neoSeverityLine } from "./neoEta";
+import { mergeShowcaseWithReal } from "./neoShowcaseCatalog";
 import type { GlobeAlertEvent } from "./types";
 
 const HORIZONS_BATCH = 3;
 const HORIZONS_ENRICH_LIMIT = 10;
 const TRACK_WINDOW_DAYS = 7;
+
+/**
+ * Deterministic sky-anchor per object so NEOs without a Horizons track
+ * still spread across the celestial sphere instead of stacking on lat/lon 0,0.
+ */
+export function pseudoAnchorFor(id: string): { lat: number; lon: number } {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const u = (h >>> 0) / 4294967296;
+  const v = ((Math.imul(h, 2654435761) >>> 0) / 4294967296);
+  const lat = (u - 0.5) * 150; // -75..75
+  const lon = v * 360 - 180; // -180..180
+  return { lat, lon };
+}
 
 export function cadToGlobeEvent(
   cad: CadRecord,
@@ -95,9 +112,8 @@ export async function fetchSpaceGlobeEvents(): Promise<GlobeAlertEvent[]> {
     .sort((a, b) => a.distLd - b.distLd || a.approachTime - b.approachTime);
 
   const events: GlobeAlertEvent[] = futureCad.map((cad) => {
-    const stub = cadToGlobeEvent(cad, 0, 0, { trackPending: true });
-    const syn = buildSyntheticNeoTrack(stub);
-    return cadToGlobeEvent(cad, syn.closest.lat, syn.closest.lon, { trackPending: true });
+    const a = pseudoAnchorFor(cad.des);
+    return cadToGlobeEvent(cad, a.lat, a.lon, { trackPending: true });
   });
 
   const seen = new Set(events.map((e) => e.id));
@@ -119,7 +135,8 @@ export async function fetchSpaceGlobeEvents(): Promise<GlobeAlertEvent[]> {
     const track = await fetchNeoHorizonsTrack(scout.objectName, Date.now(), 3).catch(() => null);
     const anchor = track?.closest ?? track?.points[0];
     if (!anchor) {
-      events.push(scoutToGlobeEvent(scout, 0, 0, { trackPending: true }));
+      const a = pseudoAnchorFor(id);
+      events.push(scoutToGlobeEvent(scout, a.lat, a.lon, { trackPending: true }));
     } else {
       events.push(scoutToGlobeEvent(scout, anchor.lat, anchor.lon, { trackPending: false }));
     }
@@ -134,6 +151,80 @@ export async function fetchSpaceGlobeEvents(): Promise<GlobeAlertEvent[]> {
       return (a.distLd ?? 99) - (b.distLd ?? 99);
     }),
   );
+}
+
+const SPACE_CAD_DAYS = 14;
+const SPACE_CAD_DIST_AU = 0.5;
+const SPACE_CAD_LIMIT = 40;
+
+/** All NEO close approaches in the next 14 days — raw NASA feed for space tab. */
+export async function fetchSpaceGlobeEvents24h(): Promise<GlobeAlertEvent[]> {
+  const { fetchNeoCloseApproaches } = await import("./fetchJplCad");
+  const { fetchScoutSummary } = await import("./fetchJplScout");
+  const { filterSpacePanelNeos } = await import("./alertFilters");
+
+  const now = Date.now();
+  const [cadList, scoutList] = await Promise.all([
+    fetchNeoCloseApproaches({
+      daysAhead: SPACE_CAD_DAYS,
+      distMaxAu: SPACE_CAD_DIST_AU,
+      limit: SPACE_CAD_LIMIT,
+    }).catch(() => [] as CadRecord[]),
+    fetchScoutSummary().catch(() => [] as ScoutRecord[]),
+  ]);
+
+  const futureCad = cadList
+    .filter((c) => c.approachTime > now)
+    .sort((a, b) => a.approachTime - b.approachTime || a.distLd - b.distLd);
+
+  const events: GlobeAlertEvent[] = futureCad.map((cad) => {
+    const a = pseudoAnchorFor(cad.des);
+    return cadToGlobeEvent(cad, a.lat, a.lon, { trackPending: true });
+  });
+
+  const seen = new Set(events.map((e) => e.id));
+
+  for (let i = 0; i < Math.min(futureCad.length, HORIZONS_ENRICH_LIMIT); i += HORIZONS_BATCH) {
+    const batch = futureCad.slice(i, i + HORIZONS_BATCH);
+    const enriched = await Promise.all(batch.map((cad) => enrichCadWithHorizons(cad)));
+    for (let j = 0; j < batch.length; j++) {
+      const ev = enriched[j];
+      if (!ev) continue;
+      const idx = events.findIndex((e) => e.id === ev.id);
+      if (idx >= 0) events[idx] = ev;
+    }
+  }
+
+  for (const scout of scoutList.slice(0, 5)) {
+    const id = `neo-scout-${scout.objectName}`;
+    if (seen.has(id)) continue;
+    const track = await fetchNeoHorizonsTrack(scout.objectName, Date.now(), 3).catch(() => null);
+    const anchor = track?.closest ?? track?.points[0];
+    if (!anchor) {
+      const a = pseudoAnchorFor(id);
+      events.push(scoutToGlobeEvent(scout, a.lat, a.lon, { trackPending: true }));
+    } else {
+      events.push(scoutToGlobeEvent(scout, anchor.lat, anchor.lon, { trackPending: false }));
+    }
+    seen.add(id);
+  }
+
+  return filterSpacePanelNeos(
+    events.sort((a, b) => {
+      const da = a.approachTime ?? a.time;
+      const db = b.approachTime ?? b.time;
+      if (da !== db) return da - db;
+      return (a.distLd ?? 99) - (b.distLd ?? 99);
+    }),
+  );
+}
+
+/** Space tab: NASA CAD (14d) + famous periodic catalog for rich 3D scene. */
+export async function fetchSpaceTabEvents(): Promise<GlobeAlertEvent[]> {
+  const { filterSpaceAlerts } = await import("./alertFilters");
+  const raw = await fetchSpaceGlobeEvents24h();
+  const alerts = filterSpaceAlerts(raw);
+  return mergeShowcaseWithReal(alerts);
 }
 
 export { formatNeoEta };

@@ -8,4 +8,4 @@ export async function fetchStormTrack(
   return b?.track ?? null;
 }
 
-export { stormTrackCacheKey } from "./fetchStormBriefing";
+export { stormBriefingCacheKey as stormTrackCacheKey } from "./fetchStormBriefing";

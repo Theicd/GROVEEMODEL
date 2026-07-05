@@ -51,6 +51,13 @@ export function liveNeoMetrics(
   now = Date.now(),
 ): { distLd: number; speedKmS: number; diameterKm?: number } {
   const diameterKm = estimateDiameterKm(ev);
+  if (ev.showcaseNeo) {
+    return {
+      distLd: ev.distLd ?? track?.closest.distLd ?? 10,
+      speedKmS: ev.vRel ?? ev.vInf ?? 0,
+      diameterKm,
+    };
+  }
   if (track && track.points.length >= 2) {
     const p = interpolateNeoPoint(track, now);
     return {

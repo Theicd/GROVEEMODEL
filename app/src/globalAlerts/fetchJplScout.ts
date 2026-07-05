@@ -22,33 +22,34 @@ export async function fetchScoutSummary(): Promise<ScoutRecord[]> {
   const payload = await jplJson<ScoutPayload>("/scout.api");
   if (!payload.data?.length) return [];
 
-  return payload.data
-    .map((row) => {
-      const caDistLd = Number.parseFloat(row.caDist ?? "");
-      const vInf = Number.parseFloat(row.vInf ?? "");
-      const moidAu = Number.parseFloat(row.moid ?? "");
-      const neoScore = Number.parseFloat(row.neoScore ?? "0");
-      const phaScore = Number.parseFloat(row.phaScore ?? "0");
-      const geocentricScore = Number.parseFloat(row.geocentricScore ?? "0");
-      const h = Number.parseFloat(row.H ?? "");
-      const vmag = Number.parseFloat(row.Vmag ?? "");
+  const rows: ScoutRecord[] = [];
+  for (const row of payload.data) {
+    const caDistLd = Number.parseFloat(row.caDist ?? "");
+    const vInf = Number.parseFloat(row.vInf ?? "");
+    const moidAu = Number.parseFloat(row.moid ?? "");
+    const neoScore = Number.parseFloat(row.neoScore ?? "0");
+    const phaScore = Number.parseFloat(row.phaScore ?? "0");
+    const geocentricScore = Number.parseFloat(row.geocentricScore ?? "0");
+    const h = Number.parseFloat(row.H ?? "");
+    const vmag = Number.parseFloat(row.Vmag ?? "");
 
-      if (!row.objectName || !Number.isFinite(caDistLd)) return null;
+    if (!row.objectName || !Number.isFinite(caDistLd)) continue;
 
-      return {
-        objectName: row.objectName,
-        caDistLd: caDistLd,
-        vInf: Number.isFinite(vInf) ? vInf : 0,
-        moidAu: Number.isFinite(moidAu) ? moidAu : 0,
-        neoScore: Number.isFinite(neoScore) ? neoScore : 0,
-        phaScore: Number.isFinite(phaScore) ? phaScore : 0,
-        geocentricScore: Number.isFinite(geocentricScore) ? geocentricScore : 0,
-        h: Number.isFinite(h) ? h : undefined,
-        vmag: Number.isFinite(vmag) ? vmag : undefined,
-        lastRun: row.lastRun,
-      } satisfies ScoutRecord;
-    })
-    .filter((r): r is ScoutRecord => r != null)
+    rows.push({
+      objectName: row.objectName,
+      caDistLd,
+      vInf: Number.isFinite(vInf) ? vInf : 0,
+      moidAu: Number.isFinite(moidAu) ? moidAu : 0,
+      neoScore: Number.isFinite(neoScore) ? neoScore : 0,
+      phaScore: Number.isFinite(phaScore) ? phaScore : 0,
+      geocentricScore: Number.isFinite(geocentricScore) ? geocentricScore : 0,
+      h: Number.isFinite(h) ? h : undefined,
+      vmag: Number.isFinite(vmag) ? vmag : undefined,
+      lastRun: row.lastRun,
+    });
+  }
+
+  return rows
     .filter((r) => r.caDistLd < 15 || r.geocentricScore > 0 || r.neoScore >= 80)
     .sort((a, b) => a.caDistLd - b.caDistLd)
     .slice(0, 8);

@@ -58,7 +58,10 @@ export const disasterItemToHit = (
   const eventName = coerceText(item.eventName, "—");
   const country = coerceText(item.country);
   return {
-    id: `gdacs-${slug(eventName)}-${index}`,
+    id:
+      item.eventId != null && item.episodeId != null
+        ? `gdacs-${item.eventId}-${item.episodeId}`
+        : `gdacs-${slug(eventName)}-${index}`,
     kind: "disaster",
     title: eventName,
     titleOriginal: eventName,
@@ -81,6 +84,7 @@ export const disasterItemToHit = (
       severityText: item.severityText,
       gdacsIsCurrent: item.isCurrent,
       gdacsEndTime: item.endTime,
+      startTime: item.startTime,
       dateModified: item.dateModified,
     },
     summarizable: false,

@@ -3,21 +3,29 @@ import { fetchUsgsEarthquakesForCache } from "../webSearch/providers/usgsEarthqu
 import { disasterItemToHit, earthquakeItemToHit } from "../searchResults/liveDisastersHits";
 import type { UnifiedSearchHit } from "../searchResults/types";
 import type { GlobeAlertEvent } from "./types";
-import { fetchSpaceGlobeEvents } from "./mapSpaceToGlobeEvents";
+import { fetchSpaceTabEvents } from "./mapSpaceToGlobeEvents";
 import { hitsToGlobeEvents } from "./mapHitsToGlobeEvents";
-import { filterSidebarAlerts } from "./alertFilters";
-import { EARTH_LIVE_WINDOW_MS, EQ_LIVE_WINDOW_MS, GLOBAL_ALERTS_EQ_MIN_MAG } from "./types";
+import { filterEventsForRange, type AlertTimeRange } from "./alertTimeRange";
+import { EQ_LIVE_WINDOW_MS, GLOBAL_ALERTS_EQ_MIN_MAG } from "./types";
 
-/** Fetch live USGS + GDACS + NASA JPL space events. */
-export async function fetchGlobalAlertEvents(): Promise<GlobeAlertEvent[]> {
-  const [usgs, gdacs, space] = await Promise.all([
-    fetchUsgsEarthquakesForCache(GLOBAL_ALERTS_EQ_MIN_MAG, "hour"),
-    fetchGdacsDisastersForCache(),
-    fetchSpaceGlobeEvents().catch(() => []),
+/** Fetch live earth alerts or upcoming space alerts for the selected tab. */
+export async function fetchGlobalAlertEventsForRange(
+  range: AlertTimeRange = "live",
+): Promise<GlobeAlertEvent[]> {
+  const now = Date.now();
+
+  if (range === "space") {
+    const space = await fetchSpaceTabEvents().catch(() => []);
+    return filterEventsForRange(space, "space", now);
+  }
+
+  const [usgs, gdacs] = await Promise.all([
+    fetchUsgsEarthquakesForCache(GLOBAL_ALERTS_EQ_MIN_MAG, "hour", 14_000).catch(() => null),
+    fetchGdacsDisastersForCache().catch(() => null),
   ]);
+
   const hits: UnifiedSearchHit[] = [];
   if (usgs) {
-    const now = Date.now();
     for (const [i, item] of usgs.items.entries()) {
       if (item.lat == null || item.lon == null) continue;
       if (now - item.time > EQ_LIVE_WINDOW_MS) continue;
@@ -30,5 +38,12 @@ export async function fetchGlobalAlertEvents(): Promise<GlobeAlertEvent[]> {
       hits.push(disasterItemToHit(item, i, gdacs.feedLabel));
     }
   }
-  return filterSidebarAlerts(hitsToGlobeEvents(hits).concat(space));
+
+  const raw = hitsToGlobeEvents(hits);
+  return filterEventsForRange(raw, "live", now);
+}
+
+/** @deprecated use fetchGlobalAlertEventsForRange("live") */
+export async function fetchGlobalAlertEvents(): Promise<GlobeAlertEvent[]> {
+  return fetchGlobalAlertEventsForRange("live");
 }

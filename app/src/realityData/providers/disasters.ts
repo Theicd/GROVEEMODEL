@@ -28,7 +28,43 @@ type GdacsFeature = {
 };
 
 const GDACS_LIVE_URL =
-  "https://www.gdacs.org/gdacsapi/api/events/geteventlist/latest?eventlist=TC;FL;VO;WF;TS&alertlevel=Orange;Red";
+  "https://www.gdacs.org/gdacsapi/api/events/geteventlist/events4app";
+
+function gdacsSearchUrl(fromDate: Date, toDate: Date, eventlist = "EQ;TC;FL;VO;WF;TS"): string {
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const params = new URLSearchParams({
+    eventlist,
+    fromdate: fmt(fromDate),
+    todate: fmt(toDate),
+    alertlevel: "Green;Orange;Red",
+  });
+  return `https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?${params}`;
+}
+
+function gdacsItemKey(item: LiveDisasterItem): string {
+  if (item.eventId != null && item.episodeId != null) return `${item.eventId}-${item.episodeId}`;
+  return `${item.eventName}-${item.startTime ?? 0}`;
+}
+
+function gdacsItemInWindow(item: LiveDisasterItem, sinceMs: number, now = Date.now()): boolean {
+  const start = item.startTime ?? item.dateModified ?? 0;
+  const end = item.endTime ?? now;
+  const modified = item.dateModified ?? start;
+  if (start <= now && end >= sinceMs) return true;
+  if (start >= sinceMs && start <= now + 86_400_000) return true;
+  if (modified >= sinceMs && modified <= now + 86_400_000) return true;
+  return false;
+}
+
+function mergeGdacsItems(lists: LiveDisasterItem[][]): LiveDisasterItem[] {
+  const merged = new Map<string, LiveDisasterItem>();
+  for (const list of lists) {
+    for (const item of list) {
+      merged.set(gdacsItemKey(item), item);
+    }
+  }
+  return [...merged.values()];
+}
 
 const ONGOING_GDACS = new Set(["TC", "FL", "VO", "WF", "TS"]);
 
@@ -171,5 +207,54 @@ export const fetchGdacsDisastersForCache = async (): Promise<{
     return { items, feedLabel: "GDACS · פעיל עכשיו" };
   } catch {
     return null;
+  }
+};
+
+/** GDACS SEARCH — historical window (weather + disasters, merged sources). */
+export const fetchGdacsDisastersHistorical = async (
+  sinceMs: number,
+): Promise<{ items: LiveDisasterItem[]; feedLabel: string } | null> => {
+  const to = new Date();
+  const from = new Date(sinceMs);
+  const now = Date.now();
+
+  try {
+    const weatherUrl = gdacsSearchUrl(from, to, "TC;FL;VO;WF;TS");
+    const fullUrl = gdacsSearchUrl(from, to);
+    const [weatherData, fullData, liveData] = await Promise.all([
+      fetchJson<{ features?: GdacsFeature[] }>(weatherUrl, undefined, { timeoutMs: 22_000 }).catch(
+        () => null,
+      ),
+      fetchJson<{ features?: GdacsFeature[] }>(fullUrl, undefined, { timeoutMs: 22_000 }).catch(
+        () => null,
+      ),
+      sinceMs > now - 4 * 86_400_000
+        ? fetchJson<{ features?: GdacsFeature[] }>(GDACS_LIVE_URL, undefined, {
+            timeoutMs: 14_000,
+          }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    const parsed = mergeGdacsItems([
+      parseGdacsFeatures(weatherData?.features ?? []),
+      parseGdacsFeatures(fullData?.features ?? []),
+      parseGdacsFeatures(liveData?.features ?? []),
+    ]).filter((item) => gdacsItemInWindow(item, sinceMs, now));
+
+    if (!parsed.length) return null;
+    return { items: parsed.slice(0, 150), feedLabel: "GDACS · ארכיון" };
+  } catch {
+    try {
+      const data = await fetchJson<{ features?: GdacsFeature[] }>(GDACS_LIVE_URL, undefined, {
+        timeoutMs: 14_000,
+      });
+      const items = parseGdacsFeatures(data.features ?? [])
+        .filter((item) => gdacsItemInWindow(item, sinceMs, now))
+        .slice(0, 100);
+      if (!items.length) return null;
+      return { items, feedLabel: "GDACS · ארכיון" };
+    } catch {
+      return null;
+    }
   }
 };

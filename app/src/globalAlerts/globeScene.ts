@@ -1,16 +1,26 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { alignGroupToSurface, latLonToVec3 } from "./alignToSurface";
-import { geoDirectionToVisualVec, neoSpacePosition, visualRadiusFromDistAu, visualRadiusFromLd, type NeoOrbitTrack } from "./neoTrack";
+import { neoSpacePosition, visualRadiusFromDistAu, visualRadiusFromLd, MOON_SCENE_ORBIT, MOON_SCENE_RADIUS, type NeoOrbitTrack } from "./neoTrack";
 import { EQ_LIVE_WINDOW_MS } from "./types";
 import { buildApproachDisplayTrack } from "./neoApproachTrack";
 import { estimateLiveDistLd, interpolateNeoPoint } from "./neoLiveMetrics";
 import { createNeoLabelSprite, drawNeoLabel, type NeoLabelSprite } from "./neoLabelSprite";
-import { billboardToCamera, createCornerReticle, createNeoHeadMesh } from "./neoReticle3d";
+import { billboardToCamera, createCornerReticle, createNeoHeadMesh, createSelectionFrame, type SelectionFrame } from "./neoReticle3d";
 import { type StormTrack, type StormTrackPoint, stormPositionNow } from "./parseStormGeometry";
 import { fetchGlobalWeatherCells } from "./fetchGlobalWeatherCells";
 import { getHurricaneIntensity, parseWindKmh } from "./hurricaneIntensity";
 import { createWeatherOverlay } from "./weatherOverlay";
+import {
+  createAsteroidGeometry,
+  createAsteroidTexture,
+  createCometTail,
+  inferNeoVisualProfile,
+  orbitLineColor,
+  orientCometTail,
+  spaceDisplayMeshSize,
+  SPECTRAL_TYPES,
+} from "./spaceObjectVisuals";
 import { EVENT_TYPE_LABELS, type GlobeAlertEvent, type GlobeAlertEventType } from "./types";
 
 type ActiveEffect = {
@@ -36,9 +46,13 @@ type MarkerEntry = {
 };
 
 const EARTH_ROT = 0.001;
+const ASTEROID_SPIN_DISPLAY = 420;
 const EQ_RED = 0xff2200;
-const INITIAL_CAMERA_DIST = 4.75;
+const INITIAL_CAMERA_DIST = 7.4;
+const SPACE_CAMERA_DIST = 16;
 const MIN_ZOOM_DIST = 0.78;
+const SPACE_MIN_ZOOM_DIST = 0.45;
+const SPACE_MAX_ZOOM_DIST = 52;
 const FOCUS_CAMERA_DIST = 1.85;
 const STORM_TRACK_R = 1.007;
 const STORM_PURPLE = 0xaa66ff;
@@ -46,6 +60,31 @@ const STORM_FORECAST = 0xcc99ff;
 const NEO_CYAN = 0x66ddff;
 const NEO_WARN = 0xffcc44;
 const FIREBALL_ORANGE = 0xffaa33;
+const MOON_ORBIT_R = MOON_SCENE_ORBIT;
+const MOON_TEXTURE_URL =
+  "https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/moon_1024.jpg";
+
+function eventSeed(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+type NeoReticleEntry = {
+  group: THREE.Group;
+  label: NeoLabelSprite;
+  approachLine?: THREE.Line;
+  orbitLine?: THREE.Line;
+  orbitMat?: THREE.LineBasicMaterial;
+  mesh?: THREE.Mesh;
+  cometTail?: THREE.Group;
+  frame?: THREE.LineSegments;
+  frameMat?: THREE.LineBasicMaterial;
+  rotAxis?: THREE.Vector3;
+  rotSpeed?: number;
+  visualSize?: number;
+  spaceMode?: boolean;
+};
 
 function trackPointsToLine(
   points: StormTrackPoint[],
@@ -528,7 +567,11 @@ export type GlobeSceneHandle = {
   showNeoTrack: (track: NeoOrbitTrack, diameterKm?: number) => void;
   clearNeoTrack: () => void;
   focusNeoEarthFrame: (track: NeoOrbitTrack) => void;
+  focusSpaceNeo: (ev: GlobeAlertEvent) => void;
+  clearSpaceNeoFocus: () => void;
   flyToLatLon: (lat: number, lon: number, dist?: number) => void;
+  setSpaceMode: (enabled: boolean) => void;
+  setNeoOrbitTracks: (tracks: Record<string, NeoOrbitTrack>) => void;
   dispose: () => void;
 };
 
@@ -650,11 +693,18 @@ export function initGlobeScene(
   controls.dampingFactor = 0.06;
   controls.minDistance = MIN_ZOOM_DIST;
   controls.maxDistance = 22;
+  controls.enablePan = true;
+  controls.screenSpacePanning = true;
   controls.target.set(0, 0, 0);
 
   let userControlActive = false;
+  let spaceCameraReleased = false;
   controls.addEventListener("start", () => {
     userControlActive = true;
+    if (spaceMode) {
+      eventLockActive = false;
+      spaceCameraReleased = true;
+    }
   });
   controls.addEventListener("end", () => {
     userControlActive = false;
@@ -670,8 +720,103 @@ export function initGlobeScene(
   scene.add(neoTrackGroup);
   const neoReticleGroup = new THREE.Group();
   scene.add(neoReticleGroup);
-  const neoReticles = new Map<string, { group: THREE.Group; label: NeoLabelSprite; approachLine: THREE.Line }>();
+  const neoReticles = new Map<string, NeoReticleEntry>();
   const neoDashMats: THREE.LineDashedMaterial[] = [];
+
+  const selectionFrame: SelectionFrame = createSelectionFrame(0x66ddff);
+  scene.add(selectionFrame.group);
+
+  const moonOrbitG = new THREE.Group();
+  moonOrbitG.visible = false;
+  scene.add(moonOrbitG);
+  const moonPivot = new THREE.Group();
+  moonPivot.position.set(MOON_ORBIT_R, 0, 0);
+  moonOrbitG.add(moonPivot);
+  const moonGeo = new THREE.SphereGeometry(MOON_SCENE_RADIUS, 48, 48);
+  const moonMat = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    shininess: 8,
+    specular: new THREE.Color(0x333333),
+  });
+  const moonMesh = new THREE.Mesh(moonGeo, moonMat);
+  moonMesh.rotation.z = (6.68 * Math.PI) / 180;
+  moonPivot.add(moonMesh);
+  let moonMap: THREE.Texture | null = null;
+  texLoader.load(
+    MOON_TEXTURE_URL,
+    (map) => {
+      map.colorSpace = THREE.SRGBColorSpace;
+      moonMap = map;
+      moonMat.map = map;
+      moonMat.needsUpdate = true;
+    },
+  );
+  const moonOrbitPts: THREE.Vector3[] = [];
+  for (let i = 0; i <= 64; i++) {
+    const t = (i / 64) * Math.PI * 2;
+    moonOrbitPts.push(new THREE.Vector3(MOON_ORBIT_R * Math.cos(t), 0, MOON_ORBIT_R * Math.sin(t)));
+  }
+  const moonOrbitLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(moonOrbitPts),
+    new THREE.LineBasicMaterial({ color: 0x445566, transparent: true, opacity: 0.14, depthWrite: false }),
+  );
+  moonOrbitLine.visible = false;
+  scene.add(moonOrbitLine);
+
+  let spaceMode = false;
+  let neoOrbitTracks: Record<string, NeoOrbitTrack> = {};
+
+  function lerpTrackPoint(a: NeoOrbitTrack["points"][0], b: NeoOrbitTrack["points"][0], u: number) {
+    return {
+      t: a.t + (b.t - a.t) * u,
+      lat: a.lat + (b.lat - a.lat) * u,
+      lon: a.lon + (b.lon - a.lon) * u,
+      distAu: a.distAu + (b.distAu - a.distAu) * u,
+      distLd: a.distLd + (b.distLd - a.distLd) * u,
+      deldotKmS: a.deldotKmS + (b.deldotKmS - a.deldotKmS) * u,
+    };
+  }
+
+  function pointAlongClosedTrack(track: NeoOrbitTrack, phase: number) {
+    const pts = track.points;
+    if (pts.length < 2) return pts[0] ?? track.closest;
+    const f = (phase % 1) * pts.length;
+    const idx = Math.floor(f) % pts.length;
+    const next = (idx + 1) % pts.length;
+    return lerpTrackPoint(pts[idx], pts[next], f - Math.floor(f));
+  }
+
+  function resolveNeoWorldPosition(ev: GlobeAlertEvent): THREE.Vector3 {
+    const liveLd = ev.showcaseNeo ? (ev.distLd ?? 10) : estimateLiveDistLd(ev);
+    const track = neoOrbitTracks[ev.id];
+    if (track && track.points.length >= 2) {
+      if (ev.showcaseNeo) {
+        const phase = (globalTime / 180) % 1;
+        const p = pointAlongClosedTrack(track, phase);
+        return neoSpacePosition(p.lat, p.lon, p.distLd);
+      }
+      const p = interpolateNeoPoint(track, Date.now());
+      return neoSpacePosition(p.lat, p.lon, p.distLd);
+    }
+    return neoSpacePosition(ev.lat, ev.lon, liveLd);
+  }
+
+  function applyOrbitFromTrack(entry: NeoReticleEntry, eventId: string) {
+    const track = neoOrbitTracks[eventId];
+    const ev = eventsById.get(eventId);
+    if (entry.approachLine) entry.approachLine.visible = false;
+
+    if (!spaceMode || !entry.orbitLine || !track || track.points.length < 2 || !ev) {
+      if (entry.orbitLine) entry.orbitLine.visible = false;
+      return;
+    }
+
+    const pts = track.points.map((p) => neoSpacePosition(p.lat, p.lon, p.distLd));
+    if (ev.showcaseNeo && pts.length > 2) pts.push(pts[0].clone());
+    entry.orbitLine.geometry.dispose();
+    entry.orbitLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+    entry.orbitLine.visible = true;
+  }
   let activeStormTrack: StormTrack | null = null;
   let stormHeadMesh: THREE.Mesh | null = null;
   let activeNeoTrack: NeoOrbitTrack | null = null;
@@ -679,13 +824,14 @@ export function initGlobeScene(
   let neoHeadMesh: THREE.Group | null = null;
   let neoApproachLine: THREE.Line | null = null;
   let neoTrailPts: THREE.Points | null = null;
-  let viewMode: "earth" | "event" = "earth";
   let eventLockActive = false;
   let focusEvent: GlobeAlertEvent | null = null;
+  let spaceFocusId: string | null = null;
   let shakeIntensity = 0;
   let disposed = false;
   let raf = 0;
-  const clock = new THREE.Clock();
+  const clock = new THREE.Timer();
+  clock.connect(document);
   let globalTime = 0;
 
   const raycaster = new THREE.Raycaster();
@@ -720,17 +866,26 @@ export function initGlobeScene(
     return eventsById.get(eventId) ?? null;
   }
 
-  function disposeNeoReticleEntry(entry: { group: THREE.Group; label: NeoLabelSprite; approachLine: THREE.Line }) {
+  function disposeNeoReticleEntry(entry: NeoReticleEntry) {
     neoReticleGroup.remove(entry.group);
-    neoReticleGroup.remove(entry.approachLine);
+    if (entry.approachLine) neoReticleGroup.remove(entry.approachLine);
+    if (entry.orbitLine) neoReticleGroup.remove(entry.orbitLine);
     entry.group.traverse((ch) => {
-      if (ch instanceof THREE.LineSegments || ch instanceof THREE.Mesh) {
+      if (ch instanceof THREE.LineSegments || ch instanceof THREE.Mesh || ch instanceof THREE.Points) {
         ch.geometry?.dispose();
-        (ch.material as THREE.Material)?.dispose();
+        const mat = ch.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat?.dispose();
       }
     });
-    entry.approachLine.geometry?.dispose();
-    (entry.approachLine.material as THREE.Material)?.dispose();
+    if (entry.approachLine) {
+      entry.approachLine.geometry?.dispose();
+      (entry.approachLine.material as THREE.Material)?.dispose();
+    }
+    if (entry.orbitLine) {
+      entry.orbitLine.geometry?.dispose();
+      (entry.orbitLine.material as THREE.Material)?.dispose();
+    }
     (entry.label.sprite.material as THREE.SpriteMaterial).map?.dispose();
     (entry.label.sprite.material as THREE.Material)?.dispose();
   }
@@ -746,39 +901,36 @@ export function initGlobeScene(
     for (const [id, entry] of neoReticles) {
       const ev = eventsById.get(id);
       if (!ev || ev.type !== "neo") continue;
-      const liveLd = estimateLiveDistLd(ev);
+      const liveLd = ev.showcaseNeo ? (ev.distLd ?? liveEstShowcase(ev)) : estimateLiveDistLd(ev);
       const speed = ev.vRel ?? ev.vInf ?? 0;
-      const color = liveLd < 5 ? "#ffcc44" : "#66ddff";
+      const color = ev.isPha || liveLd < 1 ? "#ff5555" : liveLd < 5 ? "#ffcc44" : "#66ddff";
       drawNeoLabel(entry.label, {
         title: ev.location.slice(0, 22),
         dist: `${liveLd.toFixed(2)} LD`,
         speed: `${speed.toFixed(1)} km/s`,
-        eta: formatNeoEtaShort(ev.approachTime ?? ev.time),
+        eta: encounterLabel(ev),
       }, color);
-      const pos = neoSpacePosition(ev.lat, ev.lon, liveLd);
-      entry.group.position.lerp(pos, 0.15);
-      entry.approachLine.geometry.dispose();
-      entry.approachLine.geometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        pos.clone(),
-      ]);
-      entry.approachLine.computeLineDistances();
+      entry.label.sprite.visible = spaceMode;
+      const pos = resolveNeoWorldPosition(ev);
+      entry.group.position.copy(pos);
     }
   }
 
-  function formatNeoEtaShort(approachTime: number): string {
-    const ms = approachTime - Date.now();
-    if (ms <= 0) return "עבר";
+  function liveEstShowcase(ev: GlobeAlertEvent): number {
+    return ev.distLd ?? 10;
+  }
+
+  /** Hours (or days) until the object's close encounter with Earth. */
+  function encounterLabel(ev: GlobeAlertEvent): string {
+    if (ev.showcaseNeo) return "מחזורי";
+    const ms = (ev.approachTime ?? ev.time) - Date.now();
+    if (ms <= 0) return "מפגש חלף";
     const h = ms / 3_600_000;
-    if (h < 48) return `ETA ${Math.round(h)}ש'`;
-    return `ETA ${Math.round(h / 24)}י'`;
+    if (h < 48) return `מפגש ${Math.round(h)}ש'`;
+    return `מפגש ${Math.round(h / 24)}י'`;
   }
 
   function syncNeoReticles(events: GlobeAlertEvent[]) {
-    if (eventLockActive && focusEvent?.type === "neo") {
-      clearNeoReticles();
-      return;
-    }
     const want = new Set(events.filter((e) => e.type === "neo").map((e) => e.id));
     for (const [id, entry] of neoReticles) {
       if (!want.has(id)) {
@@ -789,54 +941,116 @@ export function initGlobeScene(
     for (const ev of events) {
       if (ev.type !== "neo") continue;
       const liveLd = estimateLiveDistLd(ev);
-      const pos = neoSpacePosition(ev.lat, ev.lon, liveLd);
+      const pos = resolveNeoWorldPosition(ev);
       const color = liveLd < 5 ? NEO_WARN : NEO_CYAN;
       const size = 0.18 + Math.min(0.08, liveLd * 0.006);
       let entry = neoReticles.get(ev.id);
+      if (entry && entry.spaceMode !== spaceMode) {
+        disposeNeoReticleEntry(entry);
+        neoReticles.delete(ev.id);
+        entry = undefined;
+      }
       if (!entry) {
         const group = new THREE.Group();
-        group.add(createCornerReticle(size, color));
-        const core = new THREE.Mesh(
-          new THREE.SphereGeometry(0.018, 12, 12),
-          new THREE.MeshBasicMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.95,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-          }),
-        );
-        group.add(core);
         const label = createNeoLabelSprite();
-        label.sprite.position.set(0, size * 1.8, 0);
         group.add(label.sprite);
-        const approachMat = new THREE.LineDashedMaterial({
-          color,
-          transparent: true,
-          opacity: 0.45,
-          dashSize: 0.06,
-          gapSize: 0.035,
-          depthWrite: false,
-        });
-        const approachLine = new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), pos.clone()]),
-          approachMat,
-        );
-        approachLine.computeLineDistances();
-        neoReticleGroup.add(approachLine);
-        neoReticleGroup.add(group);
-        entry = { group, label, approachLine };
+
+        if (spaceMode) {
+          const profile = inferNeoVisualProfile(ev, eventSeed(ev.id));
+          const spec = SPECTRAL_TYPES[profile.spectral];
+          const meshSize = spaceDisplayMeshSize(profile.visualSize, liveLd);
+          const geo = createAsteroidGeometry(profile.shape, meshSize, eventSeed(ev.id));
+          const tex = createAsteroidTexture(profile.spectral, eventSeed(ev.id));
+          const mesh = new THREE.Mesh(
+            geo,
+            new THREE.MeshStandardMaterial({
+              color: spec.color,
+              roughness: spec.roughness,
+              metalness: spec.metalness,
+              map: tex.map,
+              bumpMap: tex.bumpMap,
+              bumpScale: meshSize * 0.25,
+            }),
+          );
+          mesh.userData.eventId = ev.id;
+          group.add(mesh);
+          let cometTail: THREE.Group | undefined;
+          if (profile.spectral === "comet") {
+            cometTail = createCometTail(group, meshSize);
+          }
+
+          const frameColor = orbitLineColor(profile.spectral, !!ev.isPha, liveLd);
+          const frame = createCornerReticle(meshSize * 4.2, frameColor, 0.5);
+          frame.userData.eventId = ev.id;
+          frame.renderOrder = 20;
+          group.add(frame);
+
+          label.sprite.visible = true;
+          label.sprite.position.set(0, meshSize * 3.4, 0);
+
+          const orbitMat = new THREE.LineBasicMaterial({
+            color: frameColor,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+          });
+          const orbitLine = new THREE.Line(new THREE.BufferGeometry(), orbitMat);
+          orbitLine.renderOrder = 5;
+          neoReticleGroup.add(orbitLine);
+
+          neoReticleGroup.add(group);
+          entry = {
+            group,
+            label,
+            mesh,
+            cometTail,
+            frame,
+            frameMat: frame.material as THREE.LineBasicMaterial,
+            orbitLine,
+            orbitMat,
+            rotAxis: profile.rotAxis,
+            rotSpeed: profile.rotSpeed,
+            visualSize: meshSize,
+            spaceMode: true,
+          };
+        } else {
+          group.add(createCornerReticle(size, color));
+          const core = new THREE.Mesh(
+            new THREE.SphereGeometry(0.018, 12, 12),
+            new THREE.MeshBasicMaterial({
+              color: 0xffffff,
+              transparent: true,
+              opacity: 0.95,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            }),
+          );
+          group.add(core);
+          label.sprite.position.set(0, size * 1.8, 0);
+          const approachMat = new THREE.LineDashedMaterial({
+            color,
+            transparent: true,
+            opacity: 0.45,
+            dashSize: 0.06,
+            gapSize: 0.035,
+            depthWrite: false,
+          });
+          const approachLine = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), pos.clone()]),
+            approachMat,
+          );
+          approachLine.computeLineDistances();
+          neoReticleGroup.add(approachLine);
+          neoReticleGroup.add(group);
+          entry = { group, label, approachLine, spaceMode: false };
+          neoDashMats.push(approachMat);
+        }
         neoReticles.set(ev.id, entry);
-        neoDashMats.push(approachMat);
       }
-      entry.group.position.copy(pos);
+      const posNow = resolveNeoWorldPosition(ev);
+      entry.group.position.copy(posNow);
       entry.group.userData.eventId = ev.id;
-      entry.approachLine.geometry.dispose();
-      entry.approachLine.geometry = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        pos.clone(),
-      ]);
-      entry.approachLine.computeLineDistances();
+      applyOrbitFromTrack(entry, ev.id);
     }
     updateNeoReticleLabels();
   }
@@ -1034,7 +1248,6 @@ export function initGlobeScene(
     clearStormTrack();
     activeStormTrack = track;
     eventLockActive = true;
-    viewMode = "event";
 
     if (track.observed.length >= 2) {
       stormTrackGroup.add(trackPointsToLine(track.observed, STORM_PURPLE, 0.9));
@@ -1116,6 +1329,7 @@ export function initGlobeScene(
   let activeNeoDiameterKm = 0.05;
 
   function showNeoTrack(track: NeoOrbitTrack, diameterKm?: number) {
+    if (spaceMode) return;
     clearNeoTrack();
     clearStormTrack();
     clearNeoReticles();
@@ -1123,7 +1337,6 @@ export function initGlobeScene(
     activeNeoDisplay = buildApproachDisplayTrack(track);
     activeNeoDiameterKm = diameterKm ?? 0.05;
     eventLockActive = true;
-    viewMode = "event";
 
     const display = activeNeoDisplay;
     if (display.points.length >= 2) {
@@ -1214,10 +1427,110 @@ export function initGlobeScene(
     frameEarthAndNeoTrack(track);
   }
 
+  function applyNeoFocusHighlight() {
+    for (const [id, entry] of neoReticles) {
+      if (!entry.mesh) continue;
+      const mat = entry.mesh.material as THREE.MeshStandardMaterial;
+      const isFocus = spaceMode && spaceFocusId === id;
+      mat.emissive.setHex(isFocus ? 0x335577 : 0x000000);
+      mat.emissiveIntensity = isFocus ? 0.45 : 0;
+      entry.group.scale.setScalar(isFocus ? 1.12 : 1);
+    }
+    if (!spaceMode || !spaceFocusId || !neoReticles.has(spaceFocusId)) {
+      selectionFrame.group.visible = false;
+    }
+  }
+
+  const _selWp = new THREE.Vector3();
+  function updateSelectionFrame() {
+    if (!spaceMode || !spaceFocusId) {
+      selectionFrame.group.visible = false;
+      return;
+    }
+    const entry = neoReticles.get(spaceFocusId);
+    const ev = eventsById.get(spaceFocusId);
+    if (!entry || !ev) {
+      selectionFrame.group.visible = false;
+      return;
+    }
+    entry.group.getWorldPosition(_selWp);
+    selectionFrame.group.position.copy(_selWp);
+    billboardToCamera(selectionFrame.group, camera);
+
+    const meshR = (entry.visualSize ?? 0.05) * (entry.group.scale.x || 1);
+    const camDist = camera.position.distanceTo(_selWp);
+    // Keep the frame comfortably larger than the body, scaled a bit with camera distance.
+    const baseR = Math.max(meshR * 2.6, camDist * 0.045);
+    const pulse = 1 + 0.05 * Math.sin(globalTime * 3.5);
+    selectionFrame.group.scale.setScalar(baseR * pulse);
+    selectionFrame.ring.rotation.z += 0.01;
+    const flick = 0.75 + 0.25 * Math.sin(globalTime * 4);
+    selectionFrame.bracketMat.opacity = flick;
+    selectionFrame.ringMat.opacity = 0.45 + 0.2 * Math.sin(globalTime * 2.2 + 1);
+    selectionFrame.group.visible = true;
+  }
+
+  /** Close framing distance so the focused body appears large in view. */
+  function focusCamDistFor(entry: NeoReticleEntry): number {
+    const meshR = (entry.visualSize ?? 0.05) * (entry.group.scale.x || 1);
+    return Math.max(0.32, meshR * 7);
+  }
+
+  function updateSpaceFocusCamera() {
+    if (!spaceMode || !spaceFocusId || userControlActive || spaceCameraReleased || !eventLockActive) return;
+    const entry = neoReticles.get(spaceFocusId);
+    const ev = eventsById.get(spaceFocusId);
+    if (!entry || !ev) return;
+    const wp = new THREE.Vector3();
+    entry.group.getWorldPosition(wp);
+    const camDist = focusCamDistFor(entry);
+    const frameCenter = wp.clone();
+    controls.target.lerp(frameCenter, 0.12);
+    const viewDir = wp.clone().sub(controls.target).normalize();
+    if (viewDir.lengthSq() < 1e-6) viewDir.copy(camera.position).sub(wp).normalize();
+    const side = new THREE.Vector3().crossVectors(viewDir, new THREE.Vector3(0, 1, 0));
+    if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
+    side.normalize();
+    const desired = controls.target
+      .clone()
+      .add(viewDir.multiplyScalar(camDist))
+      .add(side.multiplyScalar(camDist * 0.22));
+    camera.position.lerp(desired, 0.08);
+  }
+
+  function focusSpaceNeo(ev: GlobeAlertEvent) {
+    if (!spaceMode || ev.type !== "neo") return;
+    clearStormTrack();
+    clearNeoTrack();
+    focusEvent = ev;
+    spaceFocusId = ev.id;
+    eventLockActive = true;
+    spaceCameraReleased = false;
+    userControlActive = false;
+    const liveLd = ev.showcaseNeo ? (ev.distLd ?? 10) : estimateLiveDistLd(ev);
+    const frameColor = ev.showcaseNeo
+      ? 0x66aaff
+      : ev.isPha || liveLd < 1
+        ? 0xff4d4d
+        : liveLd < 5
+          ? 0xffcc44
+          : 0x66ddff;
+    selectionFrame.bracketMat.color.setHex(frameColor);
+    selectionFrame.ringMat.color.setHex(frameColor);
+    applyNeoFocusHighlight();
+    callbacks.onFocus?.(ev);
+  }
+
+  function clearSpaceNeoFocus() {
+    spaceFocusId = null;
+    if (focusEvent?.type === "neo") focusEvent = null;
+    eventLockActive = false;
+    applyNeoFocusHighlight();
+  }
+
   function focusNeoEarthFrame(track: NeoOrbitTrack) {
     if (userControlActive) return;
     eventLockActive = true;
-    viewMode = "event";
     frameEarthAndNeoTrack(track);
   }
 
@@ -1234,8 +1547,16 @@ export function initGlobeScene(
   }
 
   function focusOnEvent(ev: GlobeAlertEvent) {
+    if (spaceMode && ev.type === "neo") {
+      focusSpaceNeo(ev);
+      return;
+    }
     focusEvent = ev;
-    viewMode = "event";
+    if (spaceMode) {
+      eventLockActive = false;
+      callbacks.onFocus?.(ev);
+      return;
+    }
     eventLockActive = true;
     userControlActive = false;
     if (ev.type !== "hurricane") clearStormTrack();
@@ -1280,17 +1601,23 @@ export function initGlobeScene(
   }
 
   function returnToNormal() {
-    viewMode = "earth";
     focusEvent = null;
+    spaceFocusId = null;
     eventLockActive = false;
+    spaceCameraReleased = false;
     clearStormTrack();
     clearNeoTrack();
     controls.target.set(0, 0, 0);
-    camera.position.set(0, 0.12, INITIAL_CAMERA_DIST);
+    camera.position.set(0, 0.12, spaceMode ? SPACE_CAMERA_DIST : INITIAL_CAMERA_DIST);
+    applyNeoFocusHighlight();
     syncNeoReticles(activeEvents);
   }
 
   function updateEventLockCamera() {
+    if (spaceMode && spaceFocusId && focusEvent?.type === "neo") {
+      updateSpaceFocusCamera();
+      return;
+    }
     if (!eventLockActive || !focusEvent || userControlActive) return;
 
     if (focusEvent.type === "neo" && activeNeoDisplay && neoHeadMesh) {
@@ -1354,6 +1681,36 @@ export function initGlobeScene(
     }
   }
 
+  function setNeoOrbitTracks(tracks: Record<string, NeoOrbitTrack>) {
+    neoOrbitTracks = tracks;
+    for (const [id, entry] of neoReticles) {
+      applyOrbitFromTrack(entry, id);
+    }
+  }
+
+  function setSpaceMode(enabled: boolean) {
+    const changed = spaceMode !== enabled;
+    spaceMode = enabled;
+    moonOrbitG.visible = enabled;
+    moonOrbitLine.visible = false;
+    weatherOverlay.setVisible(!enabled);
+    if (enabled) {
+      controls.minDistance = SPACE_MIN_ZOOM_DIST;
+      controls.maxDistance = SPACE_MAX_ZOOM_DIST;
+      controls.enablePan = true;
+      controls.target.set(0, 0, 0);
+      camera.position.set(0, 0.12, SPACE_CAMERA_DIST);
+      spaceCameraReleased = false;
+    } else {
+      controls.minDistance = MIN_ZOOM_DIST;
+      controls.maxDistance = 22;
+      spaceCameraReleased = false;
+    }
+    if (changed && enabled) clearNeoTrack();
+    if (changed) clearNeoReticles();
+    syncNeoReticles(activeEvents);
+  }
+
   function onResize() {
     width = container.clientWidth;
     height = container.clientHeight;
@@ -1367,11 +1724,21 @@ export function initGlobeScene(
   function animate() {
     if (disposed) return;
     raf = requestAnimationFrame(animate);
+    clock.update();
     const dt = Math.min(clock.getDelta(), 0.1);
     if (!eventLockActive) {
-      earthMesh.rotation.y += EARTH_ROT;
-      cloudsMesh.rotation.y += EARTH_ROT * 1.35;
+      if (!spaceMode) {
+        earthMesh.rotation.y += EARTH_ROT;
+        cloudsMesh.rotation.y += EARTH_ROT * 1.35;
+      } else {
+        earthMesh.rotation.y += EARTH_ROT * 0.15;
+        cloudsMesh.rotation.y += EARTH_ROT * 0.2;
+      }
       starMesh.rotation.y -= 0.0002;
+      if (spaceMode) {
+        moonOrbitG.rotation.y += 0.0012;
+        moonMesh.rotation.y += 0.0008;
+      }
     }
     const cloudMat = cloudsMesh.material as THREE.MeshLambertMaterial;
     cloudMat.opacity = 0.42 + 0.14 * Math.sin(globalTime * 0.45);
@@ -1401,14 +1768,37 @@ export function initGlobeScene(
     updateEventLockCamera();
 
     for (const mat of neoDashMats) {
-      mat.dashOffset -= dt * 0.65;
+      mat.scale = 1 + 0.08 * Math.sin(globalTime * 3.2);
     }
-    if (!eventLockActive || focusEvent?.type !== "neo") {
+    if (spaceMode) {
+      updateNeoReticleLabels();
+    } else if (!eventLockActive || focusEvent?.type !== "neo") {
       updateNeoReticleLabels();
     }
-    for (const entry of neoReticles.values()) {
-      billboardToCamera(entry.group, camera);
-      entry.label.sprite.position.set(0, 0.2, 0);
+    if (!spaceMode) {
+      for (const entry of neoReticles.values()) {
+        billboardToCamera(entry.group, camera);
+        entry.label.sprite.position.set(0, 0.2, 0);
+      }
+    } else {
+      const framePulse = 0.6 + 0.4 * Math.sin(globalTime * 2.4);
+      for (const [id, entry] of neoReticles) {
+        if (entry.mesh && entry.rotAxis && entry.rotSpeed) {
+          entry.mesh.rotateOnAxis(entry.rotAxis, entry.rotSpeed * dt * ASTEROID_SPIN_DISPLAY);
+        }
+        if (entry.cometTail) {
+          const wp = new THREE.Vector3();
+          entry.group.getWorldPosition(wp);
+          orientCometTail(entry.cometTail, wp);
+        }
+        if (entry.frame) {
+          billboardToCamera(entry.frame, camera);
+          const isFocus = spaceFocusId === id;
+          if (entry.frameMat) entry.frameMat.opacity = isFocus ? 0 : 0.32 + 0.28 * framePulse;
+        }
+      }
+      applyNeoFocusHighlight();
+      updateSelectionFrame();
     }
 
     if (activeStormTrack && stormHeadMesh && eventLockActive && focusEvent?.type === "hurricane") {
@@ -1433,7 +1823,11 @@ export function initGlobeScene(
     showNeoTrack,
     clearNeoTrack,
     focusNeoEarthFrame,
+    focusSpaceNeo,
+    clearSpaceNeoFocus,
     flyToLatLon,
+    setSpaceMode,
+    setNeoOrbitTracks,
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);
@@ -1448,6 +1842,9 @@ export function initGlobeScene(
       container.removeChild(renderer.domElement);
       activeEffects.forEach((fx) => earthMesh.remove(fx.group));
       markers.forEach((m) => earthMesh.remove(m.group));
+      moonGeo.dispose();
+      moonMat.dispose();
+      moonMap?.dispose();
     },
   };
 }

@@ -61,13 +61,15 @@ export const hitToGlobeEvent = (hit: UnifiedSearchHit): GlobeAlertEvent | null =
       const wind = parseWindKmh(hit.meta?.severityText);
       if (wind != null) category = Math.max(category ?? 2, windToCategory(wind));
     }
+    const startTime = hit.meta?.startTime;
     return {
       id: hit.id,
       type,
       lat: lat!,
       lon: lon!,
       location: hit.title,
-      time: hit.publishedTs ?? Date.now(),
+      regionLabel: hit.snippet?.trim() || undefined,
+      time: startTime ?? hit.publishedTs ?? Date.now(),
       source: "gdacs",
       category: type === "hurricane" ? category : undefined,
       alertLevel: alert,
@@ -78,6 +80,7 @@ export const hitToGlobeEvent = (hit: UnifiedSearchHit): GlobeAlertEvent | null =
       severityText: hit.meta?.severityText,
       gdacsIsCurrent: hit.meta?.gdacsIsCurrent,
       gdacsEndTime: hit.meta?.gdacsEndTime,
+      gdacsStartTime: startTime,
       updatedTime: hit.meta?.dateModified ?? hit.publishedTs,
     };
   }

@@ -1,19 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { subscribeLiveWorldSnapshot } from "../liveWorld/snapshotStore";
-import { filterNeoAlerts, filterSidebarAlerts, sortAlertEvents } from "./alertFilters";
-import { fetchGlobalAlertEvents } from "./fetchGlobalAlertEvents";
+import { filterSidebarAlerts, filterSpacePanelNeos } from "./alertFilters";
+import { fetchGlobalAlertEventsForRange } from "./fetchGlobalAlertEvents";
 import { rawSnapshotToGlobeEvents } from "./mapHitsToGlobeEvents";
+import type { AlertTimeRange } from "./alertTimeRange";
 import type { GlobeAlertEvent } from "./types";
 
 const REFRESH_MS = 60_000;
 
-function mergeEarthWithNeo(earth: GlobeAlertEvent[], neo: GlobeAlertEvent[]): GlobeAlertEvent[] {
-  const neoIds = new Set(neo.map((e) => e.id));
-  const earthOnly = earth.filter((e) => e.type !== "neo" && !neoIds.has(e.id));
-  return [...earthOnly, ...neo].sort(sortAlertEvents);
-}
-
-export function useGlobalAlertEvents(active: boolean) {
+export function useGlobalAlertEvents(active: boolean, timeRange: AlertTimeRange = "live") {
   const [events, setEvents] = useState<GlobeAlertEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
@@ -21,50 +16,59 @@ export function useGlobalAlertEvents(active: boolean) {
   const [gdacsCount, setGdacsCount] = useState(0);
   const [neoCount, setNeoCount] = useState(0);
 
-  const applyEvents = useCallback((next: GlobeAlertEvent[]) => {
-    const filtered = filterSidebarAlerts(next);
-    setEvents(filtered);
-    setEqCount(filtered.filter((e) => e.source === "usgs").length);
-    setGdacsCount(filtered.filter((e) => e.source === "gdacs").length);
-    setNeoCount(filterNeoAlerts(filtered).length);
-    setLastUpdate(Date.now());
-    setLoading(false);
-  }, []);
+  const applyEvents = useCallback(
+    (next: GlobeAlertEvent[]) => {
+      setEvents(next);
+      setEqCount(next.filter((e) => e.source === "usgs").length);
+      setGdacsCount(next.filter((e) => e.source === "gdacs").length);
+      setNeoCount(
+        timeRange === "space" ? filterSpacePanelNeos(next).length : 0,
+      );
+      setLastUpdate(Date.now());
+      setLoading(false);
+    },
+    [timeRange],
+  );
 
   const refresh = useCallback(async () => {
     try {
-      const next = await fetchGlobalAlertEvents();
+      const next = await fetchGlobalAlertEventsForRange(timeRange);
       applyEvents(next);
     } catch {
       setLoading(false);
     }
-  }, [applyEvents]);
+  }, [applyEvents, timeRange]);
 
   useEffect(() => {
     if (!active) return;
+
+    setEvents([]);
     setLoading(true);
     void refresh();
-    const unsub = subscribeLiveWorldSnapshot((snap) => {
-      if (!snap) return;
-      const fromSnap = rawSnapshotToGlobeEvents(snap);
-      if (!fromSnap.length) return;
-      setEvents((prev) => {
-        const neos = prev.filter((e) => e.type === "neo");
-        const merged = mergeEarthWithNeo(fromSnap, neos);
-        const filtered = filterSidebarAlerts(merged);
-        setEqCount(filtered.filter((e) => e.source === "usgs").length);
-        setGdacsCount(filtered.filter((e) => e.source === "gdacs").length);
-        setNeoCount(filterNeoAlerts(filtered).length);
-        setLastUpdate(Date.now());
-        return filtered;
-      });
-    });
+
+    const unsub =
+      timeRange === "live"
+        ? subscribeLiveWorldSnapshot((snap) => {
+            if (!snap) return;
+            const fromSnap = rawSnapshotToGlobeEvents(snap);
+            if (!fromSnap.length) return;
+            setEvents((prev) => {
+              const filtered = filterSidebarAlerts(fromSnap);
+              setEqCount(filtered.filter((e) => e.source === "usgs").length);
+              setGdacsCount(filtered.filter((e) => e.source === "gdacs").length);
+              setNeoCount(0);
+              setLastUpdate(Date.now());
+              return filtered.length ? filtered : prev;
+            });
+          })
+        : undefined;
+
     const id = window.setInterval(() => void refresh(), REFRESH_MS);
     return () => {
-      unsub();
+      unsub?.();
       window.clearInterval(id);
     };
-  }, [active, refresh]);
+  }, [active, refresh, timeRange]);
 
   return { events, loading, lastUpdate, eqCount, gdacsCount, neoCount, refresh };
 }

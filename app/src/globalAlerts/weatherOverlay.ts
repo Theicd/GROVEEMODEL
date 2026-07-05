@@ -23,6 +23,7 @@ const KIND_SIZE: Record<Exclude<WeatherCellKind, "clear">, number> = {
 export type WeatherOverlayHandle = {
   sync: (cells: WeatherCell[]) => void;
   update: (time: number) => void;
+  setVisible: (visible: boolean) => void;
   dispose: () => void;
 };
 
@@ -158,5 +159,9 @@ export function createWeatherOverlay(parent: THREE.Object3D): WeatherOverlayHand
     parent.remove(group);
   }
 
-  return { sync, update, dispose };
+  function setVisible(visible: boolean) {
+    group.visible = visible;
+  }
+
+  return { sync, update, setVisible, dispose };
 }

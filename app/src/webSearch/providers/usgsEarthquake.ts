@@ -128,6 +128,11 @@ const USGS_HOUR_FEED =
 const USGS_DAY_FEED =
   "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson";
 
+const USGS_WEEK_FEED =
+  "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_week.geojson";
+
+export type UsgsCacheWindow = "hour" | "day" | "week";
+
 export const usgsFeatureToItem = (f: UsgsFeature): LiveEarthquakeItem | null => {
   const coords = f.geometry?.coordinates;
   const lat = coords?.[1];
@@ -149,19 +154,26 @@ export const usgsFeatureToItem = (f: UsgsFeature): LiveEarthquakeItem | null => 
 /** Structured USGS feed for globe / cache (includes coordinates). */
 export const fetchUsgsEarthquakesForCache = async (
   minMag = 2.5,
-  window: "hour" | "day" = "day",
+  window: UsgsCacheWindow = "day",
+  timeoutMs?: number,
 ): Promise<{ items: LiveEarthquakeItem[]; feedLabel: string } | null> => {
   try {
-    const url = window === "hour" ? USGS_HOUR_FEED : USGS_DAY_FEED;
-    const data = await fetchJson<UsgsFeed>(url);
+    const url =
+      window === "hour" ? USGS_HOUR_FEED : window === "week" ? USGS_WEEK_FEED : USGS_DAY_FEED;
+    const data = await fetchJson<UsgsFeed>(url, undefined, {
+      timeoutMs: timeoutMs ?? (window === "week" ? 28_000 : undefined),
+    });
+    const limit = window === "hour" ? 120 : window === "week" ? 200 : 80;
     const items = (data.features ?? [])
       .filter((f) => (f.properties.mag ?? 0) >= minMag)
       .map(usgsFeatureToItem)
       .filter((item): item is LiveEarthquakeItem => item != null)
       .sort((a, b) => b.time - a.time)
-      .slice(0, window === "hour" ? 120 : 50);
+      .slice(0, limit);
     if (!items.length) return null;
-    return { items, feedLabel: window === "hour" ? "USGS · שעה אחרונה" : "USGS" };
+    const feedLabel =
+      window === "hour" ? "USGS · שעה אחרונה" : window === "week" ? "USGS · שבוע" : "USGS · 24 שעות";
+    return { items, feedLabel };
   } catch {
     return null;
   }

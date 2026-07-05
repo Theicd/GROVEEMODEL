@@ -4,6 +4,8 @@ import { EARTH_LIVE_WINDOW_MS, EQ_LIVE_WINDOW_MS } from "./types";
 
 export const NEO_ALERT_MAX_LD = 15;
 export const NEO_ALERT_MAX_ETA_MS = 48 * 3_600_000;
+/** Space tab: NEO close approaches within the next 14 days. */
+export const SPACE_PANEL_MAX_ETA_MS = 14 * 24 * 3_600_000;
 
 /** @deprecated use EQ_LIVE_WINDOW_MS */
 export const EQ_REALTIME_MAX_AGE_MS = EQ_LIVE_WINDOW_MS;
@@ -25,7 +27,7 @@ export function passesNeoAlertFilter(ev: GlobeAlertEvent): boolean {
   return tierAtLeast(getEventSeverity(ev).tier, "high");
 }
 
-/** USGS earthquakes/tsunamis from the last 10 minutes — any magnitude. */
+/** USGS earthquakes/tsunamis from the last 30 minutes — any magnitude. */
 export function passesRealtimeEarthquakeFilter(ev: GlobeAlertEvent): boolean {
   if (ev.source !== "usgs") return true;
   if (ev.type !== "earthquake" && ev.type !== "tsunami") return true;
@@ -52,14 +54,44 @@ export function passesRealtimeGdacsFilter(ev: GlobeAlertEvent): boolean {
   return now - updated <= EARTH_LIVE_WINDOW_MS;
 }
 
+/** Space tab: NEO close approaches within the next 14 days. */
+export function passesSpacePanelNeo(ev: GlobeAlertEvent): boolean {
+  if (ev.showcaseNeo) return false;
+  if (ev.type !== "neo" && ev.type !== "fireball") return false;
+  const ca = ev.approachTime ?? ev.time;
+  const eta = ca - Date.now();
+  if (eta <= 0) return false;
+  return eta <= SPACE_PANEL_MAX_ETA_MS;
+}
+
+/** Alerts list only — excludes visual catalog objects. */
+export function filterSpaceAlerts(events: GlobeAlertEvent[]): GlobeAlertEvent[] {
+  return events.filter((e) => !e.showcaseNeo && passesSpacePanelNeo(e));
+}
+
+export function filterSpacePanelNeos(events: GlobeAlertEvent[]): GlobeAlertEvent[] {
+  return events.filter(passesSpacePanelNeo);
+}
+
 export function filterNeoAlerts(events: GlobeAlertEvent[]): GlobeAlertEvent[] {
   return events.filter(passesNeoAlertFilter);
 }
 
+/** Smallest lunar distance first, then soonest close approach — for sidebar display. */
+export function pickClosestNeoAlert(neos: GlobeAlertEvent[]): GlobeAlertEvent | null {
+  if (!neos.length) return null;
+  return [...neos].sort((a, b) => {
+    const lda = a.distLd ?? 99;
+    const ldb = b.distLd ?? 99;
+    if (lda !== ldb) return lda - ldb;
+    return (a.approachTime ?? a.time) - (b.approachTime ?? b.time);
+  })[0];
+}
+
 export function filterSidebarAlerts(events: GlobeAlertEvent[]): GlobeAlertEvent[] {
   return events
+    .filter((ev) => ev.type !== "neo" && ev.type !== "fireball")
     .filter((ev) => {
-      if (ev.type === "neo") return passesNeoAlertFilter(ev);
       if (!passesRealtimeEarthquakeFilter(ev)) return false;
       if (!passesRealtimeGdacsFilter(ev)) return false;
       return true;

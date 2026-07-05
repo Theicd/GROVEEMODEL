@@ -10,8 +10,8 @@ export type GlobeAlertEventType =
   | "neo"
   | "fireball";
 
-/** USGS earthquakes: last 10 minutes only (a quake is instant, not ongoing). */
-export const EQ_LIVE_WINDOW_MS = 10 * 60 * 1000;
+/** USGS earthquakes: last 30 minutes in the live tab. */
+export const EQ_LIVE_WINDOW_MS = 30 * 60 * 1000;
 
 /** Fallback recency for non-ongoing GDACS types. */
 export const EARTH_LIVE_WINDOW_MS = 60 * 60 * 1000;
@@ -55,10 +55,24 @@ export type GlobeAlertEvent = {
   gdacsIsCurrent?: boolean;
   /** GDACS episode end (todate) */
   gdacsEndTime?: number;
+  /** GDACS episode start (fromdate) */
+  gdacsStartTime?: number;
   /** Last GDACS update */
   updatedTime?: number;
+  /** GDACS affected countries / area (separate from event name). */
+  regionLabel?: string;
   /** CAD listed before Horizons track is ready — sidebar only, no globe marker yet. */
   trackPending?: boolean;
+  /** Famous periodic NEO — always shown in space tab catalog layer. */
+  showcaseNeo?: boolean;
+  showcaseSpectral?: import("./spaceObjectVisuals").SpectralKey;
+  showcaseShape?: import("./spaceObjectVisuals").AsteroidShape;
+  showcaseEcc?: number;
+  showcaseInc?: number;
+  showcaseOrbitPhase?: number;
+  showcaseRotH?: number;
+  showcaseDiscovery?: string;
+  showcaseDistSunAu?: number;
   impactKt?: number;
   velocityKmS?: number;
   altitudeKm?: number;

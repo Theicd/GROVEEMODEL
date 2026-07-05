@@ -54,3 +54,61 @@ export function createNeoHeadMesh(radius: number, color: number): THREE.Group {
 export function billboardToCamera(obj: THREE.Object3D, camera: THREE.Camera) {
   obj.quaternion.copy(camera.quaternion);
 }
+
+export type SelectionFrame = {
+  group: THREE.Group;
+  ring: THREE.LineLoop;
+  brackets: THREE.LineSegments;
+  bracketMat: THREE.LineBasicMaterial;
+  ringMat: THREE.LineBasicMaterial;
+};
+
+/** Game-style selection frame: rotating dashed ring + corner brackets, billboarded. */
+export function createSelectionFrame(color = 0x66ddff): SelectionFrame {
+  const group = new THREE.Group();
+
+  const segs = 64;
+  const ringPts: number[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    ringPts.push(Math.cos(a), Math.sin(a), 0);
+  }
+  const ringGeo = new THREE.BufferGeometry();
+  ringGeo.setAttribute("position", new THREE.Float32BufferAttribute(ringPts, 3));
+  const ringMat = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const ring = new THREE.LineLoop(ringGeo, ringMat);
+  group.add(ring);
+
+  const b = 1.28;
+  const leg = 0.42;
+  const bracketPts: number[] = [];
+  const corner = (cx: number, cy: number, dx: number, dy: number) => {
+    bracketPts.push(cx, cy, 0, cx + dx * leg, cy, 0);
+    bracketPts.push(cx, cy, 0, cx, cy + dy * leg, 0);
+  };
+  corner(-b, b, 1, -1);
+  corner(b, b, -1, -1);
+  corner(-b, -b, 1, 1);
+  corner(b, -b, -1, 1);
+  const bracketGeo = new THREE.BufferGeometry();
+  bracketGeo.setAttribute("position", new THREE.Float32BufferAttribute(bracketPts, 3));
+  const bracketMat = new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const brackets = new THREE.LineSegments(bracketGeo, bracketMat);
+  group.add(brackets);
+
+  group.visible = false;
+  group.renderOrder = 999;
+  return { group, ring, brackets, bracketMat, ringMat };
+}
