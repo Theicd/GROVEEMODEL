@@ -1,5 +1,7 @@
 # GROVEE Model WebGPU
 
+LIVE LINK - https://theicd.github.io/GROVEEMODEL/docs/index.html
+
 Browser UI similar to the Gemma-4 WebGPU demo, running ONNX models locally on the user's machine using WebGPU (or WASM fallback).
 
 ## Features
